@@ -1,0 +1,32 @@
+
+
+GraphedExpression="breathe_value", DisplayFormat=DISPLAY_FORMAT_DEC, Color=#e56a6f
+OpenDocument="sw_timer.c", FilePath="C:/Users/32457/Desktop/stm32_g474_boot/m_middlewares/framework/sw_timer.c", Line=80
+OpenDocument="clist.h", FilePath="C:/Users/32457/Desktop/stm32_g474_boot/m_middlewares/utils/clist.h", Line=157
+OpenDocument="app_main.c", FilePath="C:/Users/32457/Desktop/stm32_g474_boot/tasks/app_main.c", Line=0
+OpenDocument="cmsis_gcc.h", FilePath="C:/Users/32457/Desktop/stm32_g474_boot/Drivers/CMSIS/Include/cmsis_gcc.h", Line=192
+OpenDocument="main.c", FilePath="C:/Users/32457/Desktop/stm32_g474_boot/Core/Src/main.c", Line=56
+OpenDocument="led_task.c", FilePath="C:/Users/32457/Desktop/stm32_g474_boot/tasks/led_task.c", Line=35
+OpenDocument="startup_stm32g474xx.s", FilePath="C:/Users/32457/Desktop/stm32_g474_boot/startup_stm32g474xx.s", Line=48
+OpenDocument="drv_pwm.c", FilePath="C:/Users/32457/Desktop/stm32_g474_boot/device_drivers/drv_pwm.c", Line=90
+OpenDocument="stm32g4xx_it.c", FilePath="C:/Users/32457/Desktop/stm32_g474_boot/Core/Src/stm32g4xx_it.c", Line=71
+OpenDocument="led.c", FilePath="C:/Users/32457/Desktop/stm32_g474_boot/service/led.c", Line=12
+OpenDocument="boot_task.c", FilePath="C:/Users/32457/Desktop/stm32_g474_boot/tasks/boot_task.c", Line=27
+OpenToolbar="Debug", Floating=0, x=0, y=0
+OpenWindow="Source Files", DockArea=LEFT, x=0, y=0, w=773, h=616, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Disassembly", DockArea=RIGHT, x=0, y=0, w=1423, h=166, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Memory 1", DockArea=BOTTOM, x=2, y=0, w=1355, h=749, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, EditorAddress=0x1C1B0
+OpenWindow="Watched Data 1", DockArea=LEFT, x=0, y=1, w=773, h=570, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Terminal", DockArea=BOTTOM, x=0, y=0, w=962, h=749, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Data Sampling", DockArea=RIGHT, x=0, y=1, w=1423, h=387, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, VisibleTab=0, UniformSampleSpacing=0
+OpenWindow="Timeline", DockArea=RIGHT, x=0, y=2, w=1423, h=632, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=1, DataPaneShown=1, PowerPaneShown=0, CodePaneShown=0, PinCursor="Cursor Movable", TimePerDiv="500 ms / Div", TimeStampFormat="Time", DataGraphDrawAsPoints=0, DataGraphLegendShown=1, DataGraphUniformSampleSpacing=0, DataGraphLegendPosition="1119;0", DataGraphShowNamesAtCursor=0, PowerGraphDrawAsPoints=0, PowerGraphLegendShown=0, PowerGraphAvgFilterTime=Off, PowerGraphAvgFilterLen=Off, PowerGraphUniformSampleSpacing=0, PowerGraphLegendPosition="1125;-91", CodeGraphLegendShown=0, CodeGraphLegendPosition="1148;0"
+OpenWindow="Console", DockArea=BOTTOM, x=1, y=0, w=1521, h=749, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+SmartViewPlugin="", Page="", Toolbar="Hidden", Window="SmartView 1"
+TableHeader="Source Files", SortCol="File", SortOrder="ASCENDING", VisibleCols=["File";"Status";"Size";"#Insts";"Path"], ColWidths=[361;116;100;116;1389]
+TableHeader="Data Sampling Table", SortCol="None", SortOrder="ASCENDING", VisibleCols=["Index";"Time";" breathe_value"], ColWidths=[100;100;100]
+TableHeader="Data Sampling Setup", SortCol="# Changes", SortOrder="ASCENDING", VisibleCols=["Expression";"Type";"Value";"Min";"Max";"Average";"# Changes";"Min. Change";"Max. Change"], ColWidths=[160;300;105;100;100;127;149;171;211]
+TableHeader="Power Sampling", SortCol="None", SortOrder="ASCENDING", VisibleCols=["Index";"Time";"Ch 0"], ColWidths=[100;100;100]
+TableHeader="Watched Data 1", SortCol="Expression", SortOrder="ASCENDING", VisibleCols=["Expression";"Value";"Size";"Refresh"], ColWidths=[245;138;137;253]
+TableHeader="RegisterSelectionDialog", SortCol="None", SortOrder="ASCENDING", VisibleCols=[], ColWidths=[]
+TableHeader="TargetExceptionDialog", SortCol="Name", SortOrder="ASCENDING", VisibleCols=["Name";"Value";"Address";"Description"], ColWidths=[200;100;100;320]
+WatchedExpression="s_led_head", RefreshRate=5, Window=Watched Data 1

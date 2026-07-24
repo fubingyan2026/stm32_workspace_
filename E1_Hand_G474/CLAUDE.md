@@ -1,0 +1,276 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+**E1_Hand_G474** — 基于 STM32G474 (Cortex-M4, 128KB SRAM) 的 9 自由度灵巧手嵌入式固件，裸机（无 RTOS），C11，CMake 构建。
+
+**关键设计决策**：
+- CAN FD 接收上位机控制指令 → 转换 2 路 UART (500000 bps) 广播控制 9 个关节电机 (5+4 分组)
+- 控制频率目标 300 Hz，反馈分高频（角度/速度/Q电流，100Hz）和低频（状态/故障/温度，2Hz）
+- 全程静态分配，无 malloc
+- **共享层架构**：中间件 (`m_middlewares`) 和通用服务 (`service`) 通过 junction 指向 `../public_layer/`，代码在该目录下维护，CMake 通过 `add_subdirectory(public_layer/m_middlewares)` 引用
+
+## 代码生成黄金规则
+
+### 优先复用 `public_layer/m_middlewares/` 下已有的通用模块，禁止重复造轮子
+
+在新增任何功能之前，**必须优先检查 `public_layer/m_middlewares/`（通过 junction 映射到 `../public_layer/m_middlewares/`）中是否已有可复用的模块**。包括：
+
+- **框架原语**：定时器（`sw_timer`）、状态机（`fsm`）、事件标志（`event`）、消息队列（`msg_fifo`）、看门狗（`daemon`）
+- **数据结构**：无锁 FIFO（`kfifo`）、侵入式链表（`clist`）
+- **算法**：PID/云台 PID、MIT 控制器、CRC、PT1 滤波、PLL 锁相环、数学工具（三角函数/插值/限幅）
+- **协议**：协议打包器（`protocol_packer`）、协议解析器（`protocol_parser`）
+- **日志**：带时间戳的 log 模块（`kfifo` 缓冲）
+- **输入**：按键扫描（`key_base`）
+
+> `public_layer/m_middlewares/public.h` 一行 `#include` 即可引入所有中间件。
+> 路径注意：`public_layer/` 是 junction，实际编辑的是 `../public_layer/` 里的原件。
+
+### Build & Development
+
+### Prerequisites
+- ARM GCC toolchain (`arm-none-eabi-gcc`)
+- CMake >= 3.22
+
+### Build commands
+
+优先使用 `build.bat` 一键构建（自动检测 ARM GCC 工具链、CMake、Ninja）：
+
+```bat
+# Debug 构建（默认）
+build.bat
+
+# Release 构建
+build.bat -t Release
+
+# 从其他目录指定项目路径
+build.bat D:\path\to\project -t Debug
+```
+
+手动构建（需自行配置工具链环境变量）：
+
+```bash
+# 使用 CMakePresets（推荐手动方式）
+cmake --preset Debug && cmake --build --preset Debug
+cmake --preset Release && cmake --build --preset Release
+
+# 或完整命令
+cmake -B build/Debug -DCMAKE_BUILD_TYPE=Debug -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake -GNinja
+ninja -C build/Debug
+```
+
+构建产物（位于 `build/{Debug|Release}/`）：
+- `E1_Hand_G474.elf` — ELF 可执行
+- `E1_Hand_G474.hex` — Intel HEX
+- `E1_Hand_G474.bin` — 纯二进制
+
+### MCU 信息
+- STM32G474 (Cortex-M4, FPv4-SP)
+- 编译宏：`STM32G474xx`, `USE_HAL_DRIVER`
+- 启动文件：`startup_stm32g474xx.s`
+- Flash: 512 KB, SRAM: 128 KB
+
+## 架构：五层分层结构
+
+> **详细分层规范请参见 [agent_standards/ARCHITECTURE_GUIDE.md](agent_standards/ARCHITECTURE_GUIDE.md)**
+
+```
+tasks/           应用编排层    xxx_task_init() / sw_timer       ← 拥有 sw_timer、注入回调
+service/         业务逻辑层    srv_*  FSM / 协议 / 算法          ← 硬件无关或绑定单一 driver
+m_middlewares/   通用中间件    sw_timer/fsm/msg_fifo/滤波…      ← 平台无关、可复用、静态分配
+device_drivers/  设备驱动层    drv_*  HAL 薄封装 + 引脚自包含    ← 唯一接触 main.h/CubeMX 句柄
+Core/ (CubeMX)   HAL 生成层    main.h / hfdcan1 / htimX / …    ← 只在 USER CODE 块内改
+```
+
+**依赖规则**：只能向下，禁止向上或跨层反向。
+
+| 层 | 可 include | 禁止 include |
+|----|-----------|-------------|
+| tasks | service, device_drivers, middleware, Core | — |
+| service | middleware、其绑定的 device_drivers、Core 类型 | 其他 service（除非明确数据依赖）、tasks |
+| middleware | 其他 middleware、C 标准库 | device_drivers, service, tasks, Core/HAL |
+| device_drivers | Core（main.h/HAL/外设句柄）、middleware | service, tasks |
+
+### 关键原则
+- **middleware 必须平台无关**（不含 `stm32g4xx_hal.h`）
+- **device_drivers 是唯一允许引用 `main.h` 引脚宏和 CubeMX 句柄的层**
+- **全程静态分配**（无 malloc），调用者提供句柄内存
+- **`init` 一律无参**（driver 层内部包含 HAL 句柄表或宏）
+- **注意**：`agent_standards/ARCHITECTURE_GUIDE.md` 原为旧项目编写，仍引用 STM32F407 和 "E1_Master_Power_Manage" — 分层原则通用，但 HAL 句柄名和外设配置以本文件为准
+
+## 目录结构
+
+```
+Core/                   CubeMX 生成代码（Inc + Src）
+  Inc/main.h            引脚宏定义、外设句柄全局声明
+  Inc/fdcan.h / tim.h / usart.h / gpio.h / dma.h
+  Src/main.c            MX_xxx_Init() → app_main()
+  Src/stm32g4xx_it.c    中断入口
+device_drivers/         设备驱动层（drv_ 前缀）+ hal_flash（从 middleware 迁入）
+  drv_can.c/h           CAN FD (FDCAN1, PA11/PA12) — 支持经典 CAN + CAN FD
+  drv_uart.c/h          UART (USART1/2/3 — PC4/PC5, PA2/PA3, PB10/PB11, 500000 bps)
+                        TX: DMA normal 双状态检忙；RX: DMA circular + IDLE 中断 → kfifo
+  drv_systick.c/h       SysTick 延时/时间戳 (delay_us/millis/micros)
+  drv_hw_timer.c/h      硬件定时器
+  drv_stm32g4_flash.c/h  STM32G4 Flash 操作接口
+  hal_flash/            Flash 抽象层（原 middleware/Third_Party）
+  ring_storage_port.c   ring_storage 平台实现（原 middleware/Third_Party）
+public_layer/           ⚡ 目录 junction → ../public_layer/（共享层，原件在上级）
+  m_middlewares/        通用中间件（平台无关，独立 CMakeLists.txt 管理）
+    framework/          sw_timer, fsm, event, msg_fifo, daemon
+    utils/              kfifo（无锁 2的幂 FIFO）, clist（侵入式双向链表）
+    algorithm/          算法（PID/gimbal_pid/MIT/PT1/PLL/数学工具/CRC）
+    log/log.c/h         日志模块（kfifo 缓冲 + 时间戳回调）
+    protocol_tools/     协议打包/解析器（protocol_packer, protocol_parser）
+    key_base/           按键基础模块
+    Third_Party/        第三方库（CmBacktrace/SEGGER_RTT/lwmem/ring_storage/mpaland_printf）
+    CMakeLists.txt      自管理编译（add_subdirectory 引入即可）
+  service/              通用业务服务（srv_led）
+service/                本地业务逻辑层（srv_ 前缀 + public_layer/service 共同编译）
+  srv_led.c/h           LED 控制（与 public_layer/service 重复，需删本地副本）
+  srv_motor.c/h         电机串口通信服务 — 每路 UART 一个 FSM 实例，广播控制 + 分时轮询反馈
+                        组A=USART1 (5 电机, ID 1-5)，组B=USART2 (4 电机, ID 1-4)
+                        可用 CMake 宏 SRV_MOTOR_GRPA_UART/GRPB_UART 重定向通道
+  srv_motor_behavior.c/h 电机行为协调 FSM — 单 fsm 管理 9 电机组生命周期
+                        （INIT→OFFLINE→IDLE→ENABLING→RUNNING⇄FAULT）
+  srv_can.c/h           CAN FD 电机控制协议 — 控制帧解析 + 反馈/状态帧打包
+                        （ID 0x100 控制, 0x101 反馈 100ms, 0x102 状态 500ms）
+tasks/                  应用编排层
+  app_main.c/h          主入口：init 顺序 → for(;;) { uart rx restart; sw_timer_tick/task; srv_motor_step(); }
+  can_task.c/h          CAN 通信任务（10ms 周期 sw_timer）— 处理 RX + 定时上报反馈/状态
+  led_task.c/h          LED 状态指示任务（蓝色+红色双 LED, 10ms 刷新）
+  log_task.c/h          日志输出任务（20ms 周期）— 默认输出到 SEGGER RTT，可切换 USART1 DMA
+  behavior_task.c/h     电机行为管理任务（1ms 周期 sw_timer）— 初始化 srv_motor + srv_motor_behavior，
+                        驱动 srv_motor_behavior_step
+docs/                   协议文档
+  can_protocol.md       CAN FD 灵巧手电机控制协议规范 (V1.1.0)
+  uart_protocol.md      关节模组通讯协议 (V2.0.5, UART 20B 定长帧)
+  motor_control_api.md  srv_motor API 参考 — FSM 状态转移矩阵、帧调度时序、CRC 覆盖区间
+  plan_task.md          规划文档/设计笔记
+```
+
+## 核心中间件速查表
+
+**新增代码前先查下表**——看 `m_middlewares/` 是否有可直接使用的模块：
+
+### 框架原语 (`m_middlewares/framework/`)
+
+| 模块 | Include | API 前缀 | 能力 |
+|------|---------|----------|------|
+| `sw_timer` | `"sw_timer.h"` | `sw_timer_` | 软件定时器，3 优先级（HIGH ISR / NORMAL LOW 主循环），静态分配 |
+| `fsm` | `"fsm.h"` | `fsm_` | 扁平转移矩阵状态机（state² guard 表）+ entry/exit 回调 + user_data |
+| `event` | `"event.h"` | `event_` | ISR 安全的 32-bit 事件标志，ISR↔主循环生产者消费者 |
+| `msg_fifo` | `"msg_fifo.h"` | `msg_fifo_` | 基于 kfifo 的定长消息队列，单生产者单消费者 |
+| `daemon` | `"daemon.h"` | `daemon_` | 任务看门狗：注册名 + 超时 + 掉线回调 |
+
+### 数据结构 (`m_middlewares/utils/`)
+
+| 模块 | Include | API 前缀 | 能力 |
+|------|---------|----------|------|
+| `kfifo` | `"kfifo.h"` | `kfifo_` | 无锁 2 的幂字节 FIFO（所有 FIFO/队列的底层依赖） |
+| `clist` | `"clist.h"` | `clist_` | 侵入式循环双向链表（多实例管理） |
+
+### 算法 (`m_middlewares/algorithm/`)
+
+| 模块 | 路径 | 能力 |
+|------|------|------|
+| PID | `controller/pid.h` | 增量式 PID |
+| 云台 PID | `controller/gimbal_pid.h` | 云台专用 PID |
+| MIT 控制器 | `controller/mit.h` | 力矩控制 |
+| CRC | `crc.h` | CRC 计算 |
+| PT1 滤波 | `filter/filter.h` | 一阶低通滤波 |
+| 数学工具 | `math/maths.h`, `utils_math.h`, `utils.h` | 三角函数、插值、限幅、常用数学 |
+| PLL | `pll/pll.h` | 锁相环 |
+
+### 其他 (`m_middlewares/`)
+
+| 模块 | Include | 能力 |
+|------|---------|------|
+| 日志 | `"log.h"` | kfifo 缓冲 + 时间戳回调，`log_printf()`/`log_hexdump()` |
+| 协议打包 | `"protocol_packer.h"` | 结构化协议打包器 |
+| 协议解析 | `"protocol_parser.h"` | 结构化协议解析器 |
+| 按键 | `"key_base.h"` | 按键扫描/消抖/连击识别 |
+
+### 第三方库 (`m_middlewares/Third_Party/`)
+
+| 库 | 用途 | 集成方式 |
+|----|------|----------|
+| CmBacktrace | ARM Cortex HardFault 自动诊断（栈回溯/寄存器/调用栈） | 需实现 `cmb_printf` 输出重定向到 log/UART |
+| EasyFlash | 嵌入式 Flash 参数存储（环境变量 env、IAP、log） | 需实现 `ef_port_xxx` 底层 Flash 接口（`drv_stm32g4_flash.c` 已提供） |
+| SEGGER_RTT | J-Link 实时终端输出 | `log_task` 已集成，默认日志输出通道（`LOG_OUTPUT_RTT`） |
+| lwmem | 轻量动态内存管理 | 已入库，当前业务代码未使用（项目原则仍是静态分配） |
+
+## 初始化顺序
+
+在 `app_main()` 中按依赖顺序调用：
+
+1. `delay_init()` → SysTick 时基
+2. `drv_uart_init()` → UART 驱动公共初始化（USART1/2/3），早于 log_task
+3. `log_task_init()` → 日志（默认 SEGGER RTT 输出，可切 USART1 DMA）
+4. `can_task_init()` → CAN 通信（注册 RX 回调，启动 10ms 定时器）
+5. `led_task_init()` → LED
+6. `behavior_task_init()` → 依次调用 `srv_motor_init()` + `srv_motor_behavior_init()`，启动 1ms 行为 FSM 定时器
+
+主循环：
+```c
+for (;;) {
+    drv_uart_rx_restart(DRV_UART_CH_1); // 检查并重启电机 UART 的 RX DMA
+    drv_uart_rx_restart(DRV_UART_CH_2);
+    sw_timer_tick(millis());            // 更新定时器时基
+    sw_timer_task();                    // 派发到期 NORMAL/LOW 定时器
+    srv_motor_step();                   // 全速轮询电机控制/反馈（无固定定时器）
+}
+```
+
+> **注意**：`srv_motor_step()` 是唯一不走 sw_timer 的周期性工作 —— 直接在主循环全速轮询。
+> 每路 UART 一个 FSM 实例，DMA 空闲时自动推进（广播帧/轮询帧/电流帧分时穿插），
+> 通过 `millis()` 控制 `MOTOR_BCAST_PERIOD_MS` 广播周期，`drv_uart_is_tx_busy()` 控制发送间隔。
+> 这是为满足 300 Hz 控制频率需求的设计决策。详细 FSM 时序见 [docs/motor_control_api.md](docs/motor_control_api.md)。
+
+## 通信架构概览
+
+```
+上位机 (CAN FD)
+    │
+    ├─ 0x100 控制帧 (55B) → srv_can_on_rx() → srv_motor_behavior_set_setpoint()
+    │
+    ├─ 0x101 反馈帧 (64B, 100ms)  ← srv_can_send_feedback()
+    └─ 0x102 状态帧 (48B, 500ms)  ← srv_can_send_status()
+
+控制板内部:
+    srv_motor_behavior (FSM) → srv_motor_set_setpoint() → UART 广播/标准帧 (500000 bps)
+                                                              ├─ USART1 组A (5 电机, ID 1-5)
+                                                              └─ USART2 组B (4 电机, ID 1-4)
+```
+
+详细协议定义见 [docs/can_protocol.md](docs/can_protocol.md)、[docs/uart_protocol.md](docs/uart_protocol.md) 和 [docs/motor_control_api.md](docs/motor_control_api.md)。
+
+## 编码规范
+
+### 所有新代码必须严格遵循 [agent_standards/MODULE_CODING_GUIDE.md](agent_standards/MODULE_CODING_GUIDE.md)
+
+核心要点速查：
+
+| 规范 | 要求 |
+|------|------|
+| **代码风格** | WebKit（4 空格缩进，函数 Allman 大括号，控制语句 K&R） + MISRA C:2012 |
+| **命名前缀** | driver=`drv_`，service=`srv_`，task=`xxx_task_`，middleware=模块名 |
+| **类型后缀** | `_t` 结构体/枚举，`_cb_t` 回调 |
+| **枚举值** | 大写蛇形 + 模块前缀（`MODULE_NAME_OK = 0`, 负数为错误） |
+| **注释** | 公共 API + 复杂逻辑用中文 Doxygen（`@brief/@param/@return`） |
+| **文件结构** | 头注释 → Includes → 私有常量 → 私有变量 → 私有原型 → 导出函数 → 私有函数 |
+| **Config-in-context** | `xxx_config_t`（含回调）嵌入 `xxx_context_t`/handle，运行时状态分离 |
+| **参数校验** | 公共函数首行校验 NULL / 未初始化 / 越界 |
+| **内存** | 全程静态分配（无 malloc），调用者提供句柄内存 |
+| **多实例** | 每个实例独立的缓冲区/队列放入句柄结构体，禁止模块级 static 单例 |
+| **服务设计** | 风格 A（回调注入，共享总线/异构）或风格 B（直连 drv_，1:1 绑定）|
+
+### 硬件 / 引脚参考
+
+引脚功能汇总在 [agent_standards/HARDWARE_GUIDE.md](agent_standards/HARDWARE_GUIDE.md)，硬件配置以 `Core/Inc/main.h` 中的 CubeMX 宏为准。
+
+### 协议文档
+
+新增/修改 `docs/` 下协议文档时，遵循 [agent_standards/PROTOCOL_DOC_GUIDE.md](agent_standards/PROTOCOL_DOC_GUIDE.md) 的文档结构与格式规范。

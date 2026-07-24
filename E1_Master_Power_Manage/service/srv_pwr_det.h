@@ -1,0 +1,74 @@
+/**
+ * @file    srv_pwr_det.h
+ * @author  maximillian
+ * @version V1.0.0
+ * @date    2026-07-2
+ * @brief   电源状态监控服务 — 封装 drv_status 层
+ *
+ * 提供语义化的电源状态查询接口，上层无需接触 drv_status 驱动层。
+ */
+
+#ifndef __SRV_PWR_DET_H
+#define __SRV_PWR_DET_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include <stdbool.h>
+#include <stdint.h>
+
+/* Exported types ------------------------------------------------------------*/
+
+/**
+ * @brief 电源状态汇总
+ */
+typedef struct {
+    bool ext_12v_ok; /**< 外部 12V 电源正常 */
+    bool ext_24v_ok; /**< 外部 24V 电源正常 */
+    bool comp_24v_ok; /**< 工控机 24V 电源正常 */
+    bool aux_power_ok; /**< 辅助电源正常 */
+    bool motor_power_ok; /**< 电机电源正常 */
+    bool hsd_fault; /**< 高边驱动故障汇总 */
+    bool dbr_ocp; /**< 制动电阻过流标志 */
+    bool motor_chg_ocp; /**< 电机充电过流标志 */
+    bool estop_on; /**< 急停触发状态 */
+    bool din1; /**< 数字输入1 */
+    bool din2; /**< 数字输入2 */
+    bool din3; /**< 数字输入3 */
+} srv_pwr_det_status_t;
+
+/* Exported functions prototypes ---------------------------------------------*/
+
+/**
+ * @brief 初始化电源监控服务
+ * @note  仅记录初始化状态，无额外配置
+ */
+void srv_pwr_det_init(void);
+
+/** @brief 读取电源状态（批量，推荐用于 CAN 上报打包） */
+void srv_pwr_det_read(srv_pwr_det_status_t* status);
+
+/** @brief 所有 PGOOD 信号是否都正常 */
+bool srv_pwr_det_all_power_ok(void);
+
+/** @brief 是否有 HSD 故障 */
+bool srv_pwr_det_has_hsd_fault(void);
+
+/** @brief 是否有制动电阻过流 */
+bool srv_pwr_det_has_dbr_ocp(void);
+
+/** @brief 急停是否触发 */
+bool srv_pwr_det_is_estop(void);
+
+/** @brief 是否有电机充电过流 */
+bool srv_pwr_det_has_motor_chg_ocp(void);
+
+/** @brief 读取全部数字输入为位掩码 (bit0=DIN1, bit1=DIN2, bit2=DIN3) */
+uint8_t srv_pwr_det_read_din(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* __SRV_PWR_DET_H */

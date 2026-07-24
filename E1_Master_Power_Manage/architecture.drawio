@@ -1,0 +1,164 @@
+<mxfile host="Electron">
+  <diagram id="arch-diagram" name="E1_Master_Power_Manage 架构图">
+    <mxGraphModel dx="1268" dy="881" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1654" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="legend" parent="1" style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;rounded=1;fontSize=11;labelBackgroundColor=none;strokeColor=default;" value="&lt;br&gt;&lt;br&gt;层次结构（自上而下）：&lt;br&gt;1. 主入口层&lt;br&gt;2. 任务层 (tasks/)&lt;br&gt;3. 服务层 (service/)&lt;br&gt;4. 中间件层 (m_middlewares/)&lt;br&gt;5. 设备驱动层 (device_drivers/)&lt;br&gt;6. HAL层 (Core + Drivers/)" vertex="1">
+          <mxGeometry height="160" width="160" x="1090" y="460" as="geometry" />
+        </mxCell>
+        <mxCell id="2VXGFl0vJZdPcPIdO9Fd-14" edge="1" parent="1" source="layer6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="layer5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="layer6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;" value="主入口层" vertex="1">
+          <mxGeometry height="70" width="850" x="400" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="main_app" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c2d69b;strokeColor=#6b964d;" value="app_main.c&#xa;app_main()" vertex="1">
+          <mxGeometry height="40" width="150" x="450" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="6" edge="1" parent="1" source="layer5" style="edgeStyle=none;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="layer4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="layer5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;fontStyle=1;" value="&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;任务层 (tasks/)" vertex="1">
+          <mxGeometry height="120" width="850" x="400" y="160" as="geometry" />
+        </mxCell>
+        <mxCell id="t_can" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#bfd4f2;strokeColor=#5a7fc2;fontSize=11;" value="can_task.c" vertex="1">
+          <mxGeometry height="45" width="110" x="430" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="4" edge="1" parent="1" source="t_power" style="edgeStyle=none;html=1;" target="t_can" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="t_power" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#bfd4f2;strokeColor=#5a7fc2;fontSize=11;" value="power_task.c" vertex="1">
+          <mxGeometry height="45" width="110" x="560" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="t_sample" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#bfd4f2;strokeColor=#5a7fc2;fontSize=11;" value="sample_task.c" vertex="1">
+          <mxGeometry height="45" width="110" x="690" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="t_fan" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#bfd4f2;strokeColor=#5a7fc2;fontSize=11;" value="fan_task.c" vertex="1">
+          <mxGeometry height="45" width="110" x="820" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="t_led" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#bfd4f2;strokeColor=#5a7fc2;fontSize=11;" value="led_task.c" vertex="1">
+          <mxGeometry height="45" width="110" x="950" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="t_log" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#bfd4f2;strokeColor=#5a7fc2;fontSize=11;" value="log_task.c" vertex="1">
+          <mxGeometry height="45" width="110" x="1080" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="2VXGFl0vJZdPcPIdO9Fd-13" edge="1" parent="1" source="layer4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;" target="layer2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="layer4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;fontStyle=1;" value="&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;div&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;&lt;span style=&quot;white-space: pre;&quot;&gt;&#x9;&lt;/span&gt;服务层 (service/)&lt;/div&gt;" vertex="1">
+          <mxGeometry height="140" width="850" x="400" y="300" as="geometry" />
+        </mxCell>
+        <mxCell id="s_power_ctrl" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FF6666;strokeColor=#c49a00;fontSize=11;" value="power_control.c" vertex="1">
+          <mxGeometry height="45" width="110" x="430" y="320" as="geometry" />
+        </mxCell>
+        <mxCell id="s_power_detect" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFCCCC;strokeColor=#c49a00;fontSize=11;" value="power_detect.c" vertex="1">
+          <mxGeometry height="45" width="110" x="560" y="320" as="geometry" />
+        </mxCell>
+        <mxCell id="s_adc_sample" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe699;strokeColor=#c49a00;fontSize=11;" value="adc_sample.c" vertex="1">
+          <mxGeometry height="45" width="110" x="690" y="320" as="geometry" />
+        </mxCell>
+        <mxCell id="s_fan_ctrl" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe699;strokeColor=#c49a00;fontSize=11;" value="fan_control.c" vertex="1">
+          <mxGeometry height="45" width="110" x="820" y="320" as="geometry" />
+        </mxCell>
+        <mxCell id="s_led" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe699;strokeColor=#c49a00;fontSize=11;" value="led.c" vertex="1">
+          <mxGeometry height="45" width="110" x="950" y="320" as="geometry" />
+        </mxCell>
+        <mxCell id="s_can_master" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe699;strokeColor=#c49a00;fontSize=10;" value="can_master_report.c" vertex="1">
+          <mxGeometry height="40" width="120" x="430" y="380" as="geometry" />
+        </mxCell>
+        <mxCell id="s_can_slaver" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe699;strokeColor=#c49a00;fontSize=10;" value="can_slaver_report.c" vertex="1">
+          <mxGeometry height="40" width="120" x="570" y="380" as="geometry" />
+        </mxCell>
+        <mxCell id="s_can_dual" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe699;strokeColor=#c49a00;fontSize=10;" value="can_dual_report.c" vertex="1">
+          <mxGeometry height="40" width="120" x="710" y="380" as="geometry" />
+        </mxCell>
+        <mxCell id="8" edge="1" parent="1" style="edgeStyle=none;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="layer2">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="825" y="620" as="sourcePoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="layer3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=14;fontStyle=1;" value="&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;span style=&quot;background-color: transparent;&quot;&gt;&lt;br&gt;&lt;/span&gt;&lt;/div&gt;&lt;div&gt;&lt;span style=&quot;background-color: transparent;&quot;&gt;&lt;br&gt;&lt;/span&gt;&lt;/div&gt;&lt;div&gt;&lt;span style=&quot;background-color: transparent;&quot;&gt;中间件层 (m_middlewares/)&lt;/span&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="160" width="580" x="400" y="460" as="geometry" />
+        </mxCell>
+        <mxCell id="mw_sw_timer" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5b0b0;strokeColor=#a83838;fontSize=11;" value="sw_timer.c" vertex="1">
+          <mxGeometry height="35" width="90" x="430" y="480" as="geometry" />
+        </mxCell>
+        <mxCell id="mw_fsm" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5b0b0;strokeColor=#a83838;fontSize=11;" value="fsm.c" vertex="1">
+          <mxGeometry height="35" width="90" x="540" y="480" as="geometry" />
+        </mxCell>
+        <mxCell id="mw_msg_fifo" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5b0b0;strokeColor=#a83838;fontSize=11;" value="msg_fifo.c" vertex="1">
+          <mxGeometry height="35" width="90" x="650" y="480" as="geometry" />
+        </mxCell>
+        <mxCell id="mw_filter" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5b0b0;strokeColor=#a83838;fontSize=11;" value="filter.c" vertex="1">
+          <mxGeometry height="35" width="90" x="760" y="480" as="geometry" />
+        </mxCell>
+        <mxCell id="mw_log" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5b0b0;strokeColor=#a83838;fontSize=11;" value="log.c" vertex="1">
+          <mxGeometry height="35" width="90" x="870" y="480" as="geometry" />
+        </mxCell>
+        <mxCell id="mw_utils" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5b0b0;strokeColor=#a83838;fontSize=10;" value="clist/kfifo/maths" vertex="1">
+          <mxGeometry height="35" width="110" x="430" y="530" as="geometry" />
+        </mxCell>
+        <mxCell id="10" edge="1" parent="1" source="layer2" style="edgeStyle=none;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="layer1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="mw_other" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5b0b0;strokeColor=#a83838;fontSize=10;" value="key_base/crc/daemon" vertex="1">
+          <mxGeometry height="35" width="120" x="555" y="530" as="geometry" />
+        </mxCell>
+        <mxCell id="layer2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f7ff;strokeColor=#1890ff;fontSize=14;fontStyle=1;" value="&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;设备驱动层 (device_drivers/)" vertex="1">
+          <mxGeometry height="90" width="850" x="400" y="640" as="geometry" />
+        </mxCell>
+        <mxCell id="d_power" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#b3d9ff;strokeColor=#0e6eb8;fontSize=11;" value="drv_power.c" vertex="1">
+          <mxGeometry height="30" width="85" x="430" y="660" as="geometry" />
+        </mxCell>
+        <mxCell id="d_can" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#b3d9ff;strokeColor=#0e6eb8;fontSize=11;" value="drv_can.c" vertex="1">
+          <mxGeometry height="30" width="85" x="535" y="660" as="geometry" />
+        </mxCell>
+        <mxCell id="d_adc" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#b3d9ff;strokeColor=#0e6eb8;fontSize=11;" value="drv_adc.c" vertex="1">
+          <mxGeometry height="30" width="85" x="640" y="660" as="geometry" />
+        </mxCell>
+        <mxCell id="d_fan" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#b3d9ff;strokeColor=#0e6eb8;fontSize=11;" value="drv_fan.c" vertex="1">
+          <mxGeometry height="30" width="85" x="745" y="660" as="geometry" />
+        </mxCell>
+        <mxCell id="d_status" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#b3d9ff;strokeColor=#0e6eb8;fontSize=11;" value="drv_status.c" vertex="1">
+          <mxGeometry height="30" width="85" x="850" y="660" as="geometry" />
+        </mxCell>
+        <mxCell id="d_log_uart" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#b3d9ff;strokeColor=#0e6eb8;fontSize=10;" value="drv_log_uart.c" vertex="1">
+          <mxGeometry height="30" width="75" x="950" y="660" as="geometry" />
+        </mxCell>
+        <mxCell id="d_systick" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#b3d9ff;strokeColor=#0e6eb8;fontSize=10;" value="drv_systick.c" vertex="1">
+          <mxGeometry height="30" width="75" x="1050" y="660" as="geometry" />
+        </mxCell>
+        <mxCell id="d_other" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#b3d9ff;strokeColor=#0e6eb8;fontSize=10;" value="drv_rgb/buzzer/led" vertex="1">
+          <mxGeometry height="30" width="90" x="1140" y="660" as="geometry" />
+        </mxCell>
+        <mxCell id="12" edge="1" parent="1" source="layer1" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeWidth=1;rounded=0;curved=0;" target="hw_layer">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="layer1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0f0f0;strokeColor=#999999;fontSize=14;fontStyle=1;" value="HAL层 (Core + Drivers/)" vertex="1">
+          <mxGeometry height="70" width="850" x="400" y="750" as="geometry" />
+        </mxCell>
+        <mxCell id="hal_stm32" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e0e0e0;strokeColor=#888888;fontSize=10;" value="STM32 HAL&#xa;can/gpio/adc/tim/usart" vertex="1">
+          <mxGeometry height="35" width="260" x="430" y="760" as="geometry" />
+        </mxCell>
+        <mxCell id="hal_cmsis" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e0e0e0;strokeColor=#888888;fontSize=10;" value="CMSIS Core&#xa;core_cm4/system_stm32f4xx" vertex="1">
+          <mxGeometry height="35" width="200" x="710" y="760" as="geometry" />
+        </mxCell>
+        <mxCell id="hal_interrupt" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e0e0e0;strokeColor=#888888;fontSize=10;" value="中断处理&#xa;stm32f4xx_it.c" vertex="1">
+          <mxGeometry height="35" width="150" x="930" y="760" as="geometry" />
+        </mxCell>
+        <mxCell id="hw_layer" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d9d9d9;strokeColor=#777777;fontSize=12;" value="硬件层&#xa;GPIO/CAN/ADC/TIM/UART/FAN/NTC" vertex="1">
+          <mxGeometry height="40" width="340" x="400" y="840" as="geometry" />
+        </mxCell>
+        <mxCell id="3" edge="1" parent="1" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;elbow=vertical;entryX=0.5;entryY=0;entryDx=0;entryDy=0;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1090" y="670" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="2VXGFl0vJZdPcPIdO9Fd-12" edge="1" parent="1" source="layer4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.733;entryY=-0.004;entryDx=0;entryDy=0;entryPerimeter=0;" target="layer3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
