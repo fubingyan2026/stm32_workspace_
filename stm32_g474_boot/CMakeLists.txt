@@ -43,7 +43,7 @@ aux_source_directory(${CMAKE_SOURCE_DIR}/device_drivers DEV_DRV)
 aux_source_directory(${CMAKE_SOURCE_DIR}/device_drivers/hal_flash DEV_DRV_HAL_FLASH)
 
 # Middleware 通过 junction 映射 + add_subdirectory 引用为独立静态库
-add_subdirectory(m_middlewares)
+add_subdirectory(../public_layer/m_middlewares m_middlewares)
 
 # mpaland_printf 在该项目中禁用浮点输出（STM32G474 FPv4-SP 无硬件双精度）
 target_compile_definitions(m_middlewares PRIVATE

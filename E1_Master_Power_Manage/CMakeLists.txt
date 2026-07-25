@@ -38,7 +38,7 @@ add_executable(${CMAKE_PROJECT_NAME})
 add_subdirectory(cmake/stm32cubemx)
 
 # Add middleware (platform-independent static library via public_layer junction)
-add_subdirectory(m_middlewares)
+add_subdirectory(../public_layer/m_middlewares m_middlewares)
 
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
