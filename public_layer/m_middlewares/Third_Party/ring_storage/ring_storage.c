@@ -55,8 +55,8 @@
 #define RS_FRAME_MAGIC 0x52535446u
 /* 提交魔数 "COMT" (COMmiT) */
 #define RS_COMMIT_MAGIC 0x434F4D54u
-/* 闪存空白值 */
-#define RS_FLASH_EMPTY 0xAAAAAAAAu
+/* 闪存擦除态值（全 1） */
+#define RS_FLASH_EMPTY 0xFFFFFFFFu
 
 /* 帧头大小（字节） */
 #define RS_HEADER_SIZE sizeof(rs_header_t)
@@ -84,6 +84,13 @@ typedef struct __attribute__((packed)) {
     uint32_t commit_magic; /**< 提交魔数 */
 } rs_footer_t;
 
+/* 帧探测结果 */
+typedef enum {
+    RS_PROBE_EMPTY = 0, /**< 空白区（erased），停止扫描该扇区 */
+    RS_PROBE_SKIP,      /**< 无效帧头，前进 *step 字节继续 */
+    RS_PROBE_VALID,     /**< 帧头有效且帧在扇区内，需进一步校验帧尾 */
+} rs_probe_t;
+
 /* Private macros ------------------------------------------------------------*/
 
 /* 对齐宏：向上对齐 */
@@ -109,6 +116,9 @@ static ring_storage_error_t rs_parse_and_load_kv(ring_storage_context_t* ctx,
     uint32_t kv_count);
 static ring_storage_error_t rs_load_frame(ring_storage_context_t* ctx,
     uint32_t frame_addr);
+static rs_probe_t rs_probe_header(ring_storage_context_t* ctx,
+    uint32_t scan_addr, uint32_t sec_end,
+    rs_header_t* hdr, uint32_t* step);
 
 /* Private functions ---------------------------------------------------------*/
 
@@ -186,6 +196,57 @@ static bool rs_is_sector_empty(ring_storage_context_t* ctx, uint32_t sec_addr)
 }
 
 /**
+ * @brief   探测指定地址的帧头
+ * @param   ctx        上下文指针
+ * @param   scan_addr  当前扫描地址
+ * @param   sec_end    扇区结束地址
+ * @param   hdr        [out] 读出的帧头
+ * @param   step       [out] 下一步前进字节数
+ * @return  RS_PROBE_EMPTY / RS_PROBE_SKIP / RS_PROBE_VALID
+ * @note    统一封装帧头读取 + magic 校验 + CRC32 校验 + frame_len 边界检查。
+ *          不读取帧尾（commit_magic），由调用者按需校验。
+ */
+static rs_probe_t rs_probe_header(ring_storage_context_t* ctx,
+    uint32_t scan_addr, uint32_t sec_end,
+    rs_header_t* hdr, uint32_t* step)
+{
+    ring_storage_error_t err = (ring_storage_error_t)
+        ctx->config.port.read(scan_addr, (uint8_t*)hdr, sizeof(*hdr));
+    if (err != RING_STORAGE_OK) {
+        *step = RS_WRITE_ALIGN(ctx);
+        return RS_PROBE_SKIP;
+    }
+
+    /* 空白区（erased），停止扫描该扇区 */
+    if (hdr->magic == RS_FLASH_EMPTY) {
+        return RS_PROBE_EMPTY;
+    }
+
+    /* magic 不匹配，前进一个对齐单位 */
+    if (hdr->magic != RS_FRAME_MAGIC) {
+        *step = RS_WRITE_ALIGN(ctx);
+        return RS_PROBE_SKIP;
+    }
+
+    /* magic 匹配，校验帧头 CRC32 */
+    if (rs_crc32(hdr, offsetof(rs_header_t, header_crc32)) != hdr->header_crc32) {
+        *step = RS_WRITE_ALIGN(ctx);
+        return RS_PROBE_SKIP;
+    }
+
+    /* 帧长度合法性 + 扇区边界检查（合并冗余判断） */
+    if (hdr->frame_len < RS_FRAME_OVERHEAD
+        || hdr->frame_len > (sec_end - scan_addr)) {
+        *step = RS_WRITE_ALIGN(ctx);
+        return RS_PROBE_SKIP;
+    }
+
+    /* 帧头有效，前进步长 = 对齐后帧大小 */
+    *step = RS_FRAME_FLASH_SIZE(ctx, hdr->frame_len);
+    return RS_PROBE_VALID;
+}
+
+/**
  * @brief   扫描所有扇区，定位最新有效帧
  * @param   ctx 上下文指针
  * @return  操作结果错误码
@@ -214,52 +275,23 @@ static ring_storage_error_t rs_scan_for_latest_frame(ring_storage_context_t* ctx
         uint32_t scan_addr = sec_addr;
 
         while (scan_addr + RS_FRAME_OVERHEAD <= sec_end) {
-            /* 读帧头 */
             rs_header_t hdr;
-            ring_storage_error_t err = (ring_storage_error_t)
-                ctx->config.port.read(scan_addr, (uint8_t*)&hdr, sizeof(hdr));
+            uint32_t step;
 
-            if (err != RING_STORAGE_OK) {
-                break; /* 读取失败，跳过该扇区 */
-            }
-
-            /* 检查 magic：0xFFFFFFFF 表示空白区，停止扫描该扇区 */
-            if (hdr.magic == RS_FLASH_EMPTY) {
+            rs_probe_t probe = rs_probe_header(ctx, scan_addr, sec_end, &hdr, &step);
+            if (probe == RS_PROBE_EMPTY) {
                 break;
             }
-
-            /* magic 不匹配，前进一个对齐单位继续查找 */
-            if (hdr.magic != RS_FRAME_MAGIC) {
-                scan_addr += RS_WRITE_ALIGN(ctx);
+            if (probe == RS_PROBE_SKIP) {
+                scan_addr += step;
                 continue;
             }
 
-            /* magic 匹配，校验帧头 CRC32 */
-            const uint32_t calc_crc = rs_crc32(&hdr, offsetof(rs_header_t, header_crc32));
-            if (calc_crc != hdr.header_crc32) {
-                /* 帧头损坏，前进一个对齐单位 */
-                scan_addr += RS_WRITE_ALIGN(ctx);
-                continue;
-            }
-
-            /* 帧头有效，检查帧长度合法性 */
-            if (hdr.frame_len < RS_FRAME_OVERHEAD || hdr.frame_len > sector_size) {
-                scan_addr += RS_WRITE_ALIGN(ctx);
-                continue;
-            }
-
-            /* 检查帧是否跨越扇区边界 */
-            const uint32_t frame_end = scan_addr + hdr.frame_len;
-            if (frame_end > sec_end) {
-                scan_addr += RS_WRITE_ALIGN(ctx);
-                continue;
-            }
-
-            /* 帧尾位于 frame_len - RS_FOOTER_SIZE（始终与保存时一致） */
+            /* 帧头有效，校验帧尾 commit_magic */
             rs_footer_t footer;
             const uint32_t footer_addr = scan_addr
                 + hdr.frame_len - RS_FOOTER_SIZE;
-            err = (ring_storage_error_t)
+            ring_storage_error_t err = (ring_storage_error_t)
                 ctx->config.port.read(footer_addr, (uint8_t*)&footer, sizeof(footer));
 
             if (err != RING_STORAGE_OK || footer.commit_magic != RS_COMMIT_MAGIC) {
@@ -272,13 +304,13 @@ static ring_storage_error_t rs_scan_for_latest_frame(ring_storage_context_t* ctx
             if (!found || ((int32_t)(hdr.version - best_version) > 0)) {
                 best_version = hdr.version;
                 best_frame_addr = scan_addr;
-                best_frame_flash_size = RS_FRAME_FLASH_SIZE(ctx, hdr.frame_len);
+                best_frame_flash_size = step;
                 best_sector_addr = sec_addr;
                 found = true;
             }
 
             /* 前进到下一个帧位置（对齐后） */
-            scan_addr += RS_FRAME_FLASH_SIZE(ctx, hdr.frame_len);
+            scan_addr += step;
         }
     }
 
@@ -431,7 +463,7 @@ static size_t rs_serialize_kv(ring_storage_context_t* ctx, uint8_t* buf, size_t 
 
     for (uint8_t i = 0; i < ctx->kv_count; i++) {
         const ring_storage_kv_entry_t* kv = &ctx->kv_table[i];
-        const size_t key_len = strlen(kv->key);
+        const size_t key_len = kv->key_len;
 
         /* 检查缓冲区空间：key_len(1) + key + val_len(2) + value */
         const size_t needed = 1 + key_len + 2 + kv->value_len;
@@ -499,8 +531,8 @@ static ring_storage_error_t rs_parse_and_load_kv(ring_storage_context_t* ctx,
         /* 在注册表中查找匹配的 key */
         for (uint8_t j = 0; j < ctx->kv_count; j++) {
             ring_storage_kv_entry_t* kv = &ctx->kv_table[j];
-            if (strlen(kv->key) == key_len
-                && strncmp(kv->key, key, key_len) == 0) {
+            if (kv->key_len == key_len
+                && memcmp(kv->key, key, key_len) == 0) {
                 /* 长度匹配才复制，防止缓冲区溢出 */
                 if (val_len == kv->value_len) {
                     memcpy(kv->value, data + offset, val_len);
@@ -560,6 +592,13 @@ ring_storage_error_t ring_storage_init(ring_storage_context_t* ctx,
         && config->write_gran != RING_STORAGE_WRITE_GRAN_128
         && config->write_gran != RING_STORAGE_WRITE_GRAN_256) {
         return RING_STORAGE_ERROR_INVALID_PARAM;
+    }
+
+    /* 帧缓冲区须至少容纳帧头+帧尾（28B），且不小于一个写入颗粒度（GC 分块复制需要） */
+    const uint32_t write_align_bytes = config->write_gran / 8;
+    if (config->frame_buffer_size < RS_FRAME_OVERHEAD
+        || config->frame_buffer_size < write_align_bytes) {
+        return RING_STORAGE_ERROR_BUFFER_TOO_SMALL;
     }
 
     /* 如果已初始化，先反初始化 */
@@ -640,13 +679,15 @@ ring_storage_error_t ring_storage_register(ring_storage_context_t* ctx,
 
     /* 检查 key 是否重复 */
     for (uint8_t i = 0; i < ctx->kv_count; i++) {
-        if (strcmp(ctx->kv_table[i].key, key) == 0) {
+        if (ctx->kv_table[i].key_len == key_len
+            && memcmp(ctx->kv_table[i].key, key, key_len) == 0) {
             return RING_STORAGE_ERROR_KV_DUPLICATE;
         }
     }
 
     /* 注册 */
     ctx->kv_table[ctx->kv_count].key = key;
+    ctx->kv_table[ctx->kv_count].key_len = (uint8_t)key_len;
     ctx->kv_table[ctx->kv_count].value = value;
     ctx->kv_table[ctx->kv_count].value_len = value_len;
     ctx->kv_count++;
@@ -677,7 +718,7 @@ ring_storage_error_t ring_storage_save(ring_storage_context_t* ctx)
     /* 1. 预估帧大小，检查是否需要 GC */
     size_t est_kv_len = 0;
     for (uint8_t i = 0; i < ctx->kv_count; i++) {
-        est_kv_len += 1 + strlen(ctx->kv_table[i].key) + 2 + ctx->kv_table[i].value_len;
+        est_kv_len += 1 + ctx->kv_table[i].key_len + 2 + ctx->kv_table[i].value_len;
     }
     const size_t est_frame_len = RS_FRAME_OVERHEAD + est_kv_len;
     const size_t est_flash_size = RS_FRAME_FLASH_SIZE(ctx, est_frame_len);
@@ -886,44 +927,29 @@ ring_storage_error_t ring_storage_load_version(ring_storage_context_t* ctx,
         uint32_t scan_addr = sec_addr;
 
         while (scan_addr + RS_FRAME_OVERHEAD <= sec_end) {
-            /* 读帧头 */
             rs_header_t hdr;
-            ring_storage_error_t err = (ring_storage_error_t)
-                ctx->config.port.read(scan_addr, (uint8_t*)&hdr, sizeof(hdr));
+            uint32_t step;
 
-            if (err != RING_STORAGE_OK) {
+            rs_probe_t probe = rs_probe_header(ctx, scan_addr, sec_end, &hdr, &step);
+            if (probe == RS_PROBE_EMPTY) {
                 break;
             }
-
-            /* 空白区，停止扫描该扇区 */
-            if (hdr.magic == RS_FLASH_EMPTY) {
-                break;
-            }
-
-            /* magic 不匹配，前进一个对齐单位 */
-            if (hdr.magic != RS_FRAME_MAGIC) {
-                scan_addr += RS_WRITE_ALIGN(ctx);
+            if (probe == RS_PROBE_SKIP) {
+                scan_addr += step;
                 continue;
             }
 
-            /* 校验帧头 CRC32 */
-            const uint32_t calc_crc = rs_crc32(&hdr, offsetof(rs_header_t, header_crc32));
-            if (calc_crc != hdr.header_crc32) {
-                scan_addr += RS_WRITE_ALIGN(ctx);
-                continue;
-            }
-
-            /* 版本不匹配，跳过本帧 */
+            /* 版本不匹配，跳过本帧（不读帧尾，减少 Flash I/O） */
             if (hdr.version != version) {
-                scan_addr += RS_FRAME_FLASH_SIZE(ctx, hdr.frame_len);
+                scan_addr += step;
                 continue;
             }
 
-            /* 版本匹配，验证完整性后加载 */
+            /* 版本匹配，校验帧尾 commit_magic */
             rs_footer_t footer;
             const uint32_t footer_addr = scan_addr
                 + hdr.frame_len - RS_FOOTER_SIZE;
-            err = (ring_storage_error_t)
+            ring_storage_error_t err = (ring_storage_error_t)
                 ctx->config.port.read(footer_addr, (uint8_t*)&footer, sizeof(footer));
 
             if (err != RING_STORAGE_OK || footer.commit_magic != RS_COMMIT_MAGIC) {

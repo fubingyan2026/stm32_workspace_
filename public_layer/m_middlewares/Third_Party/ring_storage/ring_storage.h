@@ -150,6 +150,7 @@ typedef struct {
  */
 typedef struct {
     const char* key; /**< KV 名称（以 '\0' 结尾，长度 <= RING_STORAGE_KEY_MAX） */
+    uint8_t key_len; /**< key 长度（注册时缓存，避免反复 strlen） */
     void* value; /**< KV 值数据地址 */
     uint16_t value_len; /**< KV 值数据长度 */
 } ring_storage_kv_entry_t;
