@@ -217,7 +217,7 @@ HAL_IncTick();
 void DMA1_Stream0_IRQHandler(void)
 {
   /* USER CODE BEGIN DMA1_Stream0_IRQn 0 */
-
+  HAL_DMA_IRQHandler(&hdma_adc1);
   /* USER CODE END DMA1_Stream0_IRQn 0 */
   /* USER CODE BEGIN DMA1_Stream0_IRQn 1 */
 
@@ -378,7 +378,7 @@ void I2C2_EV_IRQHandler(void)
 void SPI1_IRQHandler(void)
 {
   /* USER CODE BEGIN SPI1_IRQn 0 */
-
+  HAL_SPI_IRQHandler(&hspi1);
   /* USER CODE END SPI1_IRQn 0 */
   /* USER CODE BEGIN SPI1_IRQn 1 */
 
@@ -433,7 +433,7 @@ void USART3_IRQHandler(void)
 void DMA1_Stream7_IRQHandler(void)
 {
   /* USER CODE BEGIN DMA1_Stream7_IRQn 0 */
-
+  HAL_DMA_IRQHandler(&hdma_spi1_tx);
   /* USER CODE END DMA1_Stream7_IRQn 0 */
   /* USER CODE BEGIN DMA1_Stream7_IRQn 1 */
 
@@ -446,7 +446,7 @@ void DMA1_Stream7_IRQHandler(void)
 void DMA2_Stream0_IRQHandler(void)
 {
   /* USER CODE BEGIN DMA2_Stream0_IRQn 0 */
-
+  HAL_DMA_IRQHandler(&hdma_i2c2_tx);
   /* USER CODE END DMA2_Stream0_IRQn 0 */
   /* USER CODE BEGIN DMA2_Stream0_IRQn 1 */
 
@@ -538,7 +538,7 @@ void UART7_IRQHandler(void)
 void SPI6_IRQHandler(void)
 {
   /* USER CODE BEGIN SPI6_IRQn 0 */
-
+  HAL_SPI_IRQHandler(&hspi6);
   /* USER CODE END SPI6_IRQn 0 */
   /* USER CODE BEGIN SPI6_IRQn 1 */
 
@@ -551,7 +551,7 @@ void SPI6_IRQHandler(void)
 void BDMA_Channel0_IRQHandler(void)
 {
   /* USER CODE BEGIN BDMA_Channel0_IRQn 0 */
-
+  HAL_DMA_IRQHandler(&hdma_spi6_tx);
   /* USER CODE END BDMA_Channel0_IRQn 0 */
   /* USER CODE BEGIN BDMA_Channel0_IRQn 1 */
 
