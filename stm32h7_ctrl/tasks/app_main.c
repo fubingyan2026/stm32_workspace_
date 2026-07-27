@@ -26,11 +26,13 @@
 #include "drv_octospi.h"
 #include "drv_pwm.h"
 #include "drv_rng.h"
+#include "hal_flash.h"
 #include "drv_spi.h"
 #include "drv_systick.h"
 #include "drv_uart.h"
 #include "led_task.h"
 #include "log_task.h"
+#include "storage_task.h"
 #include "usb_device.h"
 
 /* Private function prototypes -----------------------------------------------*/
@@ -61,6 +63,9 @@ void app_main(void)
     /* I2C 总线（只设标志，不操作硬件） */
     drv_i2c_init();
 
+    /* Flash 抽象层（编译时选型 -DHAL_FLASH_CHIP_STM32H7） */
+    hal_flash_init();
+
     /* ====== 需硬件响应的外设（推迟到调度器启动后） ====== */
     /* ADC/OSPI/USB 等可能存在硬件未就绪时的超时等待 */
     const osThreadAttr_t deferred_attr = {
@@ -83,6 +88,9 @@ void app_main(void)
 
     /* CAN 通信（控制帧/反馈/状态上报线程） */
     can_task_init();
+
+    /* 参数存储（ring_storage + hal_flash，Flash 持久化） */
+    storage_task_init();
 }
 
 /* Private functions ---------------------------------------------------------*/

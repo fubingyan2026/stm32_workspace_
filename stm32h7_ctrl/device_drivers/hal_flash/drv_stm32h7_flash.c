@@ -19,6 +19,12 @@
 
 #include "stm32h7xx_hal.h"
 
+/* H723 的 Flash 控制寄存器在 0x58002000（不是其他 H7 的 0x52002000）。
+   CMSIS 头文件定义有误，这里强制修正。 */
+#undef FLASH
+#define FLASH_R_BASE_H723  0x58002000UL
+#define FLASH              ((FLASH_TypeDef *)FLASH_R_BASE_H723)
+
 #include <string.h>
 
 /* 模块日志开关 ----------------------------------------------------------------*/
@@ -100,7 +106,7 @@ static void h7_cache_invalidate_procedure(void)
 
 static hal_flash_err_t h7_init(void)
 {
-    FLASH_LOG_I("初始化: H723 Flash, %lu 个扇区, 总容量=%luKB",
+    FLASH_LOG_I("Init: H723 Flash, %lu sectors, total=%luKB",
         (unsigned long)FLASH_SECTOR_COUNT,
         (unsigned long)(FLASH_TOTAL_SIZE >> 10));
     return HAL_FLASH_OK;
@@ -129,18 +135,18 @@ static hal_flash_err_t h7_erase(uint32_t offset, size_t size)
     uint32_t end_sector = (size > 0) ? find_sector(end_addr - 1) : FLASH_SECTOR_COUNT;
 
     if (start_sector >= FLASH_SECTOR_COUNT || end_sector >= FLASH_SECTOR_COUNT) {
-        FLASH_LOG_E("擦除: 偏移越界, addr=0x%08lX, end=0x%08lX",
+        FLASH_LOG_E("Erase: offset out of range, addr=0x%08lX, end=0x%08lX",
             (unsigned long)addr, (unsigned long)end_addr);
         return HAL_FLASH_OFFSET_ERR;
     }
     if (addr != h7_sectors[start_sector].base) {
-        FLASH_LOG_E("擦除: 起始地址未扇区对齐, addr=0x%08lX, sector=%lu base=0x%08lX",
+        FLASH_LOG_E("Erase: start not sector-aligned, addr=0x%08lX, sector=%lu base=0x%08lX",
             (unsigned long)addr, (unsigned long)start_sector,
             (unsigned long)h7_sectors[start_sector].base);
         return HAL_FLASH_ALIGN_ERR;
     }
     if (end_addr != h7_sectors[end_sector].base + h7_sectors[end_sector].size) {
-        FLASH_LOG_E("擦除: 结束地址未扇区对齐, end=0x%08lX, sector=%lu end=0x%08lX",
+        FLASH_LOG_E("Erase: end not sector-aligned, end=0x%08lX, sector=%lu end=0x%08lX",
             (unsigned long)end_addr, (unsigned long)end_sector,
             (unsigned long)(h7_sectors[end_sector].base + h7_sectors[end_sector].size));
         return HAL_FLASH_ALIGN_ERR;
@@ -148,7 +154,7 @@ static hal_flash_err_t h7_erase(uint32_t offset, size_t size)
 
     uint32_t nb_sectors = end_sector - start_sector + 1;
 
-    FLASH_LOG_I("擦除: addr=0x%08lX, size=%lu, 扇区=%lu..%lu (%lu)",
+    FLASH_LOG_I("Erase: addr=0x%08lX, size=%lu, sectors=%lu..%lu (%lu)",
         (unsigned long)addr, (unsigned long)size,
         (unsigned long)start_sector, (unsigned long)end_sector,
         (unsigned long)nb_sectors);
@@ -165,15 +171,13 @@ static hal_flash_err_t h7_erase(uint32_t offset, size_t size)
     };
 
     if (HAL_FLASHEx_Erase(&erase_init, &sector_error) != HAL_OK) {
-        FLASH_LOG_E("擦除错误: addr=0x%08lX, sector=%lu, HAL_Err=0x%08lX",
+        FLASH_LOG_E("Erase error: addr=0x%08lX, sector=%lu, HAL_Err=0x%08lX",
             (unsigned long)addr, (unsigned long)sector_error,
             (unsigned long)HAL_FLASH_GetError());
         result = HAL_FLASH_ERASE_ERR;
     }
 
     HAL_FLASH_Lock();
-
-    h7_cache_invalidate_procedure();
 
     return result;
 }
@@ -184,7 +188,7 @@ static hal_flash_err_t h7_write(uint32_t offset, const uint8_t* buf, size_t size
     uint32_t addr = FLASH_BASE_ADDR + offset;
     const uint8_t* src = buf;
 
-    FLASH_LOG_I("写入: addr=0x%08lX, size=%lu",
+    FLASH_LOG_I("Write: addr=0x%08lX, size=%lu",
         (unsigned long)addr, (unsigned long)size);
 
     HAL_FLASH_Unlock();
@@ -207,9 +211,8 @@ static hal_flash_err_t h7_write(uint32_t offset, const uint8_t* buf, size_t size
         }
 
         if (!all_erased) {
-            /* H7 FLASHWORD 编程: 参数为 256-bit (32 bytes) 数据的地址 */
             if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_FLASHWORD, addr, (uint32_t)(uintptr_t)s_write_buf) != HAL_OK) {
-                FLASH_LOG_E("Flash 编程错误: i=%u, addr=0x%08lX, HAL_Error=0x%08lX",
+                FLASH_LOG_E("Flash program error: i=%u, addr=0x%08lX, HAL_Error=0x%08lX",
                     (unsigned)i, (unsigned long)addr,
                     (unsigned long)HAL_FLASH_GetError());
                 result = HAL_FLASH_WRITE_ERR;
@@ -222,7 +225,7 @@ static hal_flash_err_t h7_write(uint32_t offset, const uint8_t* buf, size_t size
             s_read_buf = *(volatile uint64_t*)(addr + j);
             uint64_t expect = *(uint64_t*)(s_write_buf + j);
             if (s_read_buf != expect) {
-                FLASH_LOG_E("Flash 读回不匹配: i=%u, addr=0x%08lX+%u, "
+                FLASH_LOG_E("Flash readback mismatch: i=%u, addr=0x%08lX+%u, "
                             "written=0x%016llX, readback=0x%016llX",
                     (unsigned)i, (unsigned long)addr, (unsigned)j,
                     (unsigned long long)expect,
@@ -238,8 +241,6 @@ static hal_flash_err_t h7_write(uint32_t offset, const uint8_t* buf, size_t size
 
 exit_write:
     HAL_FLASH_Lock();
-
-    h7_cache_invalidate_procedure();
 
     return result;
 }

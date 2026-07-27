@@ -90,7 +90,7 @@ typedef struct __attribute__((packed)) {
 #define RS_ALIGN_UP(size, align) (((size) + (align) - 1) & ~((align) - 1))
 /* 写入颗粒度（字节） */
 #define RS_WRITE_ALIGN(ctx) ((ctx)->config.write_gran / 8)
-/* 帧在 Flash 中的对齐后大小 */
+/* 帧在 Flash 中的对齐后大小（对齐到 write_gran 的整数倍） */
 #define RS_FRAME_FLASH_SIZE(ctx, len) RS_ALIGN_UP((len), RS_WRITE_ALIGN(ctx))
 /* 扇区数量 */
 #define RS_SECTOR_NUM(ctx) ((ctx)->config.area_size / (ctx)->config.sector_size)
@@ -255,10 +255,10 @@ static ring_storage_error_t rs_scan_for_latest_frame(ring_storage_context_t* ctx
                 continue;
             }
 
-            /* 读帧尾，检查 commit_magic */
+            /* 帧尾位于 frame_len - RS_FOOTER_SIZE（始终与保存时一致） */
             rs_footer_t footer;
             const uint32_t footer_addr = scan_addr
-                + RS_FRAME_FLASH_SIZE(ctx, hdr.frame_len) - RS_FOOTER_SIZE;
+                + hdr.frame_len - RS_FOOTER_SIZE;
             err = (ring_storage_error_t)
                 ctx->config.port.read(footer_addr, (uint8_t*)&footer, sizeof(footer));
 
@@ -728,22 +728,11 @@ ring_storage_error_t ring_storage_save(ring_storage_context_t* ctx)
     /* 5. 计算写入参数 */
     const size_t flash_size = RS_FRAME_FLASH_SIZE(ctx, frame_len);
     const uint32_t write_addr = RS_WRITE_ADDR(ctx);
-    const size_t body_len = frame_len - RS_FOOTER_SIZE;
-    /* 帧尾固定位于 flash_size 末尾，而非 body_len 末尾，
-     * 以保证跨颗粒度（8~256bit）的 footer 寻址一致性。 */
-    const uint32_t footer_addr = write_addr + flash_size - RS_FOOTER_SIZE;
-
-    /* 6. 写入帧体（帧头 + KV 数据），尾部不足一个对齐单元用 0xFF 填充 */
-    ret = rs_align_write(ctx, write_addr, buf, body_len);
+    /* 6. 写入完整帧（帧头 + KV 数据 + 帧尾），尾部 0xFF 填充到对齐边界
+       帧尾地址由 frame_len 决定，始终位于帧体写入范围内。 */
+    ret = rs_align_write(ctx, write_addr, buf, frame_len);
     if (ret != RING_STORAGE_OK) {
-        RING_STORAGE_LOG_E("写入帧体失败 @0x%08X", write_addr);
-        goto cleanup;
-    }
-
-    /* 7. 写入帧尾（data_crc32 + commit_magic，原子提交点） */
-    ret = rs_align_write(ctx, footer_addr, (uint8_t*)footer, RS_FOOTER_SIZE);
-    if (ret != RING_STORAGE_OK) {
-        RING_STORAGE_LOG_E("写入帧尾失败 @0x%08X", footer_addr);
+        RING_STORAGE_LOG_E("写入帧失败 @0x%08X", write_addr);
         goto cleanup;
     }
 
@@ -814,8 +803,8 @@ static ring_storage_error_t rs_load_frame(ring_storage_context_t* ctx,
         return RING_STORAGE_ERROR_BUFFER_TOO_SMALL;
     }
 
-    /* 3. 读帧尾（持锁仅覆盖 Flash I/O） */
-    footer_addr = frame_addr + RS_FRAME_FLASH_SIZE(ctx, hdr.frame_len) - RS_FOOTER_SIZE;
+    /* 3. 读帧尾（帧尾位于 frame_len - RS_FOOTER_SIZE，始终与保存时一致） */
+    footer_addr = frame_addr + hdr.frame_len - RS_FOOTER_SIZE;
 
     ctx->config.port.lock();
     ret = (ring_storage_error_t)
@@ -933,7 +922,7 @@ ring_storage_error_t ring_storage_load_version(ring_storage_context_t* ctx,
             /* 版本匹配，验证完整性后加载 */
             rs_footer_t footer;
             const uint32_t footer_addr = scan_addr
-                + RS_FRAME_FLASH_SIZE(ctx, hdr.frame_len) - RS_FOOTER_SIZE;
+                + hdr.frame_len - RS_FOOTER_SIZE;
             err = (ring_storage_error_t)
                 ctx->config.port.read(footer_addr, (uint8_t*)&footer, sizeof(footer));
 

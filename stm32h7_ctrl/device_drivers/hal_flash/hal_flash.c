@@ -259,32 +259,32 @@ const char* hal_flash_err_str(hal_flash_err_t err)
 {
     switch (err) {
     case HAL_FLASH_OK:
-        return "成功";
+        return "OK";
     case HAL_FLASH_ERASE_ERR:
-        return "擦除失败";
+        return "erase failed";
     case HAL_FLASH_READ_ERR:
-        return "读取失败";
+        return "read failed";
     case HAL_FLASH_WRITE_ERR:
-        return "写入失败";
+        return "write failed";
     case HAL_FLASH_PARAM_ERR:
-        return "参数错误";
+        return "param error";
     case HAL_FLASH_OFFSET_ERR:
-        return "偏移越界";
+        return "offset out of range";
     case HAL_FLASH_ALIGN_ERR:
-        return "地址/大小未对齐";
+        return "address/size not aligned";
     case HAL_FLASH_SIZE_ERR:
-        return "长度非法";
+        return "invalid size";
     case HAL_FLASH_NOT_INIT_ERR:
-        return "设备未初始化";
+        return "not initialized";
     case HAL_FLASH_ECC_ERR:
-        return "ECC 校验错误";
+        return "ECC error";
     case HAL_FLASH_WP_ERR:
-        return "写保护操作失败";
+        return "write protect error";
     case HAL_FLASH_OTP_ERR:
-        return "OTP 操作失败";
+        return "OTP error";
     case HAL_FLASH_CRC_ERR:
-        return "CRC 校验失败";
+        return "CRC error";
     default:
-        return "未知错误";
+        return "unknown error";
     }
 }

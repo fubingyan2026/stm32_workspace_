@@ -91,13 +91,13 @@ static hal_flash_err_t g4_init(void)
     if (READ_BIT(FLASH->OPTR, FLASH_OPTR_DBANK) == 0U) {
         g4_priv.page_size = 0x1000U;
         g4_priv.bank_size = 0x20000U;
-        FLASH_LOG_I("初始化: 单 Bank 模式, 页=%luKB, Bank=%luKB",
+        FLASH_LOG_I("Init: single-bank mode, page=%luKB, bank=%luKB",
             (unsigned long)(g4_priv.page_size >> 10),
             (unsigned long)(g4_priv.bank_size >> 10));
     } else {
         g4_priv.page_size = 0x800U;
         g4_priv.bank_size = 0x10000U;
-        FLASH_LOG_I("初始化: 双 Bank 模式, 页=%luKB, Bank=%luKB",
+        FLASH_LOG_I("Init: dual-bank mode, page=%luKB, bank=%luKB",
             (unsigned long)(g4_priv.page_size >> 10),
             (unsigned long)(g4_priv.bank_size >> 10));
     }
@@ -130,17 +130,17 @@ static hal_flash_err_t g4_erase(uint32_t offset, size_t size)
     uint32_t addr = FLASH_BASE_ADDR + offset;
 
     if (addr % page_size != 0) {
-        FLASH_LOG_E("擦除: 地址未页对齐, addr=0x%08lX, page_size=%lu",
+        FLASH_LOG_E("Erase: address not page-aligned, addr=0x%08lX, page_size=%lu",
             (unsigned long)addr, (unsigned long)page_size);
         return HAL_FLASH_ALIGN_ERR;
     }
     if (size % page_size != 0) {
-        FLASH_LOG_E("擦除: 大小未页对齐, size=%lu, page_size=%lu",
+        FLASH_LOG_E("Erase: size not page-aligned, size=%lu, page_size=%lu",
             (unsigned long)size, (unsigned long)page_size);
         return HAL_FLASH_ALIGN_ERR;
     }
 
-    FLASH_LOG_I("擦除: addr=0x%08lX, size=%lu, page_size=%lu",
+    FLASH_LOG_I("Erase: addr=0x%08lX, size=%lu, page_size=%lu",
         (unsigned long)addr, (unsigned long)size,
         (unsigned long)page_size);
 
@@ -164,7 +164,7 @@ static hal_flash_err_t g4_erase(uint32_t offset, size_t size)
         uint32_t chunk_pages = (uint32_t)(chunk / page_size);
         uint32_t page = (current_addr - bank_base) / page_size;
 
-        FLASH_LOG_I("擦除分片: bank=%lu, page=%lu, nb=%lu",
+        FLASH_LOG_I("Erase chunk: bank=%lu, page=%lu, nb=%lu",
             (unsigned long)bank, (unsigned long)page,
             (unsigned long)chunk_pages);
 
@@ -176,7 +176,7 @@ static hal_flash_err_t g4_erase(uint32_t offset, size_t size)
         };
 
         if (HAL_FLASHEx_Erase(&erase_init, &error) != HAL_OK) {
-            FLASH_LOG_E("擦除错误: addr=0x%08lX, bank=%lu, page=%lu, HAL_Err=0x%08lX",
+            FLASH_LOG_E("Erase error: addr=0x%08lX, bank=%lu, page=%lu, HAL_Err=0x%08lX",
                 (unsigned long)current_addr, (unsigned long)bank,
                 (unsigned long)page, (unsigned long)HAL_FLASH_GetError());
             result = HAL_FLASH_ERASE_ERR;
@@ -206,7 +206,7 @@ static hal_flash_err_t g4_write(uint32_t offset, const uint8_t* buf, size_t size
     uint32_t addr = FLASH_BASE_ADDR + offset;
     const uint8_t* src = buf;
 
-    FLASH_LOG_I("写入: addr=0x%08lX, size=%lu",
+    FLASH_LOG_I("Write: addr=0x%08lX, size=%lu",
         (unsigned long)addr, (unsigned long)size);
 
     HAL_FLASH_Unlock();
@@ -225,7 +225,7 @@ static hal_flash_err_t g4_write(uint32_t offset, const uint8_t* buf, size_t size
         if (s_write_buf != FLASH_ERASED_VAL) {
             if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, addr, s_write_buf) != HAL_OK) {
                 uint32_t error = HAL_FLASH_GetError();
-                FLASH_LOG_E("Flash 编程错误: i=%u, addr=0x%08lX, HAL_Error=0x%08lX",
+                FLASH_LOG_E("Flash program error: i=%u, addr=0x%08lX, HAL_Error=0x%08lX",
                     (unsigned)i, addr, (unsigned long)error);
                 result = HAL_FLASH_WRITE_ERR;
                 goto exit_write;
@@ -234,7 +234,7 @@ static hal_flash_err_t g4_write(uint32_t offset, const uint8_t* buf, size_t size
 
         s_read_buf = *(volatile uint64_t*)addr;
         if (s_read_buf != s_write_buf) {
-            FLASH_LOG_E("Flash 读回不匹配: i=%u, addr=0x%08lX, "
+            FLASH_LOG_E("Flash readback mismatch: i=%u, addr=0x%08lX, "
                         "written=0x%016llX, readback=0x%016llX",
                 (unsigned)i, addr,
                 (unsigned long long)s_write_buf,

@@ -23,7 +23,7 @@
 
 /* Private constants ---------------------------------------------------------*/
 
-#define LOG_TASK_TX_BUF_SIZE (256)
+#define LOG_TASK_TX_BUF_SIZE (64)
 #define LOG_TASK_PERIOD_MS   (20U)
 
 #define TASK_STACK_SIZE      256U

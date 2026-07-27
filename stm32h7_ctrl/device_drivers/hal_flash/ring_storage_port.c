@@ -48,7 +48,7 @@ ring_storage_error_t ring_storage_port_read(uint32_t addr,
     hal_flash_err_t ret = hal_flash_read(addr - hal_flash_get_caps()->addr, buf, size);
 
     if (ret != HAL_FLASH_OK) {
-        RING_STORAGE_PORT_LOG_E("Flash 读取失败: %s (addr=0x%08lX, size=%lu, err=%d)",
+        RING_STORAGE_PORT_LOG_E("Flash read failed: %s (addr=0x%08lX, size=%lu, err=%d)",
             hal_flash_err_str(ret),
             (unsigned long)addr, (unsigned long)size, ret);
         return RING_STORAGE_ERROR_FLASH_READ;
@@ -66,7 +66,7 @@ ring_storage_error_t ring_storage_port_write(uint32_t addr,
         size);
 
     if (ret != HAL_FLASH_OK) {
-        RING_STORAGE_PORT_LOG_E("Flash 写入失败: %s (addr=0x%08lX, size=%lu, err=%d)",
+        RING_STORAGE_PORT_LOG_E("Flash write failed: %s (addr=0x%08lX, size=%lu, err=%d)",
             hal_flash_err_str(ret),
             (unsigned long)addr, (unsigned long)size, ret);
         return RING_STORAGE_ERROR_FLASH_WRITE;
@@ -80,7 +80,7 @@ ring_storage_error_t ring_storage_port_erase(uint32_t addr, size_t size)
     hal_flash_err_t ret = hal_flash_erase(addr - hal_flash_get_caps()->addr, size);
 
     if (ret != HAL_FLASH_OK) {
-        RING_STORAGE_PORT_LOG_E("Flash 擦除失败: %s (addr=0x%08lX, size=%lu, err=%d)",
+        RING_STORAGE_PORT_LOG_E("Flash erase failed: %s (addr=0x%08lX, size=%lu, err=%d)",
             hal_flash_err_str(ret),
             (unsigned long)addr, (unsigned long)size, ret);
         return RING_STORAGE_ERROR_FLASH_ERASE;
