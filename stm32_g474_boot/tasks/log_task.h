@@ -12,8 +12,8 @@
  * 通过 log_task_set_output() 在运行时切换。
  */
 
-#ifndef LOG_TASK_H
-#define LOG_TASK_H
+#ifndef __LOG_TASK_H
+#define __LOG_TASK_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -28,9 +28,9 @@ extern "C" {
  * @brief 日志输出后端
  */
 typedef enum {
-    LOG_OUTPUT_NONE = 0, /**< 关闭输出 */
-    LOG_OUTPUT_UART, /**< USART1 DMA 输出（默认） */
-    LOG_OUTPUT_RTT, /**< SEGGER RTT 输出 */
+    LOG_TASK_OUTPUT_NONE = 0, /**< 关闭输出 */
+    LOG_TASK_OUTPUT_UART, /**< USART1 DMA 输出（默认） */
+    LOG_TASK_OUTPUT_RTT, /**< SEGGER RTT 输出 */
 } log_task_output_t;
 
 /* Exported functions prototypes ---------------------------------------------*/
@@ -52,4 +52,4 @@ void log_task_set_output(log_task_output_t mode);
 }
 #endif
 
-#endif /* LOG_TASK_H */
+#endif /* __LOG_TASK_H */

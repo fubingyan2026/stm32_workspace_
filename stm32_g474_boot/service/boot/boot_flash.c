@@ -30,7 +30,7 @@
 #define BOOT_FLASH_LOG_D(...) ((void)0)
 #endif
 
-/* Private functions ---------------------------------------------------------*/
+/* Private function prototypes -----------------------------------------------*/
 static inline uint32_t boot_flash_base(void)
 {
     return hal_flash_get_caps()->addr;
@@ -297,29 +297,6 @@ boot_flash_error_t boot_flash_write_metadata(boot_flash_context_t* ctx,
     return BOOT_FLASH_OK;
 }
 
-boot_flash_error_t boot_flash_compute_crc32(boot_flash_context_t* ctx,
-    boot_partition_t partition, uint32_t size, uint32_t* crc32)
-{
-    if (!ctx || !ctx->initialized) {
-        return BOOT_FLASH_ERROR_UNINITIALIZED;
-    }
-    if (!crc32 || partition > BOOT_PARTITION_B
-        || size > BOOT_FLASH_APP_SIZE) {
-        return BOOT_FLASH_ERROR_INVALID_PARAM;
-    }
-
-    const uint32_t addr = boot_flash_partition_addr(partition);
-
-    BOOT_FLASH_LOG_I( "CRC32: 分区=%c, 地址=0x%08lX, 大小=%lu",
-        (partition == BOOT_PARTITION_A) ? 'A' : 'B',
-        (unsigned long)addr, (unsigned long)size);
-
-    hal_flash_cache_invalidate();
-
-    *crc32 = get_CRC32_check_sum((const uint8_t*)addr, size, 0xFFFFFFFFU);
-    return BOOT_FLASH_OK;
-}
-
 boot_flash_error_t boot_flash_compute_checksum(boot_flash_context_t* ctx,
     boot_partition_t partition, uint32_t size, uint32_t* checksum)
 {
@@ -351,3 +328,5 @@ boot_flash_error_t boot_flash_compute_checksum(boot_flash_context_t* ctx,
     BOOT_FLASH_LOG_I( "累加和结果: 0x%08lX", (unsigned long)sum);
     return BOOT_FLASH_OK;
 }
+
+/* Private functions ---------------------------------------------------------*/

@@ -7,7 +7,7 @@
  * @attention
  *
  * STM32G474RBTx 通用定时器 PWM 输出驱动。
- * 当前使用 TIM5_CH1 (PA0)，可扩展至多通道。
+ * 当前使用 TIM2_CH1 (PA0)，可扩展至多通道。
  * 时钟配置（Prescaler / Period）由 CubeMX 生成，本驱动不修改。
  */
 
@@ -28,7 +28,7 @@ extern "C" {
  * @brief PWM 通道枚举
  */
 typedef enum {
-    DRV_PWM_CH_1 = 0, /**< TIM5_CH1 — PA0 */
+    DRV_PWM_CH_1 = 0, /**< TIM2_CH1 — PA0 */
     DRV_PWM_CH_NUM,   /**< 通道总数 */
 } drv_pwm_channel_t;
 
@@ -49,7 +49,7 @@ typedef enum {
 /**
  * @brief 初始化 PWM 通道
  * @param ch      通道号
- * @param htim    HAL 定时器句柄 (TIM_HandleTypeDef*)，CubeMX 生成的 &htim5 等
+ * @param htim    HAL 定时器句柄 (TIM_HandleTypeDef*)，CubeMX 生成的 &htim2 等
  * @param channel HAL 通道号 (如 TIM_CHANNEL_1)
  * @return 操作结果错误码
  */
@@ -62,7 +62,7 @@ bool drv_pwm_is_initialized(drv_pwm_channel_t ch);
 /**
  * @brief 设置 PWM 占空比
  * @param ch   通道号
- * @param duty 比较值（0 ~ ARR，由 CubeMX Period 决定；TIM5 为 0-1023）
+ * @param duty 比较值（0 ~ ARR，由 CubeMX Period 决定；TIM2 为 0-1023）
  * @return 操作结果错误码
  */
 drv_pwm_error_t drv_pwm_set_duty(drv_pwm_channel_t ch, uint32_t duty);

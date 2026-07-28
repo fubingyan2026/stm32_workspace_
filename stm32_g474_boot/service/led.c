@@ -38,7 +38,7 @@ static fsm_state_t led_fsm_breathing_handler(fsm_t* ctx);
 static void led_fsm_on_entry(fsm_t* ctx, fsm_state_t state);
 static void led_process_cmds(led_handle_t* handle);
 
-/* Private functions ---------------------------------------------------------*/
+/* Private function prototypes -----------------------------------------------*/
 
 /**
  * @brief 物理写引脚 PWM
@@ -397,6 +397,8 @@ led_blink_phase_t led_get_blink_phase(led_handle_t* instance)
     return instance ? (led_blink_phase_t)instance->blink_code_phase
                     : LED_BLINK_PHASE_INTERVAL;
 }
+
+/* Private functions ---------------------------------------------------------*/
 
 void led_set_callbacks(led_handle_t* instance, led_state_change_cb_t state_cb,
     led_blink_phase_cb_t blink_phase_cb,

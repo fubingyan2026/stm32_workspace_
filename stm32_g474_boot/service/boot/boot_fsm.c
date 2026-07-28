@@ -127,7 +127,7 @@ bool boot_fsm_init(boot_fsm_context_t* ctx, void* fsm_instance,
 
 void boot_fsm_process_msg(boot_fsm_context_t* ctx, const drv_can_msg_t* msg)
 {
-    if (!ctx || !msg) {
+    if (!ctx || !ctx->initialized || !msg) {
         return;
     }
 
@@ -166,7 +166,7 @@ void boot_fsm_process_msg(boot_fsm_context_t* ctx, const drv_can_msg_t* msg)
 void boot_fsm_tick(boot_fsm_context_t* ctx)
 {
     uint32_t elapsed;
-    if (!ctx) {
+    if (!ctx || !ctx->initialized) {
         return;
     }
 
@@ -204,12 +204,18 @@ void boot_fsm_tick(boot_fsm_context_t* ctx)
 
 uint8_t boot_fsm_get_state(const boot_fsm_context_t* ctx)
 {
-    return ctx ? fsm_current_state((fsm_t*)ctx->fsm) : 0U;
+    if (!ctx || !ctx->initialized) {
+        return 0U;
+    }
+    return fsm_current_state((fsm_t*)ctx->fsm);
 }
 
 bool boot_fsm_get_response(boot_fsm_context_t* ctx, drv_can_msg_t* msg)
 {
-    if (!ctx || !msg || !ctx->has_response) {
+    if (!ctx || !ctx->initialized || !msg) {
+        return false;
+    }
+    if (!ctx->has_response) {
         return false;
     }
     *msg = ctx->response_msg;
@@ -598,7 +604,7 @@ static fsm_state_t handler_verify_pending(fsm_t* fsm)
     if (calculated_checksum != ctx->fw_checksum) {
         BOOT_FSM_LOG_E( "校验和不匹配: 期望 0x%08lX, 计算 0x%08lX",
             (unsigned long)ctx->fw_checksum, (unsigned long)calculated_checksum);
-        send_nack(ctx, BOOT_CMD_VERIFY, BOOT_STATUS_CRC32_ERR);
+        send_nack(ctx, BOOT_CMD_VERIFY, BOOT_STATUS_CHECKSUM_ERR);
         return BOOT_STATE_IDLE;
     }
 

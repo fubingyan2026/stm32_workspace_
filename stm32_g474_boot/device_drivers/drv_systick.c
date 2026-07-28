@@ -3,7 +3,7 @@
 //
 
 /**
- * @file    hal_systick.c
+ * @file    drv_systick.c
  * @author  fubingyan
  * @version V1.0.0
  * @date    2025-06-07
@@ -16,8 +16,8 @@
 
 /* Private variables ---------------------------------------------------------*/
 
-static uint8_t fac_us = 0;
-static uint32_t fac_ms = 0;
+static uint8_t s_fac_us = 0;
+static uint32_t s_fac_ms = 0;
 
 /* Exported functions --------------------------------------------------------*/
 
@@ -28,8 +28,8 @@ static uint32_t fac_ms = 0;
  */
 void delay_init(void)
 {
-    fac_us = SystemCoreClock / 1000000;
-    fac_ms = SystemCoreClock / 1000;
+    s_fac_us = SystemCoreClock / 1000000;
+    s_fac_ms = SystemCoreClock / 1000;
 }
 
 /**
@@ -47,7 +47,7 @@ void delay_us(const uint16_t nus)
     uint32_t tcnt = 0;
     uint32_t reload = 0;
     reload = SysTick->LOAD;
-    ticks = nus * fac_us;
+    ticks = nus * s_fac_us;
     told = SysTick->VAL;
     for (;;) {
         tnow = SysTick->VAL;

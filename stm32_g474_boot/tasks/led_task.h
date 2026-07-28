@@ -9,8 +9,8 @@
  * @brief   LED 状态指示任务（sw_timer 驱动）
  */
 
-#ifndef LED_TASK_H
-#define LED_TASK_H
+#ifndef __LED_TASK_H
+#define __LED_TASK_H
 
 #include <stdint.h>
 
@@ -31,4 +31,4 @@ void led_task_start_blink(uint16_t count, uint16_t cycle_ms);
 }
 #endif
 
-#endif /* LED_TASK_H */
+#endif /* __LED_TASK_H */

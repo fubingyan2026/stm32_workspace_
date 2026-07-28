@@ -134,17 +134,6 @@ boot_flash_error_t boot_flash_write_metadata(boot_flash_context_t* ctx,
     const boot_metadata_t* metadata);
 
 /**
- * @brief 计算指定分区的 CRC32
- * @param ctx 上下文指针
- * @param partition 分区标识
- * @param size 数据大小
- * @param crc32 输出：CRC32 值
- * @return 操作结果
- */
-boot_flash_error_t boot_flash_compute_crc32(boot_flash_context_t* ctx,
-    boot_partition_t partition, uint32_t size, uint32_t* crc32);
-
-/**
  * @brief 计算指定分区的 32-bit 累加和校验
  * @param ctx 上下文指针
  * @param partition 分区标识

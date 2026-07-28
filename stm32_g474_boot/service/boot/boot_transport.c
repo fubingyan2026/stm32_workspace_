@@ -17,11 +17,6 @@ static const uint8_t s_supported_frame_sizes[] = {
 
 /* Exported functions --------------------------------------------------------*/
 
-const uint8_t* boot_transport_supported_frame_sizes(void)
-{
-    return s_supported_frame_sizes;
-}
-
 bool boot_transport_is_valid_frame_size(uint8_t frame_size)
 {
     for (uint8_t i = 0U; i < BOOT_FRAME_SIZES_COUNT; i++) {

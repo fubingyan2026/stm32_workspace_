@@ -40,7 +40,7 @@ typedef uint8_t (*boot_fsm_write_block_cb_t)(void* user_data,
 typedef uint8_t (*boot_fsm_verify_block_cb_t)(void* user_data,
     uint32_t offset, const uint8_t* data, uint32_t len);
 
-/** 状态机回调：整包 CRC32 校验 */
+/** 状态机回调：整包 32-bit 累加和校验 */
 typedef uint8_t (*boot_fsm_verify_fw_cb_t)(void* user_data,
     uint32_t size, uint32_t* checksum);
 
@@ -73,7 +73,7 @@ typedef struct {
     /* 回调函数 */
     boot_fsm_write_block_cb_t write_block_cb;       /**< 写 Block 回调 */
     boot_fsm_verify_block_cb_t verify_block_cb;     /**< 校验 Block 回调 */
-    boot_fsm_verify_fw_cb_t verify_fw_cb;           /**< 整包 CRC32 校验回调 */
+    boot_fsm_verify_fw_cb_t verify_fw_cb;           /**< 整包 32-bit 累加和校验回调 */
     boot_fsm_erase_cb_t erase_cb;                   /**< 擦除分区回调 */
     boot_fsm_set_flag_cb_t set_flag_cb;             /**< 设置启动标志回调 */
     boot_fsm_reset_cb_t reset_cb;                   /**< 系统复位回调 */

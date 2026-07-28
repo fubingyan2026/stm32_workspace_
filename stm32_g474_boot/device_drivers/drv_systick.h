@@ -1,5 +1,5 @@
-#ifndef HAL_SYSTICK_H
-#define HAL_SYSTICK_H
+#ifndef __DRV_SYSTICK_H
+#define __DRV_SYSTICK_H
 
 #include "stdint.h"
 
@@ -13,4 +13,4 @@ uint32_t micros(void);
 
 uint32_t millis(void);
 
-#endif
+#endif /* __DRV_SYSTICK_H */

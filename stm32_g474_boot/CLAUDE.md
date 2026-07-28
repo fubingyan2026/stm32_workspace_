@@ -21,20 +21,22 @@ Four presets are available: `Debug`, `Release` (`-Os -g0`), `RelWithDebInfo`, `M
 
 ### clangd
 
-`.clangd` points `CompilationDatabase` to `build/MinSizeRel`. For IDE intellisense, use the MinSizeRel preset so `compile_commands.json` is available at that path. (To switch, edit `.clangd` and reconfigure with the matching preset.)
+`.clangd` points `CompilationDatabase` to `build/RelWithDebInfo`. For IDE intellisense, use the RelWithDebInfo preset so `compile_commands.json` is available at that path. (To switch, edit `.clangd` and reconfigure with the matching preset.)
 
 ## Flash layout
 
-The STM32G474 has 128 KB of internal flash. The linker script (`STM32G474XX_FLASH.ld`) only maps the **bootloader's own 36 KB** region — App partitions are accessed at runtime via absolute-address flash operations, not linker symbols.
+The STM32G474 has 128 KB of internal flash. The linker script (`STM32G474XX_FLASH.ld`) maps the **bootloader's own 64 KB** region — App partitions are accessed at runtime via absolute-address flash operations, not linker symbols.
 
 | Region | Address | Size | Notes |
 |--------|---------|------|-------|
-| Bootloader | `0x08000000` | 36 KB | Linked region; contains this project |
-| App A | `0x08009000` | 36 KB | Active/standby firmware slot |
-| App B | `0x08012000` | 36 KB | Alternate firmware slot |
-| Metadata | `0x0801B000` | 4 KB | Aligned to min page size (4 KB); stores `boot_metadata_t` |
+| Bootloader | `0x08000000` | 64 KB | Linked region; contains this project |
+| App A | `0x08010000` | 24 KB | Active/standby firmware slot |
+| App B | `0x08016000` | 24 KB | Alternate firmware slot |
+| Metadata | `0x0801C000` | 16 KB | Managed via `ring_storage` KV; stores `boot_metadata_t` |
 
-> **Note:** Sizes and addresses are computed from macros in [`boot_flash.c`](service/boot/boot_flash.c#L16-L19): `BOOT_FLASH_BOOT_SIZE = 0x9000`, `BOOT_FLASH_APP_SIZE = 0x9000`, `BOOT_FLASH_META_SIZE = 0x1000`. The protocol spec ([`boot_protocol_spec.md`](boot_protocol_spec.md)) documents App partitions as 40 KB — if that is the intended target, the code macros need updating.
+> **Note:** Sizes are defined in [`boot_flash.h`](service/boot/boot_flash.h#L25-L27): `BOOT_FLASH_BOOT_SIZE = 0x10000`, `BOOT_FLASH_APP_SIZE = 0x6000`, `BOOT_FLASH_META_SIZE = 0x4000`.
+
+**Linker script note:** [`STM32G474XX_FLASH.ld`](STM32G474XX_FLASH.ld) maps `FLASH` as 64 KB (`LENGTH = 64K`), matching the bootloader region. Do not enlarge the linker FLASH region without understanding the partition boundary.
 
 The flash driver (`drv_stm32g4_flash`) auto-detects single-bank (4 KB pages) vs. dual-bank (2 KB pages) mode at init by reading the `FLASH->OPTR` DBANK bit, and handles cross-bank erase by splitting operations at bank boundaries.
 
@@ -53,6 +55,26 @@ The flash driver (`drv_stm32g4_flash`) auto-detects single-bank (4 KB pages) vs.
 | `updata_tool/` | **User** | Host-side Python/PySide6 flashing tool that drives the bootloader over CAN (via CANable USB-CAN adapter). |
 | `stm32_g474_boot.ioc` | CubeMX **config** | Source of truth for pin mux, clocks, and peripheral assignment. |
 | `.kilo/` | **AI-generated** | Planning directory managed by Claude Code. Do not commit or modify manually. |
+
+## Multi-project workspace
+
+This project is part of a larger workspace at `stm32_workspace_/` with sibling projects:
+
+| Directory | Description |
+|---|---|
+| `stm32_g474_boot` | **This project** — G474 bootloader |
+| `stm32h7_ctrl` | H7 controller firmware (uses the same `hal_flash` abstraction, same middleware) |
+| `E1_Hand_G474` | G474 dexterous hand firmware |
+| `E1_Master_Power_Manage` | Power management firmware |
+| `public_layer/` | **Shared middleware** (`m_middlewares/`) — single source of truth used by all projects |
+
+### Shared middleware pattern
+
+The middleware lives at `../public_layer/m_middlewares/` (not locally). The CMake build maps it via:
+```cmake
+add_subdirectory(../public_layer/m_middlewares m_middlewares)
+```
+This creates a junction reference — the static library `m_middlewares` is built once per project. Modifications to `public_layer/m_middlewares/` affect all projects. Do not duplicate middleware code locally.
 
 ## Architecture
 
@@ -91,7 +113,7 @@ Tasks are thin — they own timers and stitch layers together. Services contain 
 
 ### Bootloader design
 
-This project implements a **dual A/B partition** firmware upgrade system over CAN/CAN FD. The protocol is fully specified in [`boot_protocol_spec.md`](boot_protocol_spec.md). A critical bug fix for CAN FD DLC padding is documented in [`can_fd_dlc_padding_fix.md`](can_fd_dlc_padding_fix.md).
+This project implements a **dual A/B partition** firmware upgrade system over CAN/CAN FD. The protocol is fully specified in [`boot_protocol_spec.md`](boot_protocol_spec.md). The CAN FD DLC padding fix is documented in [`can_fd_dlc_padding_fix.md`](can_fd_dlc_padding_fix.md).
 
 **Protocol basics:**
 - CAN IDs `0x701` (Host→Node) and `0x702` (Node→Host) — Host ID configurable in the GUI, Node ID = Host ID + 1
@@ -117,12 +139,40 @@ This project implements a **dual A/B partition** firmware upgrade system over CA
 
 **CAN FD DLC padding caveat:** CAN FD data lengths are discrete (`{8, 12, 16, 20, 24, 32, 48, 64}`). When a DATA_END frame doesn't exactly fill a discrete length, the host pads with zero bytes. The board-side parser must **cap `rem_len` by free buffer space** rather than trusting the DLC-derived length — see [`can_fd_dlc_padding_fix.md`](can_fd_dlc_padding_fix.md) for the full analysis.
 
+**CAN Bus-Off auto recovery:** The boot task polls `drv_can_is_bus_off()` every ~100 ms (via `sw_timer` tick counter). When Bus-Off is detected, `drv_can_recover()` is called to re-initialize the CAN controller, allowing recovery from cable faults without a hardware reset.
+
 **Boot decision (`boot_task_try_boot_app`):**
 1. Read metadata page at `0x0801B000` (computed as `BOOT_FLASH_APP_B_ADDR + BOOT_FLASH_APP_SIZE`)
 2. If `magic != 0x424F4F54` or `upgrade_flag != 0` or App 32-bit additive checksum mismatch → enter bootloader
-3. Otherwise → jump to App (currently commented out; returns `true`)
+3. Otherwise → jump to App (currently **commented out** — the jump assembly is disabled and the function returns `false`; a real production build should uncomment the `__set_MSP` / function-pointer jump in `boot_task.c:137-141`)
 
 **A/B swap logic:** New firmware always goes to the *opposite* partition of the currently-active App. The old partition is never erased until the new firmware is fully verified and committed, ensuring an unbrickable update.
+
+### hal_flash abstraction layer
+
+The flash subsystem uses a multi-platform abstraction with compile-time chip selection:
+
+```
+device_drivers/hal_flash/
+├── hal_flash.h           → Public API (hal_flash_dev, read/write/erase/lock)
+├── hal_flash_base.h      → Base types (hal_flash_ops_t, lock-depth)
+├── hal_flash.c           → Singleton dispatch, lock management
+├── drv_stm32g4_flash.c   → STM32G4 ops (64-bit program, dual-bank auto-detect)
+├── drv_stm32f4_flash.c   → STM32F4 ops
+├── drv_stm32g4_flash.h   → G4 private types
+└── ring_storage_port.c   → Ring storage flash port (key-value storage on flash)
+```
+
+Select chip at compile time via `target_compile_definitions`:
+- `HAL_FLASH_CHIP_STM32G4` (this project)
+- `HAL_FLASH_CHIP_STM32F4`
+- `HAL_FLASH_CHIP_STM32H7` (reserved, no driver yet)
+
+Key design features:
+- **Singleton**: `hal_flash_dev()` returns the single device instance — no `dev` parameter in public API
+- **Lock depth**: Reentrant lock with depth counter (nested lock/unlock pairs), defaults to `__disable_irq()`/`__enable_irq()`; custom lock callbacks via `hal_flash_set_lock_cb()`
+- **Operations table**: `hal_flash_ops_t` struct with function pointers for init/read/write/erase/wait — each chip driver fills this
+- **Compile-time polymorphism**: No vtable overhead — which driver compiles in is decided by `#ifdef HAL_FLASH_CHIP_STM32G4` in `hal_flash.c`
 
 ### Middleware ecosystem
 
@@ -136,7 +186,17 @@ This project implements a **dual A/B partition** firmware upgrade system over CA
 - **`log`** — ESP32-style colored logging (`LOG_E`/`W`/`I`/`D`/`T` macros). Output buffered through a `kfifo` for non-blocking DMA TX.
 - **`protocol_packer`/`protocol_parser`** — Stateless frame builder / stateful frame de-serializer with configurable header/footer/checksum callbacks. Generic — not bootloader-specific.
 - **`key_base`** — Button debounce with multi-event detection (click, double-click, long press, etc.).
+- **`ring_storage`** (Third_Party) — Flash-backed key-value storage with wear leveling. Used for persistent configuration.
 - **Algorithms**: PID (position/incremental), gimbal PID (cascade + gyro feedforward), MIT impedance control, PT1/Biquad/Slew/LMA filters, fast trig (`sin_approx`, `atan2_approx`), median filters, software PLL, CRC8/CRC16/CRC32.
+
+**Third_Party middleware also available** (not in `public.h` umbrella — include directly):
+- **CmBacktrace**: ARM Cortex-M hard fault analyzer — dumps call stack, registers, and fault status on crash. `#include "cm_backtrace.h"`, invoke `cm_backtrace_fault()` from HardFault_Handler.
+- **lwmem**: Lightweight dynamic memory allocator (only use in non-bootloader projects — this project avoids `malloc`).
+- **SEGGER_RTT**: Real-time terminal I/O via JTAG/SWD. Log output can be toggled at runtime between UART and RTT via `log_task_set_output()`.
+
+### Log system
+
+Logs can output to **UART** (via `drv_log_uart`, DMA TX), **SEGGER_RTT** (via JTAG/SWD), or be **disabled** — switched at runtime by `log_task_set_output(LOG_OUTPUT_UART | LOG_OUTPUT_RTT | LOG_OUTPUT_NONE)`. Default is UART. The log module uses an internal `kfifo` for non-blocking writes; a 20 ms `sw_timer` periodically drains the FIFO to the selected output.
 
 ## Host-side flashing tool (`updata_tool/`)
 

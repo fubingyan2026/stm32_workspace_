@@ -56,7 +56,7 @@ typedef enum {
     BOOT_STATUS_BLOCK_CHECKSUM    = 0x01U, /**< Block 累加和校验失败 */
     BOOT_STATUS_FLASH_WRITE_ERR   = 0x02U, /**< Flash 写入失败 */
     BOOT_STATUS_FLASH_VERIFY_ERR  = 0x03U, /**< Flash 读回校验失败 */
-    BOOT_STATUS_CRC32_ERR         = 0x04U, /**< 整包 CRC32 校验失败 */
+    BOOT_STATUS_CHECKSUM_ERR      = 0x04U, /**< 整包 32-bit 累加和校验失败 */
     BOOT_STATUS_INVALID_FRAME     = 0x05U, /**< 无效帧 */
     BOOT_STATUS_INVALID_STATE     = 0x06U, /**< 状态机不允许此命令 */
     BOOT_STATUS_TIMEOUT           = 0x07U, /**< 超时 */
@@ -69,12 +69,6 @@ typedef enum {
 } boot_status_t;
 
 /* Exported functions prototypes ---------------------------------------------*/
-
-/**
- * @brief 获取支持的离散帧长度数组
- * @return 指向静态数组的指针
- */
-const uint8_t* boot_transport_supported_frame_sizes(void);
 
 /**
  * @brief 校验 Max_Frame_Size 是否在离散长度集合中

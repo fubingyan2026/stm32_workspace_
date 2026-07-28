@@ -30,7 +30,7 @@
 
 static uint8_t s_tx_buf[LOG_TASK_TX_BUF_SIZE];
 static sw_timer_t s_log_timer;
-static log_task_output_t s_output_mode = LOG_OUTPUT_UART;
+static log_task_output_t s_output_mode = LOG_TASK_OUTPUT_UART;
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -84,13 +84,13 @@ static void log_timer_cb(void* user_data)
         uint32_t actual = log_tx_get(s_tx_buf, log_len);
         if (actual > 0) {
             switch (s_output_mode) {
-            case LOG_OUTPUT_NONE:
+            case LOG_TASK_OUTPUT_NONE:
                 /* 不输出 */
                 break;
-            case LOG_OUTPUT_RTT:
+            case LOG_TASK_OUTPUT_RTT:
                 SEGGER_RTT_Write(0, s_tx_buf, actual);
                 break;
-            case LOG_OUTPUT_UART:
+            case LOG_TASK_OUTPUT_UART:
                 if (!drv_log_uart_is_tx_busy()) {
                     drv_log_uart_send(s_tx_buf, actual);
                 }

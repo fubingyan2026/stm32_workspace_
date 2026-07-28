@@ -28,7 +28,7 @@ STATUS_OK = 0x00
 STATUS_BLOCK_CHECKSUM = 0x01
 STATUS_FLASH_WRITE_ERR = 0x02
 STATUS_FLASH_VERIFY_ERR = 0x03
-STATUS_CRC32_ERR = 0x04
+STATUS_CHECKSUM_ERR = 0x04
 STATUS_INVALID_FRAME = 0x05
 STATUS_INVALID_STATE = 0x06
 STATUS_TIMEOUT = 0x07
@@ -44,7 +44,7 @@ STATUS_NAMES = {
     0x01: "BLOCK_CHECKSUM",
     0x02: "FLASH_WRITE_ERR",
     0x03: "FLASH_VERIFY_ERR",
-    0x04: "CRC32_ERR",
+    0x04: "CHECKSUM_ERR",
     0x05: "INVALID_FRAME",
     0x06: "INVALID_STATE",
     0x07: "TIMEOUT",
@@ -210,19 +210,6 @@ def is_response_nack(data: bytes) -> bool:
 def compute_block_checksum(data: bytes) -> int:
     """16-bit 累加和校验（用于每 1KB Block，§4.5）。"""
     return sum(data) & 0xFFFF
-
-
-def compute_crc32(data: bytes) -> int:
-    """标准 CRC32 (用于整包固件，§4.3 METADATA)。"""
-    crc = 0xFFFFFFFF
-    for b in data:
-        crc ^= b
-        for _ in range(8):
-            if crc & 1:
-                crc = (crc >> 1) ^ 0xEDB88320
-            else:
-                crc >>= 1
-    return crc ^ 0xFFFFFFFF
 
 
 def compute_checksum32(data: bytes) -> int:

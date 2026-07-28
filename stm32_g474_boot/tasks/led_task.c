@@ -9,13 +9,17 @@
  * @brief   LED 状态指示任务实现（sw_timer 驱动，无需外部 poll）
  */
 
+/* Includes ------------------------------------------------------------------*/
 #include "led_task.h"
+
 #include "drv_pwm.h"
 #include "drv_systick.h"
 #include "led.h"
 #include "log.h"
 #include "sw_timer.h"
 #include "tim.h"
+
+/* Private constants ---------------------------------------------------------*/
 
 #define LED_TASK_DEFAULT_BLINK_COUNT 3
 #define LED_TASK_DEFAULT_BLINK_CYCLE_MS 200
@@ -24,35 +28,19 @@
 /** @brief LED 刷新周期 (ms) */
 #define LED_TASK_REFRESH_PERIOD_MS (10U)
 
+/* Private variables ---------------------------------------------------------*/
+
 static led_handle_t s_led_handle;
 static sw_timer_t s_led_timer;
-volatile uint32_t breathe_value=0;
+static volatile uint32_t s_breathe_value = 0U;
 
-static void led_task_write_pin(uint16_t value)
-{
-    breathe_value = LED_BREATH_MAX_DUTY_DEFAULT- value;
-    drv_pwm_set_duty(DRV_PWM_CH_1, value);
-}
+/* Private function prototypes -----------------------------------------------*/
+static void led_task_write_pin(uint16_t value);
 
-static void led_task_on_state_change(led_handle_t* instance,
-    led_state_t new_state, void* user_data)
-{
-    (void)user_data;
+static void led_task_on_state_change(led_handle_t* instance, led_state_t new_state, void* user_data);
+static void led_timer_cb(void* user_data);
 
-    if (new_state == LED_STATE_OFF) {
-        led_task_start_blink(LED_TASK_DEFAULT_BLINK_COUNT,
-            LED_TASK_DEFAULT_BLINK_CYCLE_MS);
-    }
-}
-
-/**
- * @brief sw_timer 回调：驱动 LED FSM
- */
-static void led_timer_cb(void* user_data)
-{
-    (void)user_data;
-    led_task_refresh();
-}
+/* Exported functions --------------------------------------------------------*/
 
 void led_task_start_blink(uint16_t count, uint16_t cycle_ms)
 {
@@ -69,7 +57,7 @@ void led_task_start_blink(uint16_t count, uint16_t cycle_ms)
 
 void led_task_init(void)
 {
-    /* 初始化 PWM 输出 — TIM5_CH1 (PA0) */
+    /* 初始化 PWM 输出 — TIM2_CH1 (PA0) */
     if (drv_pwm_init(DRV_PWM_CH_1, &htim2, TIM_CHANNEL_1) != DRV_PWM_OK) {
         LOG_E("led_task", "PWM 初始化失败");
         return;
@@ -97,4 +85,32 @@ void led_task_init(void)
     };
     sw_timer_init(&s_led_timer, &timer_cfg);
     sw_timer_start(&s_led_timer, LED_TASK_REFRESH_PERIOD_MS, 0);
+}
+
+/* Private functions ---------------------------------------------------------*/
+
+static void led_task_write_pin(uint16_t value)
+{
+    s_breathe_value = LED_BREATH_MAX_DUTY_DEFAULT - value;
+    drv_pwm_set_duty(DRV_PWM_CH_1, value);
+}
+
+static void led_task_on_state_change(led_handle_t* instance,
+    led_state_t new_state, void* user_data)
+{
+    (void)user_data;
+
+    if (new_state == LED_STATE_OFF) {
+        led_task_start_blink(LED_TASK_DEFAULT_BLINK_COUNT,
+            LED_TASK_DEFAULT_BLINK_CYCLE_MS);
+    }
+}
+
+/**
+ * @brief sw_timer 回调：驱动 LED FSM
+ */
+static void led_timer_cb(void* user_data)
+{
+    (void)user_data;
+    led_task_refresh();
 }
