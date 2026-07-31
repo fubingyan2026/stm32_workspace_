@@ -48,13 +48,7 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # 批量收集应用层源代码（middleware 已由 m_middlewares 库管理）
 aux_source_directory(${CMAKE_SOURCE_DIR}/tasks TASKS)
 aux_source_directory(${CMAKE_SOURCE_DIR}/device_drivers DEV_DRV)
-
-# device_drivers 子目录（显式列出，排除其他芯片型号的驱动文件）
-set(DEV_DRV_HAL_FLASH
-    ${CMAKE_SOURCE_DIR}/device_drivers/hal_flash/hal_flash.c
-    ${CMAKE_SOURCE_DIR}/device_drivers/hal_flash/drv_stm32f4_flash.c
-    ${CMAKE_SOURCE_DIR}/device_drivers/hal_flash/ring_storage_port.c
-)
+aux_source_directory(${CMAKE_SOURCE_DIR}/../public_layer/device_drivers/hal_flash DEV_DRV_HAL_FLASH)
 
 aux_source_directory(${CMAKE_SOURCE_DIR}/service SERVICE)
 
@@ -73,6 +67,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     tasks
     device_drivers
     service
+    ../public_layer/device_drivers/hal_flash
 )
 
 # Add project symbols (macros)

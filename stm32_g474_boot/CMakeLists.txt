@@ -40,7 +40,7 @@ add_subdirectory(cmake/stm32cubemx)
 # 批量收集源代码目录
 aux_source_directory(${CMAKE_SOURCE_DIR}/tasks TASKS)
 aux_source_directory(${CMAKE_SOURCE_DIR}/device_drivers DEV_DRV)
-aux_source_directory(${CMAKE_SOURCE_DIR}/device_drivers/hal_flash DEV_DRV_HAL_FLASH)
+aux_source_directory(${CMAKE_SOURCE_DIR}/../public_layer/device_drivers/hal_flash DEV_DRV_HAL_FLASH)
 
 # Middleware 通过 junction 映射 + add_subdirectory 引用为独立静态库
 add_subdirectory(../public_layer/m_middlewares m_middlewares)
@@ -76,8 +76,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     service/boot
 
     device_drivers
-    device_drivers/hal_flash
-
+    ../public_layer/device_drivers/hal_flash
 )
 
 # Add project symbols (macros)

@@ -48,7 +48,7 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # 批量收集源代码目录
 aux_source_directory(${CMAKE_SOURCE_DIR}/tasks TASKS)
 aux_source_directory(${CMAKE_SOURCE_DIR}/device_drivers DEV_DRV)
-aux_source_directory(${CMAKE_SOURCE_DIR}/device_drivers/hal_flash DEV_HAL_FLASH)
+aux_source_directory(${CMAKE_SOURCE_DIR}/../public_layer/device_drivers/hal_flash DEV_DRV_HAL_FLASH)
 
 aux_source_directory(${CMAKE_SOURCE_DIR}/service SERVICE)
 
@@ -67,8 +67,8 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
     tasks
     device_drivers
-    device_drivers/hal_flash
     service
+    ../public_layer/device_drivers/hal_flash
 )
 
 # Add project symbols (macros)
