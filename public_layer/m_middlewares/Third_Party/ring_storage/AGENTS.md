@@ -49,18 +49,18 @@ commit_magic 是**最后写入**的字段，作为原子提交点。在 STM32G4 
 
 ### 磨损均衡（顺序轮转 GC）
 
-GC 策略为 **Round-Robin 顺序轮转**：每次 GC 选择 `(active_sector_index + 1) % N` 号扇区作为目标，所有 N 个扇区均匀参与磨损。
+GC 策略为 **Round-Robin 顺序轮转 + 懒擦除**：每次 GC 选择 `(active_sector_index + 1) % N` 号扇区作为目标，所有 N 个扇区均匀参与磨损。旧活动扇区在切换后不立即擦除，其历史帧保留到回绕时才被擦除——整个区域全部参与存储，历史深度为 N × 扇区容量。
 
 ```
-GC 流程：
+GC 流程（懒擦除）：
 1. 计算 next_index = (active_sector_index + 1) % sector_num
-2. 若目标扇区非空则先擦除（处理 init 后首次 GC 的残留数据）
+2. 若目标扇区非空（已写满一轮，含旧数据）则先擦除
 3. 分块复制最新帧到目标扇区起始（每块对齐到 write_gran）
-4. 擦除原活动扇区
-5. active_sector_index = next_index，active_sector_addr 更新
+4. active_sector_index = next_index，active_sector_addr 更新
+   （旧活动扇区不立即擦除，其历史帧保留，回绕时再被擦除）
 ```
 
-断电安全保证：步骤 3 失败不会执行步骤 4，原扇区数据完好。步骤 4 失败时两个扇区各有一份有效帧，下次 init 扫描时取 version 最大的。
+断电安全保证：目标扇区先擦除、后写最新帧，擦除操作永不破坏最新帧；复制失败不影响旧活动扇区。旧活动扇区懒擦除后，任意时刻最新帧至少有一份完整副本，多次断电后 init 扫描始终取 version 最大的有效帧。
 
 ### 写入颗粒度自适应
 

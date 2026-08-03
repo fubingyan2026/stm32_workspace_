@@ -66,7 +66,8 @@
 #define RS_FRAME_OVERHEAD (RS_HEADER_SIZE + RS_FOOTER_SIZE)
 /* 最大写入对齐字节数（256bit = 32B，STM32H7） */
 #define RS_MAX_ALIGN_BYTES (RING_STORAGE_WRITE_GRAN_256 / 8)
-
+/* 当扇区切换时是否擦除旧的数据，开启可以减小初始化查找最新数据的时间但是会去掉历史数据*/
+#define RS_GC_ERASE_OLD_FLASH false
 /* Private types -------------------------------------------------------------*/
 
 /* 帧头结构（紧凑，20 字节） */
@@ -347,15 +348,17 @@ static ring_storage_error_t rs_scan_for_latest_frame(ring_storage_context_t* ctx
 }
 
 /**
- * @brief   垃圾回收：搬迁最新帧到空扇区，擦除旧扇区
+ * @brief   垃圾回收：搬迁最新帧到目标扇区，懒擦除旧扇区
  * @param   ctx 上下文指针
  * @return  操作结果错误码
- * @note    GC 策略（顺序轮转）：
+ * @note    GC 策略（顺序轮转 + 懒擦除）：
  *          1. 按 round-robin 选择下一个扇区 (active_index + 1) % N
- *          2. 若目标扇区非空则先擦除
- *          3. 将最新帧复制到目标扇区起始
- *          4. 擦除原活动扇区
- *          5. 更新活动扇区和写入偏移
+ *          2. 若目标扇区非空（已写满一轮，含旧数据）则先擦除
+ *          3. 分块复制最新帧到目标扇区起始
+ *          4. 更新活动扇区和写入偏移
+ *          旧活动扇区不立即擦除：其历史帧保留，回绕时作为目标扇区被擦除。
+ *          整个区域全部参与存储（历史深度 = N × 扇区容量），
+ *          断电时最新帧在任何时刻都至少保留一份完整副本。
  */
 static ring_storage_error_t rs_gc_collect(ring_storage_context_t* ctx)
 {
@@ -429,6 +432,7 @@ static ring_storage_error_t rs_gc_collect(ring_storage_context_t* ctx)
         ctx->write_offset = 0;
     }
 
+#if RS_GC_ERASE_OLD_FLASH
     /* 3. 擦除原活动扇区 */
     uint32_t old_sec = ctx->active_sector_addr;
     if (old_sec != empty_sec) {
@@ -439,7 +443,7 @@ static ring_storage_error_t rs_gc_collect(ring_storage_context_t* ctx)
             return RING_STORAGE_ERROR_GC_FAILED;
         }
     }
-
+#endif
     /* 4. 切换活动扇区 */
     ctx->active_sector_addr = empty_sec;
     ctx->active_sector_index = next_index;
