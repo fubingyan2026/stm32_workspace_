@@ -76,7 +76,7 @@ void MX_GPIO_Init(void)
   /*Configure GPIO pins : MOTOR_POWER_CHG_OCP_FLAG_Pin DBR_LSD_OCP_FLAG_Pin E_STOP_ON_Pin */
   GPIO_InitStruct.Pin = MOTOR_POWER_CHG_OCP_FLAG_Pin|DBR_LSD_OCP_FLAG_Pin|E_STOP_ON_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /*Configure GPIO pins : EXT_PGOOD_12V_Pin EXT_PGOOD_24V_Pin COMP_PGOOD_24V_Pin AUX_POWER_PGD_Pin
@@ -84,7 +84,7 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Pin = EXT_PGOOD_12V_Pin|EXT_PGOOD_24V_Pin|COMP_PGOOD_24V_Pin|AUX_POWER_PGD_Pin
                           |MOTOR_POWER_PGD_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
   /*Configure GPIO pins : HSD1_IN_24V_Pin HSD1_DIAG_EN_24V_Pin HSD2_DIAG_EN_24V_Pin */
@@ -106,7 +106,7 @@ void MX_GPIO_Init(void)
   /*Configure GPIO pins : HSD_FAULT_Pin REV_PD0_Pin REV_PD1_Pin REV_PD2_Pin */
   GPIO_InitStruct.Pin = HSD_FAULT_Pin|REV_PD0_Pin|REV_PD1_Pin|REV_PD2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
   /*Configure GPIO pin : P_CAN_STB_Pin */

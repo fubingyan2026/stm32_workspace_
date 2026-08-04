@@ -129,7 +129,7 @@ void drv_fan_set_duty(uint32_t id, uint8_t duty)
         if (cmp > arr) {
             cmp = arr;
         }
-        __HAL_TIM_SET_COMPARE(htim, cmp, s_ctx[id].hw->pwm_ch);
+        __HAL_TIM_SET_COMPARE(htim, s_ctx[id].hw->pwm_ch, cmp);
     }
 }
 

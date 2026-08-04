@@ -46,14 +46,17 @@
  * DMA 缓冲区索引 = Rank - 1
  *
  * ADC1 (INST_1): PA0/PA2/PA4/PA6 + TEMPSENSOR + VREFINT + VBAT (7ch)
- * ADC2 (INST_2): PA1/PA3/PA5/PA7/PC2/PC3/PC4 (7ch)
- * ADC3 (INST_3): PC0 (1ch) — NTC2(PC1)
+ * ADC2 (INST_2): PA1/PA3/PA5/PA7/PC2/PC3/PC4/PC5 (8ch)
+ * ADC3 (INST_3): PC0/PC1 (2ch) — NTC1/NTC2
  */
 static const drv_adc_route_t s_routes[DRV_ADC_CH_MAX] = {
     /* ADC2 (INST_2): 电压采样 — Rank 5/6/7 */
     [DRV_ADC_CH_VIN]          = { DRV_ADC_INST_2, 4 }, /**< PC2, ADC2_IN12 */
     [DRV_ADC_CH_MOTOR_POWER]  = { DRV_ADC_INST_2, 5 }, /**< PC3, ADC2_IN13 */
     [DRV_ADC_CH_AUX_POWER]    = { DRV_ADC_INST_2, 6 }, /**< PC4, ADC2_IN14 */
+
+    /* ADC2 (INST_2): CD4051B 多路选择器输出 — Rank 8 */
+    [DRV_ADC_CH_CD4051B]      = { DRV_ADC_INST_2, 7 }, /**< PC5, ADC2_IN15 — A_IN1_IO/2_IO/3_IO 经多路选择 */
 
     /* ADC1 (INST_1): E-STOP 通道1 冗余 — Rank 1/2/3/4 */
     [DRV_ADC_CH_E_STOP1_ADC1] = { DRV_ADC_INST_1, 0 }, /**< PA0, ADC1_IN0 */

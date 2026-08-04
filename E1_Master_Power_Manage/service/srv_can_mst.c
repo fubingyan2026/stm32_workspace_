@@ -345,11 +345,11 @@ static uint8_t pack_byte4(const srv_can_mst_data_t* d)
 static uint8_t pack_byte5(const srv_can_mst_data_t* d)
 {
     uint8_t b = 0;
-    if (d->din1)
+    if (d->a_in1_io)
         b |= (1U << 0);
-    if (d->din2)
+    if (d->a_in2_io)
         b |= (1U << 1);
-    if (d->din3)
+    if (d->a_in3_io)
         b |= (1U << 2);
     if (d->seq_vin_fault)
         b |= (1U << 3);

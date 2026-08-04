@@ -130,7 +130,7 @@ void srv_fan_ctrl_step(uint16_t elapsed_ms)
         }
 
         /* 4. 写入硬件 PWM */
-        drv_fan_set_duty(i, f->duty);
+        drv_fan_set_duty(i, 25);
     }
 }
 

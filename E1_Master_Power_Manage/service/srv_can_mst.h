@@ -128,10 +128,10 @@ typedef struct {
     /* === 0x001 Byte4: NTC 温度异常（8 路） === */
     bool err_ntc[8]; /**< [bit0~7] NTC 热敏电阻 0-7 温度超限标志 */
 
-    /* === 0x001 Byte5: 数字输入 + 上电时序故障（bit6~7 保留） === */
-    bool din1; /**< [bit0] 数字输入 1 */
-    bool din2; /**< [bit1] 数字输入 2 */
-    bool din3; /**< [bit2] 数字输入 3 */
+    /* === 0x001 Byte5: 模拟输入 + 上电时序故障（bit6~7 保留） === */
+    bool a_in1_io; /**< [bit0] A_IN1_IO 模拟输入 */
+    bool a_in2_io; /**< [bit1] A_IN2_IO 模拟输入 */
+    bool a_in3_io; /**< [bit2] A_IN3_IO 模拟输入 */
     bool seq_vin_fault; /**< [bit3] VIN_DCDC 上电时序故障 */
     bool seq_chg_fault; /**< [bit4] 预充电时序故障 */
     bool seq_motor_fault; /**< [bit5] 电机上电时序故障 */

@@ -31,9 +31,6 @@ typedef enum {
     DRV_STATUS_DBR_OCP_FLAG,    /**< DBR_LSD_OCP_FLAG — 制动电阻过流标志 */
     DRV_STATUS_MOTOR_CHG_OCP,   /**< MOTOR_POWER_CHG_OCP_FLAG — 电机充电过流标志 */
     DRV_STATUS_E_STOP_ON,       /**< E_STOP_ON — 急停触发状态 */
-    DRV_STATUS_DIN1,            /**< D_IN1_IO — 数字输入1 */
-    DRV_STATUS_DIN2,            /**< D_IN2_IO — 数字输入2 */
-    DRV_STATUS_DIN3,            /**< D_IN3_IO — 数字输入3 */
 
     DRV_STATUS_NUM,
 } drv_status_signal_t;

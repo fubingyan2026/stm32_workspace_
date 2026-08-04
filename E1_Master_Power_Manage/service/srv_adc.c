@@ -10,6 +10,7 @@
 #include "srv_adc.h"
 
 #include "drv_adc.h"
+#include "drv_cd4051b.h"
 #include "drv_systick.h"
 #include "filter.h"
 #include "log.h"
@@ -47,6 +48,12 @@
 
 #define ADC_MAX (4095U)
 #define ADC_SAMPLE_RATE_HZ (100U) /**< 100Hz (10ms period) */
+
+/* CD4051B 多路选择 A_INx_IO */
+#define SRV_ADC_AIN_NUM (3U) /**< 模拟输入路数 */
+#define SRV_ADC_AIN_CH_MIN (1U) /**< A_IN1_IO 对应 CD4051B 起始通道 (Y1) */
+#define SRV_ADC_AIN_CH_MAX (SRV_ADC_AIN_CH_MIN + SRV_ADC_AIN_NUM - 1U) /**< A_IN3_IO 对应 CD4051B 结束通道 (Y3) */
+#define SRV_ADC_AIN_HIGH_RAW (2048U) /**< A_INx_IO 逻辑高判定阈值（12-bit，≈50% VDDA ≈ 1.65V），按分压实际调整 */
 
 /* 外部电压分压比 */
 #define ADC_SCALE_VIN (31.0f)
@@ -101,6 +108,8 @@ static const struct {
 /** @brief 原始采样快照 — DMA 中断回调只填此结构，不做任何换算 */
 typedef struct {
     uint32_t timestamp_ms; /**< 时间戳 (ms) */
+    uint8_t ain_mux_idx; /**< 本次快照对应的 CD4051B 通道 (Y1~Y3)，用于区分 A_IN1_IO/2_IO/3_IO */
+    uint8_t reserved; /**< 对齐填充 */
     uint16_t raw[DRV_ADC_CH_MAX]; /**< 各逻辑通道 12-bit 原始值 */
 } srv_adc_raw_t;
 
@@ -128,6 +137,16 @@ static uint32_t s_warn_log_ts;
 static uint16_t s_ts_cal1;
 static uint16_t s_ts_cal2;
 
+/** @brief 本次 DMA 正在采样的 CD4051B 通道 (Y1~Y3)（srv_adc_trigger 写入，ISR 快照） */
+static uint8_t s_ain_mux_sel;
+/** @brief 下一次 trigger 使用的 CD4051B 通道（1~3 轮转，不回绕到 0） */
+static uint8_t s_ain_cycle;
+/** @brief 三路 A_INx_IO 最近一次采样值（轮转更新，跨 step 保留旧值） */
+static uint16_t s_ain_raw[SRV_ADC_AIN_NUM];
+
+/** @brief 服务初始化完成标志（未初始化前禁止出队，防越权读取） */
+static bool s_initialized;
+
 /* Private function prototypes -----------------------------------------------*/
 
 static void adc_sample_cb(drv_adc_inst_t inst);
@@ -154,9 +173,17 @@ void srv_adc_init(void)
     msg_fifo_init(&s_fifo, s_fifo_buf, ADC_FIFO_BUF_SIZE, sizeof(srv_adc_data_t));
     msg_fifo_init(&s_raw_fifo, s_raw_fifo_buf, ADC_RAW_FIFO_BUF_SIZE, sizeof(srv_adc_raw_t));
 
+    /* CD4051B 多路选择器：A_IN1_IO/2_IO/3_IO 经 Y1/Y2/Y3 → PC5 采样 */
+    drv_cd4051b_init();
+    s_ain_mux_sel = 0; /* 尚无快照，置无效通道 */
+    s_ain_cycle = SRV_ADC_AIN_CH_MIN; /* 从 Y1 起轮转 */
+    memset(s_ain_raw, 0, sizeof(s_ain_raw));
+
     /* 内部温度传感器出厂校准值：芯片固定，仅初始化读取一次（无效值由 calc_mcu_temp 兜底） */
     s_ts_cal1 = *TS_CAL1_ADDR;
     s_ts_cal2 = *TS_CAL2_ADDR;
+
+    s_initialized = true;
 
     SRV_ADC_LOG_I("ADC 采样服务初始化完成 (采样率=%uHz, 滤波截止=%uHz, FIFO=%uB)",
         (unsigned)ADC_SAMPLE_RATE_HZ, (unsigned)ADC_FILTER_CUTOFF_HZ, (unsigned)ADC_FIFO_BUF_SIZE);
@@ -166,6 +193,11 @@ void srv_adc_init(void)
 
 void srv_adc_trigger(void)
 {
+    /* CD4051B 轮转：本次 DMA 采样通道 s_ain_cycle (Y1~Y3)，ISR 据 s_ain_mux_sel 快照归位 */
+    s_ain_mux_sel = s_ain_cycle;
+    (void)drv_cd4051b_select(s_ain_mux_sel);
+    s_ain_cycle = (s_ain_cycle >= SRV_ADC_AIN_CH_MAX) ? SRV_ADC_AIN_CH_MIN : (s_ain_cycle + 1U);
+
     drv_adc_trigger_all();
 }
 
@@ -213,6 +245,17 @@ void srv_adc_step(void)
     /* ── VBAT 备份电池电压 ── */
     s.vbat_mv = (uint32_t)(adc_filtered(DRV_ADC_CH_VBAT, raw.raw[DRV_ADC_CH_VBAT]) * raw_to_v * VBAT_SCALE);
 
+    /* ── CD4051B 多路选择 A_INx_IO：仅更新本次 DMA 对应的一路 ──
+     * 使用未滤波原始值（CD4051B 通道每周期轮转切换输入，PT1 滤波会把三路混叠）。
+     * ain_mux_idx 为通道号 (Y1~Y3)，换算为 0 基下标写入 s_ain_raw。 */
+    if (raw.ain_mux_idx >= SRV_ADC_AIN_CH_MIN && raw.ain_mux_idx <= SRV_ADC_AIN_CH_MAX) {
+        const uint8_t idx = (uint8_t)(raw.ain_mux_idx - SRV_ADC_AIN_CH_MIN);
+        s_ain_raw[idx] = (uint16_t)raw.raw[DRV_ADC_CH_CD4051B];
+    }
+    s.a_in1_io_raw = s_ain_raw[0];
+    s.a_in2_io_raw = s_ain_raw[1];
+    s.a_in3_io_raw = s_ain_raw[2];
+
     /* ── NTC 温度 (使用校准后的 VDDA) ── */
     s.ntc1_status = ntc_raw_to_temp(
         (uint16_t)adc_filtered(DRV_NTC1_ADC, raw.raw[DRV_NTC1_ADC]), vdda_v, &s.ntc1_temp_x100);
@@ -227,7 +270,7 @@ void srv_adc_step(void)
     const uint32_t now_ms = millis();
     if ((uint32_t)(now_ms - s_tele_log_ts) >= SRV_ADC_TELE_LOG_PERIOD_MS) {
         s_tele_log_ts = now_ms;
-       
+
         if (s.ntc1_status != SRV_ADC_CALC_OK) {
             SRV_ADC_LOG_W("NTC1 温度异常: %s (raw=%u)", calc_status_str(s.ntc1_status),
                 (unsigned)raw.raw[DRV_NTC1_ADC]);
@@ -241,10 +284,11 @@ void srv_adc_step(void)
                 (unsigned)s_ts_cal1, (unsigned)s_ts_cal2);
         }
 
-        SRV_ADC_LOG_D("ADC遥测: vdda=%umV vin=%umV motor=%umV aux=%umV vbat=%umV mcuT=%d ntc1=%d ntc2=%d (温度×100)",
+        SRV_ADC_LOG_D("ADC遥测: vdda=%umV vin=%umV motor=%umV aux=%umV vbat=%umV mcuT=%d ntc1=%d ntc2=%d (温度×100) ain1=%u ain2=%u ain3=%u",
             (unsigned)s.vdda_mv, (unsigned)s.vin_mv, (unsigned)s.motor_power_mv,
             (unsigned)s.aux_power_mv, (unsigned)s.vbat_mv,
-            (int)s.mcu_temp_x100, (int)s.ntc1_temp_x100, (int)s.ntc2_temp_x100);
+            (int)s.mcu_temp_x100, (int)s.ntc1_temp_x100, (int)s.ntc2_temp_x100,
+            (unsigned)s.a_in1_io_raw, (unsigned)s.a_in2_io_raw, (unsigned)s.a_in3_io_raw);
 
         /* E-STOP 双通道冗余状态：4 个急停开关 × (ADC1/ADC2 两路原始值)。
          * 偏差 = ADC1 - ADC2；两路偏差过大提示冗余通道失效/线缆异常。 */
@@ -269,9 +313,27 @@ void srv_adc_step(void)
 
 bool srv_adc_get_latest(srv_adc_data_t* sample)
 {
-    if (!sample)
+    if (!sample || !s_initialized) {
         return false;
+    }
     return msg_fifo_pop(&s_fifo, sample);
+}
+
+uint8_t srv_adc_read_ain(void)
+{
+    srv_adc_data_t s;
+    if (!srv_adc_get_latest(&s)) {
+        return 0; /* 未初始化/尚无快照 → 全部低电平 */
+    }
+
+    uint8_t mask = 0;
+    if (s.a_in1_io_raw >= SRV_ADC_AIN_HIGH_RAW)
+        mask |= (1U << 0);
+    if (s.a_in2_io_raw >= SRV_ADC_AIN_HIGH_RAW)
+        mask |= (1U << 1);
+    if (s.a_in3_io_raw >= SRV_ADC_AIN_HIGH_RAW)
+        mask |= (1U << 2);
+    return mask;
 }
 
 /* Private functions ---------------------------------------------------------*/
@@ -284,6 +346,8 @@ static void adc_sample_cb(drv_adc_inst_t inst)
      * 全部 float 计算与日志已移至 srv_adc_step()（主循环上下文）。 */
     srv_adc_raw_t raw;
     raw.timestamp_ms = millis();
+    raw.ain_mux_idx = s_ain_mux_sel; /* 快照本次 DMA 对应的 A_INx_IO 索引（trigger 已设置） */
+    raw.reserved = 0;
 
     for (uint32_t i = 0; i < DRV_ADC_CH_MAX; i++) {
         raw.raw[i] = (uint16_t)drv_adc_read_raw((drv_adc_channel_t)i);

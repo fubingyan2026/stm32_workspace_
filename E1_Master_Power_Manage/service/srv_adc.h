@@ -67,6 +67,13 @@ typedef struct {
     /* ── 备份电池 ── */
     uint32_t vbat_mv; /**< VBAT 备份电池电压 (mV) */
 
+    /* ── CD4051B 多路选择 A_INx_IO (12-bit 原始值) ──
+     * A_IN1_IO/2_IO/3_IO 模拟采样输入经 CD4051B (Y1/Y2/Y3) 多路选择 → PC5 采样，
+     * 每 3 个采样周期轮转更新一路（30ms 全量刷新一次）。 */
+    uint16_t a_in1_io_raw; /**< A_IN1_IO 原始采样值（CD4051B Y1 → PC5, ADC2_IN15） */
+    uint16_t a_in2_io_raw; /**< A_IN2_IO 原始采样值（CD4051B Y2 → PC5, ADC2_IN15） */
+    uint16_t a_in3_io_raw; /**< A_IN3_IO 原始采样值（CD4051B Y3 → PC5, ADC2_IN15） */
+
     /* ── 换算状态（供上层观测各物理量计算是否异常） ── */
     srv_adc_calc_status_t vdda_status; /**< VDDA 校准状态 */
     srv_adc_calc_status_t ntc1_status; /**< NTC1 温度换算状态 */
@@ -94,6 +101,14 @@ void srv_adc_step(void);
 
 /** @brief 获取最新采样数据（非阻塞） */
 bool srv_adc_get_latest(srv_adc_data_t* sample);
+
+/**
+ * @brief 读取模拟输入逻辑状态（A_IN1_IO/2_IO/3_IO）
+ *
+ * 基于最新快照的 a_in1_io_raw/2_io_raw/3_io_raw 按阈值判定逻辑高低。
+ * @return 位掩码：bit0=A_IN1_IO，bit1=A_IN2_IO，bit2=A_IN3_IO；srv_adc 未初始化或尚无快照时返回 0
+ */
+uint8_t srv_adc_read_ain(void);
 
 #ifdef __cplusplus
 }

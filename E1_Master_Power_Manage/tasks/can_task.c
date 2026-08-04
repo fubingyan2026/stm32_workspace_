@@ -15,6 +15,7 @@
 #include "drv_systick.h"
 #include "log.h"
 #include "power_task.h"
+#include "srv_adc.h"
 #include "srv_can_dual.h"
 #include "srv_can_mst.h"
 #include "srv_can_slv.h"
@@ -86,10 +87,11 @@ static void power_task_read_status(srv_can_mst_data_t* d)
     d->err_motor = !st.motor_power_ok;
     d->err_chg_out = st.motor_chg_ocp;
 
-    /* 数字输入 D_IN1/2/3（通过 srv_pwr_det 服务读取） */
-    d->din1 = st.din1;
-    d->din2 = st.din2;
-    d->din3 = st.din3;
+    /* 模拟输入 A_IN1_IO/2_IO/3_IO（统一由 srv_adc 经 CD4051B 采样阈值判定） */
+    const uint8_t ain_mask = srv_adc_read_ain();
+    d->a_in1_io = (ain_mask >> 0) & 1U;
+    d->a_in2_io = (ain_mask >> 1) & 1U;
+    d->a_in3_io = (ain_mask >> 2) & 1U;
 
     /* 急停状态 */
     d->stop_key_state = st.estop_on;

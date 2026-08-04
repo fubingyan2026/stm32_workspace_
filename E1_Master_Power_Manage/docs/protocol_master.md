@@ -65,9 +65,9 @@
 | | 6 | `err_fan1` | 风扇1 异常 |
 | | 7 | `err_fan2` | 风扇2 异常 |
 | 4 | 0-7 | `err_ntc[0..7]` | 8路 NTC 温度异常 |
-| 5 | 0 | `din1` | 数字输入 1 |
-| | 1 | `din2` | 数字输入 2 |
-| | 2 | `din3` | 数字输入 3 |
+| 5 | 0 | `a_in1_io` | A_IN1_IO 模拟输入 |
+| | 1 | `a_in2_io` | A_IN2_IO 模拟输入 |
+| | 2 | `a_in3_io` | A_IN3_IO 模拟输入 |
 | | 3 | `seq_vin_fault` | VIN_DCDC 上电故障 |
 | | 4 | `seq_chg_fault` | 预充电时序故障 |
 | | 5 | `seq_motor_fault` | 电机上电故障 |

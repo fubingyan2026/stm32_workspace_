@@ -5,7 +5,8 @@
  * @date    2026-07-2
  * @brief   电源状态监控服务 — 封装 drv_status 层
  *
- * 提供语义化的电源状态查询接口，上层无需接触 drv_status 驱动层。
+ * 提供语义化的电源状态查询接口。PGOOD/E-STOP/故障标志经 drv_status 读取。
+ * 模拟输入 A_IN1_IO/2_IO/3_IO 统一由 srv_adc 管理（见 srv_adc_read_ain）。
  */
 
 #ifndef __SRV_PWR_DET_H
@@ -33,9 +34,6 @@ typedef struct {
     bool dbr_ocp; /**< 制动电阻过流标志 */
     bool motor_chg_ocp; /**< 电机充电过流标志 */
     bool estop_on; /**< 急停触发状态 */
-    bool din1; /**< 数字输入1 */
-    bool din2; /**< 数字输入2 */
-    bool din3; /**< 数字输入3 */
 } srv_pwr_det_status_t;
 
 /* Exported functions prototypes ---------------------------------------------*/
@@ -63,9 +61,6 @@ bool srv_pwr_det_is_estop(void);
 
 /** @brief 是否有电机充电过流 */
 bool srv_pwr_det_has_motor_chg_ocp(void);
-
-/** @brief 读取全部数字输入为位掩码 (bit0=DIN1, bit1=DIN2, bit2=DIN3) */
-uint8_t srv_pwr_det_read_din(void);
 
 #ifdef __cplusplus
 }

@@ -12,6 +12,7 @@
  * ## ADC 实例分配
  * - ADC1: E-STOP 通道1 冗余采样 (PA0/PA2/PA4/PA6) + 内部通道 (TEMPSENSOR/VREFINT/VBAT)
  * - ADC2: E-STOP 通道2 冗余采样 (PA1/PA3/PA5/PA7) + 电压采样 (VIN/MOTOR/AUX: PC2/PC3/PC4)
+ *         + CD4051B 多路选择器输出 (PC5)
  * - ADC3: NTC 温度 (PC0, PC1)
  *
  * ## 用法
@@ -56,6 +57,9 @@ typedef enum {
     DRV_ADC_CH_VIN = 0,         /**< VIN_ADC — 主输入总线电压 (PC2, ADC2_IN12) */
     DRV_ADC_CH_MOTOR_POWER,     /**< MOTOR_POWER_ADC — 电机供电电压 (PC3, ADC2_IN13) */
     DRV_ADC_CH_AUX_POWER,       /**< AUX_POWER_ADC — 辅助电源电压 (PC4, ADC2_IN14) */
+
+    /* ── ADC2: CD4051B 多路选择器输出 (Rank 8) ── */
+    DRV_ADC_CH_CD4051B,         /**< CD4051B COM (PC5, ADC2_IN15) — A_IN1_IO/2_IO/3_IO 经多路选择后采样 */
 
     /* ── ADC1: E-STOP 通道1 冗余 (Rank 1/2/3/4) ── */
     DRV_ADC_CH_E_STOP1_ADC1,    /**< 急停1 通道1 (PA0, ADC1_IN0) */

@@ -81,7 +81,9 @@ sample_task_init()  → ADC sampling (TIM + DMA + VREFINT calibration)
 power_task_init()   → power management (GPIO control + power-up sequencing)
 ```
 
-`can_task_init()` wires `power_task_read_status` (defined inside [can_task.c](tasks/can_task.c)) as the `read_data` callback for `srv_can_mst`. If `power_task_init()` ran first and triggered CAN reporting, the callback wouldn't exist yet.
+`can_task_init()` wires `power_task_read_status` (defined inside [can_task.c](tasks/can_task.c)) as the `read_data` callback for `srv_can_mst`, and also calls `srv_pwr_det_init()` — the power-status detection service (PGOOD rails / E-STOP via `drv_status`, A_IN1_IO~3 via the `srv_adc` CD4051B path) has **no dedicated task**; it's read on demand via `srv_pwr_det_read()` (see [can_task.c:71](tasks/can_task.c#L71)). If `power_task_init()` ran first and triggered CAN reporting, the callback wouldn't exist yet.
+
+> **Not yet wired**: `power_task_request_on()` / `power_task_emergency_off()` (wrapping `srv_pwr_ctrl`'s power-up FSM) are exported but currently have **no callers** — no task, CAN host command, or button drives power sequencing yet. Host control frames (0x001) only *report* power status; they don't command power on/off.
 
 ### Framework primitives actually used here
 
@@ -97,8 +99,24 @@ The middleware offers more, but this app uses: `sw_timer` (all tasks), `fsm` (in
 - **Config-in-context**: each module has a `xxx_config_t` (set at init) nested inside `xxx_context_t` (runtime state). Access pattern: `ctx->config.field`.
 - **Callback injection for HW decoupling**: services receive function pointers (e.g., `send_frame`, `read_data`, `get_ctrl`, `write_pin`) rather than calling HAL directly. See [can_task.c](tasks/can_task.c) for the canonical wiring (`srv_can_mst_init(&{.read_data, .send_frame})`).
 - **Step-based service ticking**: services expose a `xxx_step(elapsed_ms)` or `xxx_task()` function called periodically by the task layer's sw_timer callback. Services never own sw_timers themselves.
+- **Per-file log switch**: every `.c` file in `tasks/`/`service/`/`device_drivers/` opens with `#define XXX_LOG_ENABLE 1` and defines `XXX_LOG_E/W/I/D` wrappers tagged with the module name (e.g. `LOG_E("can_task", ...)`). Set the switch to `0` to silence one file. **Never log inside `log_task.c`'s TX drain path** — it would re-feed its own kfifo and loop forever.
+- **ISR minimalism**: ISR callbacks never run float math or printf — they only snapshot raw data into a lock-free `msg_fifo`; conversion, filtering, and logging are deferred to the main-loop `*_step()`. The ADC pipeline below is the canonical example.
 - **Include style**: tasks and drivers include headers directly (`sw_timer.h`, `srv_*.h`, `drv_*.h`, `log.h`); only `srv_can_mst.c` uses the umbrella `public.h`. `public.h` lives at `../public_layer/m_middlewares/public.h`.
 - **Error code convention**: `MODULE_OK = 0` or positive; errors are negative. `MODULE_IS_OK(err)` / `MODULE_IS_ERR(err)` macros provided.
+
+### ADC sampling pipeline (trigger/step split)
+
+[drv_adc](device_drivers/drv_adc.c) owns a built-in route table mapping logical channels (`drv_adc_channel_t`, e.g. `DRV_ADC_CH_VIN`) → (ADC instance, DMA buffer index). **DMA buffer index = Rank − 1**, so the enum order in `drv_adc.h` must stay in sync with the Rank order in `Core/Src/adc.c` `MX_ADCx_Init`. Instance split: ADC1 = E-STOP ch1 + internal (VREFINT/TEMPSENSOR/VBAT), ADC2 = E-STOP ch2 + voltage rails (VIN/MOTOR/AUX), ADC3 = NTC temps.
+
+Sampling is a two-stage `trigger`/`step` pair driven by [sample_task.c](tasks/sample_task.c) at 10ms (NORMAL-priority sw_timer → main-loop context):
+
+1. `srv_adc_trigger()` → `drv_adc_trigger_all()` starts DMA conversion on all 3 ADCs.
+2. The DMA-complete ISR callback does **only** a raw-value snapshot into a `msg_fifo` — no float math, no printf in interrupt context.
+3. `srv_adc_step()` (same tick, main-loop context) pops the latest snapshot and does all processing: PT1 filter, VREFINT→VDDA calibration, NTC/MCU temperature conversion, and 1s-rate-limited telemetry logs. Each conversion returns `srv_adc_calc_status_t` via out-params, stored in `srv_adc_data_t` for upper layers to observe.
+
+The CD4051B 8-channel analog mux (`drv_cd4051b`, select pins PD3/4/5) feeds the three A_INx_IO inputs (`A_IN1_IO`/`A_IN2_IO`/`A_IN3_IO`) into `DRV_ADC_CH_CD4051B` (PC5 → ADC2_IN15, Rank 8). `srv_adc` rotates the mux across Y1/Y2/Y3 — one A_INx_IO per trigger cycle; the ISR snapshots which input was selected (`raw.ain_mux_idx`) and `srv_adc_step()` stores the **unfiltered** raw value into `srv_adc_data_t.a_in1_io_raw/2_io_raw/3_io_raw` (PT1 filter is skipped here, as the channel input changes every cycle). `srv_adc_read_ain()` thresholds those raws (≥2048 ≈ 50% VDDA) into a bitmask that `can_task` packs into the CAN status report.
+
+`sample_task_get_latest()` exposes the newest `srv_adc_data_t` for consumers.
 
 ## CAN Communication Architecture
 

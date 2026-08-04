@@ -67,6 +67,24 @@ drv_can_error_t drv_can_init(void)
     for (uint32_t ch = 0; ch < DRV_CAN_CH_NUM; ch++) {
         memset(&s_ctx[ch], 0, sizeof(s_ctx[ch]));
 
+        /* 配置 RX 滤波：掩码全 0 → 全通过，接入 FIFO0。
+         * 不配滤波则 bxCAN 滤波 bank 未激活，FIFO0 收不到任何报文，RX 中断永不触发。
+         * ID 过滤由 can_task 的 can_rx_callback 按 CAN ID 软件分发（各服务忽略非本属帧）。 */
+        CAN_FilterTypeDef filter = { 0 };
+        filter.FilterActivation = CAN_FILTER_ENABLE;
+        filter.FilterMode = CAN_FILTERMODE_IDMASK;
+        filter.FilterScale = CAN_FILTERSCALE_32BIT;
+        filter.FilterIdHigh = 0x0000U;
+        filter.FilterIdLow = 0x0000U;
+        filter.FilterMaskIdHigh = 0x0000U;
+        filter.FilterMaskIdLow = 0x0000U;
+        filter.FilterFIFOAssignment = CAN_RX_FIFO0;
+        filter.FilterBank = 0;
+        if (HAL_CAN_ConfigFilter(s_hcan[ch], &filter) != HAL_OK) {
+            DRV_CAN_LOG_E("CAN%u RX 滤波配置失败", (unsigned)ch + 1U);
+            return DRV_CAN_ERROR_UNINITIALIZED;
+        }
+
         if (HAL_CAN_Start(s_hcan[ch]) != HAL_OK) {
             DRV_CAN_LOG_E("CAN%u Start 失败 (HAL state=%d)",
                 (unsigned)ch + 1U, (int)HAL_CAN_GetState(s_hcan[ch]));

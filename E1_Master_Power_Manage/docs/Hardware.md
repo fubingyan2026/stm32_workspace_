@@ -10,9 +10,9 @@
 | **4** | PE5 | - | **NC** | 未使用 / 悬空 |
 | **5** | PE6 | - | **NC** | 未使用 / 悬空 |
 | **6** | VBAT | `VBAT` | **PWR** | 备用电池电源输入（直接外接3.3V电源） |
-| **7** | PC13 | `D_IN3_IO` | **IN** | 数字量输入通道3 |
-| **8** | PC14 | `D_IN2_IO` | **IN** | 数字量输入通道2 |
-| **9** | PC15 | `D_IN1_IO` | **IN** | 数字量输入通道1 |
+| **7** | PC13 | - | **NC** | 未使用 / 悬空 |
+| **8** | PC14 | - | **NC** | 未使用 / 悬空 |
+| **9** | PC15 | - | **NC** | 未使用 / 悬空 |
 | **10** | VSS | `GND` | **PWR** | 系统地 |
 | **11** | VDD | `3V3_MCU` | **PWR** | 系统3.3V电源 |
 | **12** | PH0 | `OSC_IN` | **OSC** | 外部 8MHz 主晶振输入端 |
@@ -37,7 +37,7 @@
 | **31** | PA6 | `E_STOP3_ADC2` | **ADC** | 急停通道3的 ADC 采样端（通道2） |
 | **32** | PA7 | `E_STOP4_ADC2` | **ADC** | 急停通道4的 ADC 采样端（通道2） |
 | **33** | PC4 | `AUX_POWER_ADC` | **ADC** | 辅助电源电压 ADC 模拟监控采样 |
-| **34** | PC5 | - | **NC** | 未使用 / 悬空 |
+| **34** | PC5 | `CD4051B_ADC` | **ADC** | CD4051B 多路选择器公共输出 COM（A_IN1_IO/2_IO/3_IO 经多路选择后 ADC 采样） |
 | **35** | PB0 | `MOTOR_POWER_CHG_IN` | **OUT** | 电机充电功能控制输出 (gpio.c: OUTPUT_PP) |
 | **36** | PB1 | `MOTOR_POWER_CHG_OCP_FLAG` | **IN** | 电机充电过流保护（OCP）标志反馈输入 |
 | **37** | PB2 | `BOOT1` | **SYS** | 启动配置引脚1 |
@@ -87,9 +87,9 @@
 | **81** | PD0 | `REV_PD0` | **REV / IO** | 保留通道0 GPIO（可用作IN/OUT信号） |
 | **82** | PD1 | `REV_PD1` | **REV / IO** | 保留通道1 GPIO（可用作IN/OUT信号） |
 | **83** | PD2 | `REV_PD2` | **REV / IO** | 保留通道2 GPIO（可用作IN/OUT信号） |
-| **84** | PD3 | - | **NC** | 未使用 / 悬空 |
-| **85** | PD4 | - | **NC** | 未使用 / 悬空 |
-| **86** | PD5 | - | **NC** | 未使用 / 悬空 |
+| **84** | PD3 | `CD4051B_A` | **OUT** | CD4051B 通道选择引脚 A（Y 选择码 bit0） |
+| **85** | PD4 | `CD4051B_B` | **OUT** | CD4051B 通道选择引脚 B（Y 选择码 bit1） |
+| **86** | PD5 | `CD4051B_C` | **OUT** | CD4051B 通道选择引脚 C（Y 选择码 bit2） |
 | **87** | PD6 | - | **NC** | 未使用 / 悬空 |
 | **88** | PD7 | - | **NC** | 未使用 / 悬空 |
 | **89** | PB3 | - | **NC** | 未使用 / 悬空 |
@@ -104,3 +104,14 @@
 | **98** | PE1 | `FAN0_FG_IOE1` | **IN** | 风扇1 速度反馈 EXTI1 输入（下降沿脉冲计数） |
 | **99** | VSS | `GND` | **PWR** | 系统地 |
 | **100** | VDD | `3V3_MCU` | **PWR** | 系统3.3V电源 |
+
+### CD4051B 多路选择器（A_IN1_IO/2_IO/3_IO 模拟采样输入）
+
+模拟采样输入 A_IN1_IO/A_IN2_IO/A_IN3_IO 不再直读 GPIO，改经 **CD4051BPWR** 8 通道模拟多路选择器后由 ADC 采样：
+
+- 选择引脚：`CD4051B_A`(PD3) / `CD4051B_B`(PD4) / `CD4051B_C`(PD5)，选择码 = `C<<2 | B<<1 | A`。
+- 公共输出：`CD4051B_ADC`(PC5) → **ADC2_IN15**（Rank 8），见 `drv_adc` 的 `DRV_ADC_CH_CD4051B` 通道。
+- 通道映射：**A_IN1_IO→Y1，A_IN2_IO→Y2，A_IN3_IO→Y3**（`srv_adc.c` 中 `SRV_ADC_AIN_CH_MIN` 起始通道，可按实际布线调整）。
+- 采样方式：`srv_adc` 每 10ms 周期轮转选择一路 A_INx_IO 并触发 ADC 采样，三路每 30ms 全量刷新一次，
+  原始值存入 `srv_adc_data_t.a_in1_io_raw/2_io_raw/3_io_raw`；逻辑高低由 `srv_adc_read_ain()` 按
+  `SRV_ADC_AIN_HIGH_RAW`（默认 2048，≈50% VDDA）阈值判定，CAN 状态上报经 `can_task` 读取。

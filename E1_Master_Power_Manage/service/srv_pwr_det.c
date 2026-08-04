@@ -61,6 +61,8 @@ static bool s_pwr_det_prev_valid;
 
 void srv_pwr_det_init(void)
 {
+    /* 本服务封装 drv_status 读取 PGOOD/E-STOP/故障标志，必须先初始化其状态位 */
+    drv_status_init();
     s_initialized = true;
     s_pwr_det_prev_valid = false;
     SRV_PWR_DET_LOG_I("电源状态监控服务初始化完成");
@@ -101,22 +103,16 @@ void srv_pwr_det_read(srv_pwr_det_status_t* status)
     status->motor_chg_ocp = (sta >> DRV_STATUS_MOTOR_CHG_OCP) & 1;
     status->estop_on = (sta >> DRV_STATUS_E_STOP_ON) & 1;
 
-    /* 数字输入 */
-    status->din1 = (sta >> DRV_STATUS_DIN1) & 1;
-    status->din2 = (sta >> DRV_STATUS_DIN2) & 1;
-    status->din3 = (sta >> DRV_STATUS_DIN3) & 1;
-
     /* 状态遥测日志（限频 1s：10ms 轮询防刷屏） */
     const uint32_t now_ms = millis();
     if ((uint32_t)(now_ms - s_pwr_det_log_ts) >= SRV_PWR_DET_LOG_PERIOD_MS) {
         s_pwr_det_log_ts = now_ms;
-        SRV_PWR_DET_LOG_D("电源状态: 12V=%u 24V=%u 工控24V=%u 辅助=%u 电机=%u | HSD故障=%u DBR过流=%u 电充过流=%u 急停=%u | DIN3=%u DIN2=%u DIN1=%u",
+        SRV_PWR_DET_LOG_D("电源状态: 12V=%u 24V=%u 工控24V=%u 辅助=%u 电机=%u | HSD故障=%u DBR过流=%u 电充过流=%u 急停=%u",
             (unsigned)status->ext_12v_ok, (unsigned)status->ext_24v_ok,
             (unsigned)status->comp_24v_ok, (unsigned)status->aux_power_ok,
             (unsigned)status->motor_power_ok,
             (unsigned)status->hsd_fault, (unsigned)status->dbr_ocp,
-            (unsigned)status->motor_chg_ocp, (unsigned)status->estop_on,
-            (unsigned)status->din3, (unsigned)status->din2, (unsigned)status->din1);
+            (unsigned)status->motor_chg_ocp, (unsigned)status->estop_on);
     }
 }
 
@@ -154,18 +150,4 @@ bool srv_pwr_det_has_motor_chg_ocp(void)
     srv_pwr_det_status_t st;
     srv_pwr_det_read(&st);
     return st.motor_chg_ocp;
-}
-
-uint8_t srv_pwr_det_read_din(void)
-{
-    srv_pwr_det_status_t st;
-    srv_pwr_det_read(&st);
-    uint8_t mask = 0;
-    if (st.din1)
-        mask |= (1U << 0);
-    if (st.din2)
-        mask |= (1U << 1);
-    if (st.din3)
-        mask |= (1U << 2);
-    return mask;
 }

@@ -55,12 +55,9 @@ static const drv_status_pin_t s_pins[DRV_STATUS_NUM] = {
     [DRV_STATUS_24V_COMP_PGD]    = { COMP_PGOOD_24V_GPIO_Port,    COMP_PGOOD_24V_Pin,    false, "24V_COMP_PGD" },
     [DRV_STATUS_AUX_PGD]         = { AUX_POWER_PGD_GPIO_Port,     AUX_POWER_PGD_Pin,     false, "AUX_PGD" },
     [DRV_STATUS_MOTOR_PGD]       = { MOTOR_POWER_PGD_GPIO_Port,   MOTOR_POWER_PGD_Pin,   false, "MOTOR_PGD" },
-    [DRV_STATUS_DBR_OCP_FLAG]    = { DBR_LSD_OCP_FLAG_GPIO_Port,  DBR_LSD_OCP_FLAG_Pin,  true,  "DBR_OCP" },
-    [DRV_STATUS_MOTOR_CHG_OCP]   = { MOTOR_POWER_CHG_OCP_FLAG_GPIO_Port, MOTOR_POWER_CHG_OCP_FLAG_Pin, true, "MOTOR_CHG_OCP" },
+    [DRV_STATUS_DBR_OCP_FLAG]    = { DBR_LSD_OCP_FLAG_GPIO_Port,  DBR_LSD_OCP_FLAG_Pin,  false,  "DBR_OCP" },
+    [DRV_STATUS_MOTOR_CHG_OCP]   = { MOTOR_POWER_CHG_OCP_FLAG_GPIO_Port, MOTOR_POWER_CHG_OCP_FLAG_Pin, false, "MOTOR_CHG_OCP" },
     [DRV_STATUS_E_STOP_ON]       = { E_STOP_ON_GPIO_Port,         E_STOP_ON_Pin,         false, "E_STOP_ON" },
-    [DRV_STATUS_DIN1]            = { D_IN1_IO_GPIO_Port,          D_IN1_IO_Pin,          false, "DIN1" },
-    [DRV_STATUS_DIN2]            = { D_IN2_IO_GPIO_Port,          D_IN2_IO_Pin,          false, "DIN2" },
-    [DRV_STATUS_DIN3]            = { D_IN3_IO_GPIO_Port,          D_IN3_IO_Pin,          false, "DIN3" },
 };
 
 /* Private variables ---------------------------------------------------------*/
