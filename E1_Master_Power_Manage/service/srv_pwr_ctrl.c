@@ -13,6 +13,24 @@
 
 #include "drv_power.h"
 #include "fsm.h"
+#include "log.h"
+
+/* 模块日志开关 ----------------------------------------------------------------*/
+
+/** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
+#define SRV_PWR_CTRL_LOG_ENABLE 1
+
+#if SRV_PWR_CTRL_LOG_ENABLE
+#define SRV_PWR_CTRL_LOG_E(...) LOG_E("srv_pwr_ctrl", __VA_ARGS__)
+#define SRV_PWR_CTRL_LOG_W(...) LOG_W("srv_pwr_ctrl", __VA_ARGS__)
+#define SRV_PWR_CTRL_LOG_I(...) LOG_I("srv_pwr_ctrl", __VA_ARGS__)
+#define SRV_PWR_CTRL_LOG_D(...) LOG_D("srv_pwr_ctrl", __VA_ARGS__)
+#else
+#define SRV_PWR_CTRL_LOG_E(...) ((void)0)
+#define SRV_PWR_CTRL_LOG_W(...) ((void)0)
+#define SRV_PWR_CTRL_LOG_I(...) ((void)0)
+#define SRV_PWR_CTRL_LOG_D(...) ((void)0)
+#endif
 
 /* Private constants ---------------------------------------------------------*/
 
@@ -85,6 +103,8 @@ void srv_pwr_ctrl_init(void)
 
     fsm_fill(&config, fsm_always_true);
     fsm_init(&s_fsm, PWR_STATE_IDLE, &config);
+
+    SRV_PWR_CTRL_LOG_I("电源控制服务初始化完成 (FSM %u 状态)", (unsigned)PWR_STATE_COUNT);
 }
 
 void srv_pwr_ctrl_step(uint16_t elapsed_ms)
@@ -95,11 +115,13 @@ void srv_pwr_ctrl_step(uint16_t elapsed_ms)
 
 void srv_pwr_ctrl_request_on(void)
 {
+    SRV_PWR_CTRL_LOG_I("上电请求已登记");
     s_ctx.power_on_requested = true;
 }
 
 void srv_pwr_ctrl_emergency_off(void)
 {
+    SRV_PWR_CTRL_LOG_E("紧急断电触发: 全部电源轨关闭");
     s_ctx.power_on_requested = false;
     s_ctx.steady_ms = 0;
 
@@ -153,6 +175,9 @@ static void pwr_entry_cb(fsm_t* ctx, fsm_state_t state)
 {
     power_ctrl_ctx_t* p = (power_ctrl_ctx_t*)fsm_user_data(ctx);
     p->steady_ms = 0;
+
+    /* 仅在状态进入时打印（FSM 转换边沿），覆盖 IDLE/AUX/PRECHARGE/MOTOR/DONE */
+    SRV_PWR_CTRL_LOG_I("电源 FSM 进入状态: %s", s_state_names[state]);
 
     switch (state) {
     case PWR_STATE_AUX:

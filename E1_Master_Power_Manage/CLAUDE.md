@@ -44,6 +44,7 @@ build.bat                   # Windows (CMD) — defaults to Debug
 - **Toolchain**: `arm-none-eabi-gcc` (ARM GNU toolchain, from STM32Cube bundle or PATH)
 - **Outputs** (in `build/<Config>/`): `.elf`, `.hex`, `.bin`, `.map`
 - **clangd**: reads `build/Debug/compile_commands.json` (auto-exported by CMake). `.clangd` is hardcoded to `build/Debug` — you **must** configure a Debug build at least once for language server support.
+- **Debugging**: [.vscode/launch.json](.vscode/launch.json) ships two STM32CubeIDE-style GDB launch configs — J-Link and ST-Link (`jlinkgdbtarget` / `stlinkgdbtarget`). Flash + debug the target from VSCode's Run & Debug after a build; the config resolves the `.elf` binary automatically.
 - **Target flags**: `-mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard`
 - **No test infrastructure** exists in this project.
 - **Compile definitions** (root CMakeLists.txt): `HAL_FLASH_CHIP_STM32F4` selects the flash driver chip; `PRINTF_DISABLE_SUPPORT_FLOAT`/`PRINTF_DISABLE_SUPPORT_EXPONENTIAL` disable float formatting in mpaland_printf (F407 has no hardware double-precision).
@@ -156,6 +157,8 @@ When the `.ioc` file is modified and code regenerated:
 - **CmBacktrace** (`../public_layer/m_middlewares/Third_Party/CmBacktrace/`) — ARM Cortex-M fault backtrace library. Captures stack traces on HardFault/UsageFault for debugging; output goes through `log.h`.
 - **EasyFlash** (`../public_layer/m_middlewares/Third_Party/easyflash/`) — lightweight KV database on MCU internal flash. Ported via `ef_port.c` + the shared `drv_stm32f4_flash` driver.
 - **mpaland_printf** (`.../Third_Party/mpaland_printf/`) — the project's printf implementation; float/exponential output is compiled out via the `PRINTF_DISABLE_SUPPORT_*` defines.
+
+> **Note**: `EasyFlash` and `ring_storage` are built into the shared `m_middlewares`/`hal_flash` layer but **not yet wired into this app** — no task or service calls them (only their code is compiled). Don't assume an init path exists; if you add flash persistence, check `ring_storage_port.c` in `public_layer` first.
 - **lwmem** (`.../Third_Party/lwmem/`) — lightweight dynamic memory allocator (full-featured mode: free/realloc).
 - **SEGGER RTT** (`.../Third_Party/SEGGER_RTT/`) — J-Link real-time transfer, used for debug output in [log_task.c](tasks/log_task.c).
 - **ring_storage** (`.../Third_Party/ring_storage/`) — flash ring storage on top of `hal_flash` (see `ring_storage_port.c` in `public_layer/device_drivers/hal_flash/`).

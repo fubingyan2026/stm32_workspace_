@@ -9,25 +9,43 @@
 /* Includes ------------------------------------------------------------------*/
 #include "drv_fan.h"
 
+#include "log.h"
 #include "main.h"
 #include "tim.h"
 
 #include <string.h>
 
+/* 模块日志开关 ----------------------------------------------------------------*/
+
+/** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
+#define DRV_FAN_LOG_ENABLE 1
+
+#if DRV_FAN_LOG_ENABLE
+#define DRV_FAN_LOG_E(...) LOG_E("drv_fan", __VA_ARGS__)
+#define DRV_FAN_LOG_W(...) LOG_W("drv_fan", __VA_ARGS__)
+#define DRV_FAN_LOG_I(...) LOG_I("drv_fan", __VA_ARGS__)
+#define DRV_FAN_LOG_D(...) LOG_D("drv_fan", __VA_ARGS__)
+#else
+#define DRV_FAN_LOG_E(...) ((void)0)
+#define DRV_FAN_LOG_W(...) ((void)0)
+#define DRV_FAN_LOG_I(...) ((void)0)
+#define DRV_FAN_LOG_D(...) ((void)0)
+#endif
+
 /* Private types -------------------------------------------------------------*/
 
 typedef struct {
     TIM_HandleTypeDef* htim;
-    uint32_t           pwm_ch;
-    uint16_t           fg_pin;
-    uint8_t            pulse_per_rev;
+    uint32_t pwm_ch;
+    uint16_t fg_pin;
+    uint8_t pulse_per_rev;
 } drv_fan_hw_t;
 
 typedef struct {
-    const drv_fan_hw_t*   hw;
-    volatile uint32_t     pulse_count;
-    volatile uint32_t     last_reported;
-    bool                  initialized;
+    const drv_fan_hw_t* hw;
+    volatile uint32_t pulse_count;
+    volatile uint32_t last_reported;
+    bool initialized;
 } drv_fan_ctx_t;
 
 /* Private constants ---------------------------------------------------------*/
@@ -39,7 +57,7 @@ typedef struct {
  * FAN1: PB9(TIM11_CH1) PWM, PE1(EXTI1) FG
  */
 static const drv_fan_hw_t s_fans[] = {
-    { &htim10, TIM_CHANNEL_1, FAN0_FG_IO_Pin,  2 },
+    { &htim10, TIM_CHANNEL_1, FAN0_FG_IO_Pin, 2 },
     { &htim11, TIM_CHANNEL_1, FAN0_FG_IOE1_Pin, 2 },
 };
 #define FAN_COUNT (sizeof(s_fans) / sizeof(s_fans[0]))
@@ -47,6 +65,7 @@ static const drv_fan_hw_t s_fans[] = {
 /* Private variables ---------------------------------------------------------*/
 
 static drv_fan_ctx_t s_ctx[FAN_COUNT];
+static uint8_t s_last_duty[FAN_COUNT]; /**< 上次占空比（变化才打印） */
 
 #define HTIM(p) ((TIM_HandleTypeDef*)(p))
 
@@ -68,6 +87,7 @@ void drv_fan_init(void)
         __HAL_TIM_SET_COMPARE(HTIM(ctx->hw->htim), ctx->hw->pwm_ch, 0);
 
         ctx->initialized = true;
+        DRV_FAN_LOG_I("风扇%u 初始化完成 (PWM 启动)", (unsigned)i);
     }
 }
 
@@ -79,6 +99,8 @@ void drv_fan_deinit_all(void)
         }
         memset(&s_ctx[i], 0, sizeof(s_ctx[i]));
     }
+
+    DRV_FAN_LOG_I("风扇反初始化完成 (%u 路)", (unsigned)FAN_COUNT);
 }
 
 uint32_t drv_fan_get_count(void)
@@ -96,15 +118,19 @@ void drv_fan_set_duty(uint32_t id, uint8_t duty)
         duty = 100;
     }
 
-    TIM_HandleTypeDef* htim = HTIM(s_ctx[id].hw->htim);
-    uint32_t arr = __HAL_TIM_GET_AUTORELOAD(htim);
-    uint32_t cmp = (uint32_t)duty * (arr + 1) / 100;
+    /* 占空比变化才打印（100ms 周期调用，10Hz×2 风扇防刷屏） */
+    if (s_last_duty[id] != duty) {
+        s_last_duty[id] = duty;
 
-    if (cmp > arr) {
-        cmp = arr;
+        TIM_HandleTypeDef* htim = HTIM(s_ctx[id].hw->htim);
+        uint32_t arr = __HAL_TIM_GET_AUTORELOAD(htim);
+        uint32_t cmp = (uint32_t)duty * (arr + 1) / 100;
+
+        if (cmp > arr) {
+            cmp = arr;
+        }
+        __HAL_TIM_SET_COMPARE(htim, cmp, s_ctx[id].hw->pwm_ch);
     }
-
-    __HAL_TIM_SET_COMPARE(htim, cmp, s_ctx[id].hw->pwm_ch);
 }
 
 uint32_t drv_fan_get_tach_delta(uint32_t id)

@@ -40,8 +40,8 @@ static const char* const s_level_colors[] = {
     LOG_COLOR_RED, /**< ERROR - 红色 */
     LOG_COLOR_YELLOW, /**< WARN - 黄色 */
     LOG_COLOR_GREEN, /**< INFO - 绿色 */
-    LOG_COLOR_BLUE, /**< DEBUG - 蓝色 */
-    LOG_COLOR_RESET, /**< TRACE - 无颜色 */
+    LOG_COLOR_WHITE, /**< DEBUG - 蓝色 */
+    LOG_COLOR_GRAY, /**< TRACE - 无颜色 */
 };
 
 /* Private variables ---------------------------------------------------------*/

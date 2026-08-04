@@ -11,9 +11,27 @@
 
 #include "fan_task.h"
 
+#include "log.h"
 #include "srv_adc.h"
 #include "srv_fan_ctrl.h"
 #include "sw_timer.h"
+
+/* 模块日志开关 ----------------------------------------------------------------*/
+
+/** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
+#define FAN_TASK_LOG_ENABLE 1
+
+#if FAN_TASK_LOG_ENABLE
+#define FAN_TASK_LOG_E(...) LOG_E("fan_task", __VA_ARGS__)
+#define FAN_TASK_LOG_W(...) LOG_W("fan_task", __VA_ARGS__)
+#define FAN_TASK_LOG_I(...) LOG_I("fan_task", __VA_ARGS__)
+#define FAN_TASK_LOG_D(...) LOG_D("fan_task", __VA_ARGS__)
+#else
+#define FAN_TASK_LOG_E(...) ((void)0)
+#define FAN_TASK_LOG_W(...) ((void)0)
+#define FAN_TASK_LOG_I(...) ((void)0)
+#define FAN_TASK_LOG_D(...) ((void)0)
+#endif
 
 /* Private constants ---------------------------------------------------------*/
 
@@ -33,6 +51,7 @@ static int16_t fan_read_temp(uint8_t id);
 void fan_task_init(void)
 {
     srv_fan_ctrl_init(fan_read_temp);
+    FAN_TASK_LOG_I("风扇任务初始化完成 (period=%ums)", (unsigned)TASK_PERIOD_MS);
 
     const sw_timer_config_t timer_cfg = {
         .priority = SW_TIMER_PRIO_NORMAL,

@@ -9,7 +9,28 @@
 /* Includes ------------------------------------------------------------------*/
 #include "drv_status.h"
 
+#include "log.h"
 #include "main.h"
+
+/* 模块日志开关 ----------------------------------------------------------------*/
+
+/** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
+#define DRV_STATUS_LOG_ENABLE 1
+
+#if DRV_STATUS_LOG_ENABLE
+#define DRV_STATUS_LOG_E(...) LOG_E("drv_status", __VA_ARGS__)
+#define DRV_STATUS_LOG_W(...) LOG_W("drv_status", __VA_ARGS__)
+#define DRV_STATUS_LOG_I(...) LOG_I("drv_status", __VA_ARGS__)
+#define DRV_STATUS_LOG_D(...) LOG_D("drv_status", __VA_ARGS__)
+#else
+#define DRV_STATUS_LOG_E(...) ((void)0)
+#define DRV_STATUS_LOG_W(...) ((void)0)
+#define DRV_STATUS_LOG_I(...) ((void)0)
+#define DRV_STATUS_LOG_D(...) ((void)0)
+#endif
+
+/* 注：故障边沿检测统一由 srv_pwr_det 上提记录，本文件仅打印 init/deinit。
+ *     drv_status_read/read_all 为 10ms 轮询路径，禁止逐拍打印。 */
 
 /* Private types -------------------------------------------------------------*/
 
@@ -51,11 +72,13 @@ static bool s_initialized;
 void drv_status_init(void)
 {
     s_initialized = true;
+    DRV_STATUS_LOG_I("状态信号初始化完成 (%u 路 GPIO)", (unsigned)DRV_STATUS_NUM);
 }
 
 void drv_status_deinit(void)
 {
     s_initialized = false;
+    DRV_STATUS_LOG_I("状态信号反初始化完成");
 }
 
 bool drv_status_read(drv_status_signal_t sig)

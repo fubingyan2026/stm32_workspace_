@@ -10,13 +10,35 @@
 #include "drv_adc.h"
 
 #include "adc.h"
+#include "drv_systick.h"
+#include "log.h"
 #include "main.h"
 
 #include <string.h>
 
+/* 模块日志开关 ----------------------------------------------------------------*/
+
+/** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
+#define DRV_ADC_LOG_ENABLE 1
+
+#if DRV_ADC_LOG_ENABLE
+#define DRV_ADC_LOG_E(...) LOG_E("drv_adc", __VA_ARGS__)
+#define DRV_ADC_LOG_W(...) LOG_W("drv_adc", __VA_ARGS__)
+#define DRV_ADC_LOG_I(...) LOG_I("drv_adc", __VA_ARGS__)
+#define DRV_ADC_LOG_D(...) LOG_D("drv_adc", __VA_ARGS__)
+#else
+#define DRV_ADC_LOG_E(...) ((void)0)
+#define DRV_ADC_LOG_W(...) ((void)0)
+#define DRV_ADC_LOG_I(...) ((void)0)
+#define DRV_ADC_LOG_D(...) ((void)0)
+#endif
+
 /* Private constants ---------------------------------------------------------*/
 
 #define DRV_ADC_DMA_BUF_SIZE (16U) /**< 单 ADC 最大 DMA 槽位 */
+
+/** @brief ADC 触发失败日志限频窗口 (ms)：10ms 周期触发下 Start_DMA 连续失败时防刷屏 */
+#define DRV_ADC_ERR_LOG_PERIOD_MS (1000U)
 
 /**
  * @brief 内置通道路由表（与 Core/Src/adc.c MX_ADCx_Init 的 Rank 顺序严格对应）
@@ -25,7 +47,7 @@
  *
  * ADC1 (INST_1): PA0/PA2/PA4/PA6 + TEMPSENSOR + VREFINT + VBAT (7ch)
  * ADC2 (INST_2): PA1/PA3/PA5/PA7/PC2/PC3/PC4 (7ch)
- * ADC3 (INST_3): PC0 (1ch) — NTC2(PC1) 未配置，需 CubeMX 添加
+ * ADC3 (INST_3): PC0 (1ch) — NTC2(PC1)
  */
 static const drv_adc_route_t s_routes[DRV_ADC_CH_MAX] = {
     /* ADC2 (INST_2): 电压采样 — Rank 5/6/7 */
@@ -45,9 +67,9 @@ static const drv_adc_route_t s_routes[DRV_ADC_CH_MAX] = {
     [DRV_ADC_CH_E_STOP3_ADC2] = { DRV_ADC_INST_2, 2 }, /**< PA5, ADC2_IN5 */
     [DRV_ADC_CH_E_STOP4_ADC2] = { DRV_ADC_INST_2, 3 }, /**< PA7, ADC2_IN7 */
 
-    /* ADC3 (INST_3): NTC 温度 — Rank 1 */
-    [DRV_NTC1_ADC] = { DRV_ADC_INST_3, 0 }, /**< PC0, ADC3_IN10 */
-    [DRV_NTC2_ADC] = { DRV_ADC_INST_3, 0 }, /**< TODO: PC1/ADC3_IN11 未在 CubeMX 扫描序列中 */
+    /* ADC3 (INST_3): NTC 温度 — Rank 1/2 */
+    [DRV_NTC1_ADC] = { DRV_ADC_INST_3, 0 }, /**< PC0, ADC3_IN10 (Rank1) */
+    [DRV_NTC2_ADC] = { DRV_ADC_INST_3, 1 }, /**< PC1, ADC3_IN11 (Rank2) */
 
     /* ADC1 (INST_1): 内部通道 — Rank 5/6/7 */
     [DRV_ADC_CH_TEMPSENSOR]   = { DRV_ADC_INST_1, 4 }, /**< 内部温度传感器, ADC1_IN16 */
@@ -77,6 +99,9 @@ static ADC_HandleTypeDef* const s_adc_handles[DRV_ADC_INST_NUM] = {
 static drv_adc_ctx_t     s_ctx[DRV_ADC_INST_NUM];
 static drv_adc_callback_t s_callback;
 
+/** @brief 各实例触发失败日志时间戳 (ms)，独立限频 */
+static uint32_t s_trig_err_log_ts[DRV_ADC_INST_NUM];
+
 #define HADC(p) ((ADC_HandleTypeDef*)(p))
 
 /* Private function prototypes -----------------------------------------------*/
@@ -98,6 +123,12 @@ void drv_adc_init(void)
         ctx->channel_count = ctx->hadc->Init.NbrOfConversion;
         ctx->initialized = true;
     }
+
+    DRV_ADC_LOG_I("ADC 初始化完成: 实例数=%u, 通道数 ADC1=%u ADC2=%u ADC3=%u",
+        (unsigned)DRV_ADC_INST_NUM,
+        (unsigned)s_ctx[0].channel_count,
+        (unsigned)s_ctx[1].channel_count,
+        (unsigned)s_ctx[2].channel_count);
 }
 
 void drv_adc_deinit_all(void)
@@ -130,6 +161,14 @@ drv_adc_error_t drv_adc_trigger(drv_adc_inst_t inst)
 
     if (HAL_ADC_Start_DMA(ctx->hadc, ctx->dma_buf, ctx->channel_count) != HAL_OK) {
         ctx->busy = false;
+
+        /* 限频 1s：Start_DMA 每次 10ms 触发都会失败（circular DMA 常驻 BUSY），防刷屏 */
+        const uint32_t now_ms = millis();
+        if ((uint32_t)(now_ms - s_trig_err_log_ts[inst]) >= DRV_ADC_ERR_LOG_PERIOD_MS) {
+            s_trig_err_log_ts[inst] = now_ms;
+            DRV_ADC_LOG_E("ADC%u 启动 DMA 采样失败 (inst=%u)",
+                (unsigned)inst + 1U, (unsigned)inst);
+        }
         return DRV_ADC_ERROR_BUSY;
     }
 
@@ -177,6 +216,7 @@ uint32_t drv_adc_read_raw(drv_adc_channel_t ch)
 drv_adc_error_t drv_adc_register_callback(drv_adc_callback_t callback)
 {
     s_callback = callback;
+    DRV_ADC_LOG_I("ADC 采样回调已注册");
     return DRV_ADC_OK;
 }
 

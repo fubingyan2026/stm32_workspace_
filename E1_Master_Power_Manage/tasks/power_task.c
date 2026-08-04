@@ -11,8 +11,26 @@
 
 #include "power_task.h"
 
+#include "log.h"
 #include "srv_pwr_ctrl.h"
 #include "sw_timer.h"
+
+/* 模块日志开关 ----------------------------------------------------------------*/
+
+/** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
+#define POWER_TASK_LOG_ENABLE 1
+
+#if POWER_TASK_LOG_ENABLE
+#define POWER_TASK_LOG_E(...) LOG_E("power_task", __VA_ARGS__)
+#define POWER_TASK_LOG_W(...) LOG_W("power_task", __VA_ARGS__)
+#define POWER_TASK_LOG_I(...) LOG_I("power_task", __VA_ARGS__)
+#define POWER_TASK_LOG_D(...) LOG_D("power_task", __VA_ARGS__)
+#else
+#define POWER_TASK_LOG_E(...) ((void)0)
+#define POWER_TASK_LOG_W(...) ((void)0)
+#define POWER_TASK_LOG_I(...) ((void)0)
+#define POWER_TASK_LOG_D(...) ((void)0)
+#endif
 
 /* Private constants ---------------------------------------------------------*/
 
@@ -31,6 +49,7 @@ static void power_timer_cb(void* user_data);
 void power_task_init(void)
 {
     srv_pwr_ctrl_init();
+    POWER_TASK_LOG_I("电源管理任务初始化完成 (period=%ums)", (unsigned)TASK_PERIOD_MS);
 
     const sw_timer_config_t timer_cfg = {
         .priority = SW_TIMER_PRIO_NORMAL,
@@ -43,11 +62,13 @@ void power_task_init(void)
 
 void power_task_request_on(void)
 {
+    POWER_TASK_LOG_I("上电请求转发至电源服务");
     srv_pwr_ctrl_request_on();
 }
 
 void power_task_emergency_off(void)
 {
+    POWER_TASK_LOG_E("紧急断电请求: 全部电源轨关闭");
     srv_pwr_ctrl_emergency_off();
 }
 

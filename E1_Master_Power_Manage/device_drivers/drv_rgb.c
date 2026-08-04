@@ -9,10 +9,28 @@
 /* Includes ------------------------------------------------------------------*/
 #include "drv_rgb.h"
 
+#include "log.h"
 #include "main.h"
 #include "spi.h"
 
 #include <string.h>
+
+/* 模块日志开关 ----------------------------------------------------------------*/
+
+/** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
+#define DRV_RGB_LOG_ENABLE 1
+
+#if DRV_RGB_LOG_ENABLE
+#define DRV_RGB_LOG_E(...) LOG_E("drv_rgb", __VA_ARGS__)
+#define DRV_RGB_LOG_W(...) LOG_W("drv_rgb", __VA_ARGS__)
+#define DRV_RGB_LOG_I(...) LOG_I("drv_rgb", __VA_ARGS__)
+#define DRV_RGB_LOG_D(...) LOG_D("drv_rgb", __VA_ARGS__)
+#else
+#define DRV_RGB_LOG_E(...) ((void)0)
+#define DRV_RGB_LOG_W(...) ((void)0)
+#define DRV_RGB_LOG_I(...) ((void)0)
+#define DRV_RGB_LOG_D(...) ((void)0)
+#endif
 
 /* Private constants ---------------------------------------------------------*/
 
@@ -71,6 +89,8 @@ drv_rgb_error_t drv_rgb_init(void)
         ctx->hw = &s_hw[inst];
 
         if (ctx->hw->led_count == 0 || ctx->hw->led_count > DRV_RGB_MAX_LEDS) {
+            DRV_RGB_LOG_E("RGB%u LED 数量非法: %u (上限%u)",
+                (unsigned)inst + 1U, (unsigned)ctx->hw->led_count, (unsigned)DRV_RGB_MAX_LEDS);
             return DRV_RGB_ERROR_INVALID_PARAM;
         }
 
@@ -82,6 +102,8 @@ drv_rgb_error_t drv_rgb_init(void)
         while (ctx->busy) { }
 
         ctx->initialized = true;
+        DRV_RGB_LOG_I("RGB%u 初始化完成 (led=%u, 全灭帧已发送)",
+            (unsigned)inst + 1U, (unsigned)ctx->hw->led_count);
     }
 
     return DRV_RGB_OK;
@@ -168,6 +190,7 @@ drv_rgb_error_t drv_rgb_update(drv_rgb_inst_t inst)
     uint32_t total = ctx->hw->led_count * BYTES_PER_LED + RESET_BYTES;
     if (HAL_SPI_Transmit_DMA(ctx->hw->hspi, ctx->spi_buf, total) != HAL_OK) {
         ctx->busy = false;
+        DRV_RGB_LOG_W("RGB%u SPI DMA 发送失败 (busy 已复位)", (unsigned)inst + 1U);
         return DRV_RGB_ERROR_BUSY;
     }
 

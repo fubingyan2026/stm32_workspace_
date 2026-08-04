@@ -21,6 +21,23 @@
 
 #include "SEGGER_RTT.h"
 
+/* 模块日志开关 ----------------------------------------------------------------*/
+
+/** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
+#define LOG_TASK_LOG_ENABLE 1
+
+#if LOG_TASK_LOG_ENABLE
+#define LOG_TASK_LOG_E(...) LOG_E("log_task", __VA_ARGS__)
+#define LOG_TASK_LOG_W(...) LOG_W("log_task", __VA_ARGS__)
+#define LOG_TASK_LOG_I(...) LOG_I("log_task", __VA_ARGS__)
+#define LOG_TASK_LOG_D(...) LOG_D("log_task", __VA_ARGS__)
+#else
+#define LOG_TASK_LOG_E(...) ((void)0)
+#define LOG_TASK_LOG_W(...) ((void)0)
+#define LOG_TASK_LOG_I(...) ((void)0)
+#define LOG_TASK_LOG_D(...) ((void)0)
+#endif
+
 /* Private constants ---------------------------------------------------------*/
 
 #define LOG_TASK_TX_BUF_SIZE (256)
@@ -30,7 +47,7 @@
 
 static uint8_t s_tx_buf[LOG_TASK_TX_BUF_SIZE];
 static sw_timer_t s_log_timer;
-static log_task_output_t s_output_mode = LOG_OUTPUT_RTT;
+static log_task_output_t s_output_mode = LOG_OUTPUT_UART;
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -60,6 +77,9 @@ void log_task_init(void)
     };
     sw_timer_init(&s_log_timer, &timer_cfg);
     sw_timer_start(&s_log_timer, LOG_TASK_PERIOD_MS, 0);
+
+    LOG_TASK_LOG_I("日志任务初始化完成: 输出=UART DMA, 周期=%ums, 级别=DEBUG",
+        (unsigned)LOG_TASK_PERIOD_MS);
 }
 
 void log_task_set_output(log_task_output_t mode)
@@ -75,29 +95,34 @@ void log_task_set_output(log_task_output_t mode)
 static void log_timer_cb(void* user_data)
 {
     (void)user_data;
+    /* 注：此处为 kfifo→UART 排空路径，禁止添加任何日志（会回灌自身 kfifo） */
     /* ── TX ── */
     uint32_t log_len = log_tx_len();
     if (log_len > 0) {
         if (log_len > sizeof(s_tx_buf)) {
             log_len = sizeof(s_tx_buf);
         }
-        uint32_t actual = log_tx_get(s_tx_buf, log_len);
-        if (actual > 0) {
-            switch (s_output_mode) {
-            case LOG_OUTPUT_NONE:
-                /* 不输出 */
-                break;
-            case LOG_OUTPUT_RTT:
+        switch (s_output_mode) {
+        case LOG_OUTPUT_NONE:
+            /* 不输出 */
+            break;
+        case LOG_OUTPUT_RTT:
+            uint32_t actual = log_tx_get(s_tx_buf, log_len);
+            if (actual > 0) {
                 SEGGER_RTT_Write(0, s_tx_buf, actual);
-                break;
-            case LOG_OUTPUT_UART:
-                if (!drv_log_uart_is_tx_busy()) {
+            }
+
+            break;
+        case LOG_OUTPUT_UART:
+            if (!drv_log_uart_is_tx_busy()) {
+                uint32_t actual = log_tx_get(s_tx_buf, log_len);
+                if (actual > 0) {
                     drv_log_uart_send(s_tx_buf, actual);
                 }
-                break;
-            default:
-                break;
             }
+            break;
+        default:
+            break;
         }
     }
 

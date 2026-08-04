@@ -11,7 +11,29 @@
 
 #include <string.h>
 
+#include "drv_systick.h"
+#include "log.h"
 #include "public.h"
+
+/* 模块日志开关 ----------------------------------------------------------------*/
+
+/** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
+#define SRV_CAN_MST_LOG_ENABLE 1
+
+#if SRV_CAN_MST_LOG_ENABLE
+#define SRV_CAN_MST_LOG_E(...) LOG_E("srv_can_mst", __VA_ARGS__)
+#define SRV_CAN_MST_LOG_W(...) LOG_W("srv_can_mst", __VA_ARGS__)
+#define SRV_CAN_MST_LOG_I(...) LOG_I("srv_can_mst", __VA_ARGS__)
+#define SRV_CAN_MST_LOG_D(...) LOG_D("srv_can_mst", __VA_ARGS__)
+#else
+#define SRV_CAN_MST_LOG_E(...) ((void)0)
+#define SRV_CAN_MST_LOG_W(...) ((void)0)
+#define SRV_CAN_MST_LOG_I(...) ((void)0)
+#define SRV_CAN_MST_LOG_D(...) ((void)0)
+#endif
+
+/** @brief TX 失败/上报请求日志限频窗口 (ms)：10ms 调用下防止刷屏 */
+#define SRV_CAN_MST_ERR_LOG_PERIOD_MS (1000U)
 
 /* Private constants ---------------------------------------------------------*/
 
@@ -37,6 +59,10 @@ static bool s_pending_active;
 /** @brief 最近一次主机指令 */
 static srv_can_mst_cmd_t s_last_cmd;
 static bool s_cmd_pending; /**< 主机发了新指令，等待回复 */
+
+/** @brief 日志限频时间戳 */
+static uint32_t s_tx_fail_log_ts;
+static uint32_t s_req_log_ts;
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -69,6 +95,8 @@ srv_can_mst_error_t srv_can_mst_init(const srv_can_mst_config_t* config)
     s_pending_active = false;
     s_initialized = true;
 
+    SRV_CAN_MST_LOG_I("主机上报服务初始化完成 (FIFO=%uB)", (unsigned)CM_FIFO_BUF_SIZE);
+
     return SRV_CAN_MST_OK;
 }
 
@@ -90,6 +118,13 @@ void srv_can_mst_request(uint8_t feedback_select)
 {
     if (!s_initialized || !msg_fifo_empty(&s_fifo) || s_pending_active) {
         return;
+    }
+
+    /* 上报请求日志（限频 1s） */
+    const uint32_t now_ms = millis();
+    if ((uint32_t)(now_ms - s_req_log_ts) >= SRV_CAN_MST_ERR_LOG_PERIOD_MS) {
+        s_req_log_ts = now_ms;
+        SRV_CAN_MST_LOG_D("主机上报请求: feedback_select=0x%02X", (unsigned)feedback_select);
     }
 
     srv_can_mst_data_t data;
@@ -118,6 +153,14 @@ void srv_can_mst_task(void)
     /* 发送 pending 帧（成功则清除，失败下次重试） */
     if (s_config.send_frame(s_pending.id, s_pending.data, s_pending.len)) {
         s_pending_active = false;
+    } else {
+        /* 发送失败告警（限频 1s，10ms 调用下 CAN 忙时防止刷屏） */
+        const uint32_t now_ms = millis();
+        if ((uint32_t)(now_ms - s_tx_fail_log_ts) >= SRV_CAN_MST_ERR_LOG_PERIOD_MS) {
+            s_tx_fail_log_ts = now_ms;
+            SRV_CAN_MST_LOG_W("主机帧发送失败待重试: id=0x%03X len=%u (CAN忙)",
+                (unsigned)s_pending.id, (unsigned)s_pending.len);
+        }
     }
 
     /* 主机请求的回复帧全部发完 → 标记已完成 */
@@ -151,6 +194,17 @@ void srv_can_mst_process_rx(const uint8_t* data, uint8_t len)
         s_last_cmd.lsd2_24v_on = (data[6] >> 0) & 1;
 
     s_cmd_pending = true;
+
+    /* 主机指令日志（配置变更，I 级） */
+    SRV_CAN_MST_LOG_I("收到主机指令: fb=0x%02X rgb_mode=%u rgb=0x%06lX buzzer=%u hsd1_12v=%d hsd2_12v=%d lsd1_24v=%d lsd2_24v=%d",
+        (unsigned)s_last_cmd.feedback_select,
+        (unsigned)s_last_cmd.rgb_mode,
+        (unsigned long)s_last_cmd.rgb_color,
+        (unsigned)s_last_cmd.buzzer_duty,
+        (int)s_last_cmd.hsd1_12v_on,
+        (int)s_last_cmd.hsd2_12v_on,
+        (int)s_last_cmd.lsd1_24v_on,
+        (int)s_last_cmd.lsd2_24v_on);
 
     /* 按主机请求立即触发回复 */
     srv_can_mst_request(s_last_cmd.feedback_select);

@@ -13,6 +13,24 @@
 
 #include "drv_fan.h"
 #include "filter.h"
+#include "log.h"
+
+/* 模块日志开关 ----------------------------------------------------------------*/
+
+/** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
+#define SRV_FAN_CTRL_LOG_ENABLE 1
+
+#if SRV_FAN_CTRL_LOG_ENABLE
+#define SRV_FAN_CTRL_LOG_E(...) LOG_E("srv_fan_ctrl", __VA_ARGS__)
+#define SRV_FAN_CTRL_LOG_W(...) LOG_W("srv_fan_ctrl", __VA_ARGS__)
+#define SRV_FAN_CTRL_LOG_I(...) LOG_I("srv_fan_ctrl", __VA_ARGS__)
+#define SRV_FAN_CTRL_LOG_D(...) LOG_D("srv_fan_ctrl", __VA_ARGS__)
+#else
+#define SRV_FAN_CTRL_LOG_E(...) ((void)0)
+#define SRV_FAN_CTRL_LOG_W(...) ((void)0)
+#define SRV_FAN_CTRL_LOG_I(...) ((void)0)
+#define SRV_FAN_CTRL_LOG_D(...) ((void)0)
+#endif
 
 /* Private constants ---------------------------------------------------------*/
 
@@ -65,6 +83,9 @@ void srv_fan_ctrl_init(srv_fan_ctrl_temp_read_cb_t temp_read)
     }
 
     s_initialized = true;
+
+    SRV_FAN_CTRL_LOG_I("风扇控制服务初始化完成 (%u 台风扇, 自动温控=%d)",
+        (unsigned)s_fan_count, (int)(temp_read != NULL));
 }
 
 void srv_fan_ctrl_step(uint16_t elapsed_ms)
@@ -84,16 +105,22 @@ void srv_fan_ctrl_step(uint16_t elapsed_ms)
             f->rpm = (uint32_t)pt1FilterApply(&f->rpm_filter, rpm_raw);
         }
 
-        /* 2. 堵转 / 低速故障检测 */
+        /* 2. 堵转 / 低速故障检测（边沿触发打印：仅断言/恢复时各一次） */
         if (f->rpm < FAN_MIN_RPM) {
             f->low_rpm_ms += elapsed_ms;
         } else {
             f->low_rpm_ms = 0;
-            f->fault = false;
+            if (f->fault) {
+                f->fault = false;
+                SRV_FAN_CTRL_LOG_I("风扇%u 故障恢复: rpm=%u", (unsigned)i, (unsigned)f->rpm);
+            }
         }
 
         if (f->low_rpm_ms >= FAULT_DELAY_MS && !f->fault) {
             f->fault = true;
+            SRV_FAN_CTRL_LOG_E("风扇%u 堵转/低速故障: rpm=%u (<%u), 低速累计%ums (超时%ums)",
+                (unsigned)i, (unsigned)f->rpm, (unsigned)FAN_MIN_RPM,
+                (unsigned)f->low_rpm_ms, (unsigned)FAULT_DELAY_MS);
         }
 
         /* 3. 温控自动调速 */
@@ -114,6 +141,8 @@ void srv_fan_ctrl_set_duty(uint8_t id, uint8_t duty)
     if (duty > 100)
         duty = 100;
     s_fans[id].duty = duty;
+
+    SRV_FAN_CTRL_LOG_D("风扇%u 手动占空比 -> %u%%", (unsigned)id, (unsigned)duty);
 }
 
 const srv_fan_ctrl_status_t* srv_fan_ctrl_get_status(uint8_t id)

@@ -13,9 +13,27 @@
 /* Includes ------------------------------------------------------------------*/
 #include "srv_led.h"
 
+#include "log.h"
 #include "maths.h"
 #include "msg_fifo.h"
 #include <string.h>
+
+/* 模块日志开关 ----------------------------------------------------------------*/
+
+/** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
+#define SRV_LED_LOG_ENABLE 1
+
+#if SRV_LED_LOG_ENABLE
+#define SRV_LED_LOG_E(...) LOG_E("srv_led", __VA_ARGS__)
+#define SRV_LED_LOG_W(...) LOG_W("srv_led", __VA_ARGS__)
+#define SRV_LED_LOG_I(...) LOG_I("srv_led", __VA_ARGS__)
+#define SRV_LED_LOG_D(...) LOG_D("srv_led", __VA_ARGS__)
+#else
+#define SRV_LED_LOG_E(...) ((void)0)
+#define SRV_LED_LOG_W(...) ((void)0)
+#define SRV_LED_LOG_I(...) ((void)0)
+#define SRV_LED_LOG_D(...) ((void)0)
+#endif
 
 /* Private constants ---------------------------------------------------------*/
 
@@ -133,6 +151,9 @@ static void led_fsm_on_entry(fsm_t* ctx, fsm_state_t state)
 {
     srv_led_handle_t* handle = (srv_led_handle_t*)fsm_user_data(ctx);
 
+    /* 仅在状态进入时打印（FSM 转换边沿），呼吸/闪烁刷新不在此路径 */
+    SRV_LED_LOG_I("LED[%s] 状态 -> %s", handle->config.name, fsm_name(ctx, state));
+
     if (handle->state_change_cb) {
         ((led_state_change_cb_t)handle->state_change_cb)(handle, state,
             handle->callback_user_data);
@@ -225,14 +246,18 @@ static void led_process_cmds(srv_led_handle_t* handle)
 
 led_error_t srv_led_init(led_get_time_cb_t get_time_cb)
 {
-    if (get_time_cb == NULL)
+    if (get_time_cb == NULL) {
+        SRV_LED_LOG_E("LED 服务初始化失败: 时间回调为空");
         return LED_ERROR_INVALID_PARAM;
+    }
     if (s_led_initialized)
         return LED_OK_EXISTED;
 
     s_led_get_time = get_time_cb;
     clist_init(&s_led_head);
     s_led_initialized = true;
+
+    SRV_LED_LOG_I("LED 服务初始化完成");
     return LED_OK;
 }
 
@@ -276,6 +301,7 @@ led_error_t srv_led_register_static(const srv_led_config_t* config,
     srv_led_handle_t* instance)
 {
     if (config == NULL || instance == NULL || config->name == NULL || config->write_pin == NULL) {
+        SRV_LED_LOG_E("LED 注册失败: 参数为空或引脚回调未设置");
         return LED_ERROR_INVALID_PARAM;
     }
     if (!s_led_initialized)
@@ -324,6 +350,9 @@ led_error_t srv_led_register_static(const srv_led_config_t* config,
     instance->initialized = true;
 
     clist_add_tail(&s_led_head, &instance->node);
+
+    SRV_LED_LOG_I("LED[%s] 注册成功, 初始状态=%s",
+        config->name, fsm_name(&instance->fsm, config->init_state));
     return LED_OK;
 }
 
@@ -349,6 +378,7 @@ void srv_led_set_state(srv_led_handle_t* instance, srv_led_state_t state)
     if (instance == NULL)
         return;
 
+    SRV_LED_LOG_D("LED[%s] 收到状态命令: %u", instance->config.name, (unsigned)state);
     srv_led_cmd_t cmd = { .led_set_state = state };
     msg_fifo_push(&instance->cmd_fifo, &cmd);
 }

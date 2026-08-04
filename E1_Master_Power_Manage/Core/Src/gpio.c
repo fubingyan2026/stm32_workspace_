@@ -45,8 +45,8 @@ void MX_GPIO_Init(void)
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 
   /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOE_CLK_ENABLE();
@@ -60,16 +60,11 @@ void MX_GPIO_Init(void)
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOD, DBR_LSD_EN_Pin|MOTOR_POWER_EN_Pin|AUX_POWER_EN_Pin|HSD2_IN_24V_Pin
-                          |HSD1_DIAG_EN_12V_Pin|HSD1_IN_12V_Pin|DC_DC_EN_Pin, GPIO_PIN_RESET);
+                          |HSD1_DIAG_EN_12V_Pin|HSD1_IN_12V_Pin|DC_DC_EN_Pin|CD4051B_A_Pin
+                          |CD4051B_B_Pin|CD4051B_C_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(P_CAN_STB_GPIO_Port, P_CAN_STB_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pins : D_IN3_IO_Pin D_IN2_IO_Pin D_IN1_IO_Pin */
-  GPIO_InitStruct.Pin = D_IN3_IO_Pin|D_IN2_IO_Pin|D_IN1_IO_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pins : MOTOR_POWER_CHG_IN_Pin MOTOR_POWER_CHG_EN_Pin */
   GPIO_InitStruct.Pin = MOTOR_POWER_CHG_IN_Pin|MOTOR_POWER_CHG_EN_Pin;
@@ -120,6 +115,13 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(P_CAN_STB_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : CD4051B_A_Pin CD4051B_B_Pin CD4051B_C_Pin */
+  GPIO_InitStruct.Pin = CD4051B_A_Pin|CD4051B_B_Pin|CD4051B_C_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
   /*Configure GPIO pins : FAN0_FG_IO_Pin FAN0_FG_IOE1_Pin */
   GPIO_InitStruct.Pin = FAN0_FG_IO_Pin|FAN0_FG_IOE1_Pin;

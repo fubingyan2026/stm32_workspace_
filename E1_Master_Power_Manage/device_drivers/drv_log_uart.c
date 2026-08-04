@@ -18,7 +18,28 @@
 #include "drv_log_uart.h"
 
 #include "kfifo.h"
+#include "log.h"
 #include "usart.h"
+
+/* 模块日志开关 ----------------------------------------------------------------*/
+
+/** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
+#define DRV_LOG_UART_LOG_ENABLE 1
+
+#if DRV_LOG_UART_LOG_ENABLE
+#define DRV_LOG_UART_LOG_E(...) LOG_E("drv_log_uart", __VA_ARGS__)
+#define DRV_LOG_UART_LOG_W(...) LOG_W("drv_log_uart", __VA_ARGS__)
+#define DRV_LOG_UART_LOG_I(...) LOG_I("drv_log_uart", __VA_ARGS__)
+#define DRV_LOG_UART_LOG_D(...) LOG_D("drv_log_uart", __VA_ARGS__)
+#else
+#define DRV_LOG_UART_LOG_E(...) ((void)0)
+#define DRV_LOG_UART_LOG_W(...) ((void)0)
+#define DRV_LOG_UART_LOG_I(...) ((void)0)
+#define DRV_LOG_UART_LOG_D(...) ((void)0)
+#endif
+
+/* 注：本文件是日志输出后端本体。仅允许在 drv_log_uart_init()/deinit() 打印；
+ *send/TxCplt/RxEvent/sync_rx_dma 为 TX/RX 热路径，禁止任何日志（自引用回灌）。 */
 
 /* Private constants ---------------------------------------------------------*/
 
@@ -64,10 +85,14 @@ drv_log_uart_error_t drv_log_uart_init(void)
     kfifo_init(&s_rx_fifo, s_rx_dma_buf, sizeof(s_rx_dma_buf), NULL);
 
     if (HAL_UARTEx_ReceiveToIdle_DMA(LOG_HUART, s_rx_dma_buf, sizeof(s_rx_dma_buf)) != HAL_OK) {
+        DRV_LOG_UART_LOG_E("日志串口 RX DMA 启动失败 (state=%d)", (int)LOG_HUART->gState);
         return DRV_LOG_UART_ERROR_UNINITIALIZED;
     }
 
     s_initialized = true;
+
+    DRV_LOG_UART_LOG_I("日志串口初始化完成 (USART1 DMA, RX缓冲区=%u字节)",
+        (unsigned)sizeof(s_rx_dma_buf));
 
     return DRV_LOG_UART_OK;
 }
@@ -87,6 +112,8 @@ void drv_log_uart_deinit(void)
 
     s_tx_busy = false;
     s_initialized = false;
+
+    DRV_LOG_UART_LOG_I("日志串口反初始化完成");
 }
 
 /**

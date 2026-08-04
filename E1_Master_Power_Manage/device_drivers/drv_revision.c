@@ -9,7 +9,30 @@
 /* Includes ------------------------------------------------------------------*/
 #include "drv_revision.h"
 
+#include "log.h"
 #include "main.h"
+
+/* 模块日志开关 ----------------------------------------------------------------*/
+
+/** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
+#define DRV_REVISION_LOG_ENABLE 1
+
+#if DRV_REVISION_LOG_ENABLE
+#define DRV_REVISION_LOG_E(...) LOG_E("drv_revision", __VA_ARGS__)
+#define DRV_REVISION_LOG_W(...) LOG_W("drv_revision", __VA_ARGS__)
+#define DRV_REVISION_LOG_I(...) LOG_I("drv_revision", __VA_ARGS__)
+#define DRV_REVISION_LOG_D(...) LOG_D("drv_revision", __VA_ARGS__)
+#else
+#define DRV_REVISION_LOG_E(...) ((void)0)
+#define DRV_REVISION_LOG_W(...) ((void)0)
+#define DRV_REVISION_LOG_I(...) ((void)0)
+#define DRV_REVISION_LOG_D(...) ((void)0)
+#endif
+
+/* Private variables ---------------------------------------------------------*/
+
+/** @brief 版本打印标志：仅首次读取时输出，避免重复 */
+static bool s_rev_logged;
 
 /* Private constants ---------------------------------------------------------*/
 
@@ -47,6 +70,16 @@ uint8_t drv_revision_read(void)
         rev |= (1U << 2);
     }
 
+    /* 首次读取打印硬件版本（PD0/PD1/PD2 三引脚编码） */
+    if (!s_rev_logged) {
+        s_rev_logged = true;
+        DRV_REVISION_LOG_I("硬件版本: rev=%u (PD0=%d PD1=%d PD2=%d)",
+            (unsigned)rev,
+            (int)((rev >> 0) & 1U),
+            (int)((rev >> 1) & 1U),
+            (int)((rev >> 2) & 1U));
+    }
+
     return rev;
 }
 
@@ -58,5 +91,7 @@ const char* drv_revision_name(void)
         return s_rev_names[rev];
     }
 
+    DRV_REVISION_LOG_W("硬件版本未知: rev=%u 超出映射表 (上限%u)",
+        (unsigned)rev, (unsigned)REV_MAX_INDEX);
     return "UNKNOWN";
 }

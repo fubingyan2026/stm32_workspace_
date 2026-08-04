@@ -20,6 +20,22 @@ extern "C" {
 #include <stdint.h>
 
 /**
+ * @brief ADC 物理量换算返回状态
+ *
+ * 由 calc_vdda_mv / calc_mcu_temp / ntc_raw_to_temp 返回，真实数值经出参指针输出，
+ * 状态码区分计算失败原因（校准无效 / 短路 / 开路 / 采样过低），并存入
+ * srv_adc_data_t 对应字段供上层观测。
+ */
+typedef enum {
+    SRV_ADC_CALC_OK = 0,      /**< 计算成功 */
+    SRV_ADC_CALC_ERR_PARAM,   /**< 参数非法（空指针等） */
+    SRV_ADC_CALC_ERR_CAL,     /**< 校准值无效 */
+    SRV_ADC_CALC_ERR_SHORT,   /**< 传感器短路 */
+    SRV_ADC_CALC_ERR_OPEN,    /**< 传感器开路 */
+    SRV_ADC_CALC_ERR_LOW_RAW, /**< 采样值过低 */
+} srv_adc_calc_status_t;
+
+/**
  * @brief ADC 采样数据
  */
 typedef struct {
@@ -50,6 +66,12 @@ typedef struct {
 
     /* ── 备份电池 ── */
     uint32_t vbat_mv; /**< VBAT 备份电池电压 (mV) */
+
+    /* ── 换算状态（供上层观测各物理量计算是否异常） ── */
+    srv_adc_calc_status_t vdda_status; /**< VDDA 校准状态 */
+    srv_adc_calc_status_t ntc1_status; /**< NTC1 温度换算状态 */
+    srv_adc_calc_status_t ntc2_status; /**< NTC2 温度换算状态 */
+    srv_adc_calc_status_t mcu_temp_status; /**< MCU 温度换算状态 */
 } srv_adc_data_t;
 
 /* Exported functions prototypes ---------------------------------------------*/
@@ -59,6 +81,16 @@ void srv_adc_init(void);
 
 /** @brief 触发一次 ADC 扫描（由 task 层的 sw_timer 调用） */
 void srv_adc_trigger(void);
+
+/**
+ * @brief ADC 处理步进（由 task 层 sw_timer 在主循环上下文调用）
+ *
+ * 从原始快照 FIFO 取最新一帧，完成 PT1 滤波、VREFINT 校准、温度/NTC 换算，
+ * 并写入采样 FIFO、输出遥测日志。与 srv_adc_trigger() 配对使用：
+ * trigger 启动扫描 → DMA 中断回调只做原始快照 → 本函数负责全部换算与日志
+ * （不占用中断上下文，避免 float 计算与 printf 阻塞低优先级中断）。
+ */
+void srv_adc_step(void);
 
 /** @brief 获取最新采样数据（非阻塞） */
 bool srv_adc_get_latest(srv_adc_data_t* sample);

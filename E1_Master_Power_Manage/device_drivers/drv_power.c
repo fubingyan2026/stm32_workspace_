@@ -9,7 +9,25 @@
 /* Includes ------------------------------------------------------------------*/
 #include "drv_power.h"
 
+#include "log.h"
 #include "main.h"
+
+/* 模块日志开关 ----------------------------------------------------------------*/
+
+/** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
+#define DRV_POWER_LOG_ENABLE 1
+
+#if DRV_POWER_LOG_ENABLE
+#define DRV_POWER_LOG_E(...) LOG_E("drv_power", __VA_ARGS__)
+#define DRV_POWER_LOG_W(...) LOG_W("drv_power", __VA_ARGS__)
+#define DRV_POWER_LOG_I(...) LOG_I("drv_power", __VA_ARGS__)
+#define DRV_POWER_LOG_D(...) LOG_D("drv_power", __VA_ARGS__)
+#else
+#define DRV_POWER_LOG_E(...) ((void)0)
+#define DRV_POWER_LOG_W(...) ((void)0)
+#define DRV_POWER_LOG_I(...) ((void)0)
+#define DRV_POWER_LOG_D(...) ((void)0)
+#endif
 
 /* Private types -------------------------------------------------------------*/
 
@@ -60,6 +78,7 @@ void drv_power_init(void)
     }
 
     s_initialized = true;
+    DRV_POWER_LOG_I("电源轨初始化完成 (%u 路全部拉低)", (unsigned)DRV_POWER_RAIL_NUM);
 }
 
 void drv_power_deinit(void)
@@ -75,11 +94,13 @@ void drv_power_deinit(void)
     }
 
     s_initialized = false;
+    DRV_POWER_LOG_I("电源轨反初始化完成");
 }
 
 void drv_power_set(drv_power_rail_t rail, bool on)
 {
     if (!s_initialized || rail >= DRV_POWER_RAIL_NUM) {
+        DRV_POWER_LOG_W("电源轨设置被忽略: rail=%u 越界或未初始化", (unsigned)rail);
         return;
     }
 
@@ -87,6 +108,8 @@ void drv_power_set(drv_power_rail_t rail, bool on)
         HAL_GPIO_WritePin(s_pins[rail].port, s_pins[rail].pin,
             on ? GPIO_PIN_SET : GPIO_PIN_RESET);
     }
+
+    DRV_POWER_LOG_D("电源轨 %s -> %s", drv_power_rail_name(rail), on ? "开启" : "关闭");
 }
 
 const char* drv_power_rail_name(drv_power_rail_t rail)

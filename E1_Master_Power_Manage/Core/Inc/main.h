@@ -57,12 +57,6 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define D_IN3_IO_Pin GPIO_PIN_13
-#define D_IN3_IO_GPIO_Port GPIOC
-#define D_IN2_IO_Pin GPIO_PIN_14
-#define D_IN2_IO_GPIO_Port GPIOC
-#define D_IN1_IO_Pin GPIO_PIN_15
-#define D_IN1_IO_GPIO_Port GPIOC
 #define NTC1_ADC_Pin GPIO_PIN_0
 #define NTC1_ADC_GPIO_Port GPIOC
 #define NTC2_ADC_Pin GPIO_PIN_1
@@ -89,6 +83,8 @@ void Error_Handler(void);
 #define E_STOP4_ADC2_GPIO_Port GPIOA
 #define AUX_POWER_ADC_Pin GPIO_PIN_4
 #define AUX_POWER_ADC_GPIO_Port GPIOC
+#define CD4051B_ADC_Pin GPIO_PIN_5
+#define CD4051B_ADC_GPIO_Port GPIOC
 #define MOTOR_POWER_CHG_IN_Pin GPIO_PIN_0
 #define MOTOR_POWER_CHG_IN_GPIO_Port GPIOB
 #define MOTOR_POWER_CHG_OCP_FLAG_Pin GPIO_PIN_1
@@ -151,6 +147,12 @@ void Error_Handler(void);
 #define REV_PD1_GPIO_Port GPIOD
 #define REV_PD2_Pin GPIO_PIN_2
 #define REV_PD2_GPIO_Port GPIOD
+#define CD4051B_A_Pin GPIO_PIN_3
+#define CD4051B_A_GPIO_Port GPIOD
+#define CD4051B_B_Pin GPIO_PIN_4
+#define CD4051B_B_GPIO_Port GPIOD
+#define CD4051B_C_Pin GPIO_PIN_5
+#define CD4051B_C_GPIO_Port GPIOD
 #define RGB2_DI_IO_Pin GPIO_PIN_5
 #define RGB2_DI_IO_GPIO_Port GPIOB
 #define FAN0_PWM_IO_Pin GPIO_PIN_8

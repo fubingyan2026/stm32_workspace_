@@ -57,7 +57,7 @@ void MX_ADC1_Init(void)
   hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
   hadc1.Init.NbrOfConversion = 7;
-  hadc1.Init.DMAContinuousRequests = ENABLE;
+  hadc1.Init.DMAContinuousRequests = DISABLE;
   hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
   {
@@ -68,7 +68,7 @@ void MX_ADC1_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_0;
   sConfig.Rank = 1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  sConfig.SamplingTime = ADC_SAMPLETIME_56CYCLES;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -157,8 +157,8 @@ void MX_ADC2_Init(void)
   hadc2.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
   hadc2.Init.ExternalTrigConv = ADC_SOFTWARE_START;
   hadc2.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc2.Init.NbrOfConversion = 7;
-  hadc2.Init.DMAContinuousRequests = ENABLE;
+  hadc2.Init.NbrOfConversion = 8;
+  hadc2.Init.DMAContinuousRequests = DISABLE;
   hadc2.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
   if (HAL_ADC_Init(&hadc2) != HAL_OK)
   {
@@ -169,7 +169,7 @@ void MX_ADC2_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_1;
   sConfig.Rank = 1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  sConfig.SamplingTime = ADC_SAMPLETIME_56CYCLES;
   if (HAL_ADC_ConfigChannel(&hadc2, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -228,6 +228,15 @@ void MX_ADC2_Init(void)
   {
     Error_Handler();
   }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_15;
+  sConfig.Rank = 8;
+  if (HAL_ADC_ConfigChannel(&hadc2, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /* USER CODE BEGIN ADC2_Init 2 */
 
   /* USER CODE END ADC2_Init 2 */
@@ -252,13 +261,13 @@ void MX_ADC3_Init(void)
   hadc3.Instance = ADC3;
   hadc3.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
   hadc3.Init.Resolution = ADC_RESOLUTION_12B;
-  hadc3.Init.ScanConvMode = DISABLE;
+  hadc3.Init.ScanConvMode = ENABLE;
   hadc3.Init.ContinuousConvMode = DISABLE;
   hadc3.Init.DiscontinuousConvMode = DISABLE;
   hadc3.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
   hadc3.Init.ExternalTrigConv = ADC_SOFTWARE_START;
   hadc3.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc3.Init.NbrOfConversion = 1;
+  hadc3.Init.NbrOfConversion = 2;
   hadc3.Init.DMAContinuousRequests = DISABLE;
   hadc3.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
   if (HAL_ADC_Init(&hadc3) != HAL_OK)
@@ -270,7 +279,16 @@ void MX_ADC3_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_10;
   sConfig.Rank = 1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  sConfig.SamplingTime = ADC_SAMPLETIME_480CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc3, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_11;
+  sConfig.Rank = 2;
   if (HAL_ADC_ConfigChannel(&hadc3, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -314,7 +332,7 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* adcHandle)
     hdma_adc1.Init.MemInc = DMA_MINC_ENABLE;
     hdma_adc1.Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
     hdma_adc1.Init.MemDataAlignment = DMA_MDATAALIGN_WORD;
-    hdma_adc1.Init.Mode = DMA_CIRCULAR;
+    hdma_adc1.Init.Mode = DMA_NORMAL;
     hdma_adc1.Init.Priority = DMA_PRIORITY_HIGH;
     hdma_adc1.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
     if (HAL_DMA_Init(&hdma_adc1) != HAL_OK)
@@ -346,8 +364,9 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* adcHandle)
     PA5     ------> ADC2_IN5
     PA7     ------> ADC2_IN7
     PC4     ------> ADC2_IN14
+    PC5     ------> ADC2_IN15
     */
-    GPIO_InitStruct.Pin = VIN_ADC_Pin|MOTOR_POWER_ADC_Pin|AUX_POWER_ADC_Pin;
+    GPIO_InitStruct.Pin = VIN_ADC_Pin|MOTOR_POWER_ADC_Pin|AUX_POWER_ADC_Pin|CD4051B_ADC_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
@@ -366,7 +385,7 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* adcHandle)
     hdma_adc2.Init.MemInc = DMA_MINC_ENABLE;
     hdma_adc2.Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
     hdma_adc2.Init.MemDataAlignment = DMA_MDATAALIGN_WORD;
-    hdma_adc2.Init.Mode = DMA_CIRCULAR;
+    hdma_adc2.Init.Mode = DMA_NORMAL;
     hdma_adc2.Init.Priority = DMA_PRIORITY_HIGH;
     hdma_adc2.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
     if (HAL_DMA_Init(&hdma_adc2) != HAL_OK)
@@ -407,7 +426,7 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* adcHandle)
     hdma_adc3.Init.MemInc = DMA_MINC_ENABLE;
     hdma_adc3.Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
     hdma_adc3.Init.MemDataAlignment = DMA_MDATAALIGN_WORD;
-    hdma_adc3.Init.Mode = DMA_CIRCULAR;
+    hdma_adc3.Init.Mode = DMA_NORMAL;
     hdma_adc3.Init.Priority = DMA_PRIORITY_HIGH;
     hdma_adc3.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
     if (HAL_DMA_Init(&hdma_adc3) != HAL_OK)
@@ -464,8 +483,9 @@ void HAL_ADC_MspDeInit(ADC_HandleTypeDef* adcHandle)
     PA5     ------> ADC2_IN5
     PA7     ------> ADC2_IN7
     PC4     ------> ADC2_IN14
+    PC5     ------> ADC2_IN15
     */
-    HAL_GPIO_DeInit(GPIOC, VIN_ADC_Pin|MOTOR_POWER_ADC_Pin|AUX_POWER_ADC_Pin);
+    HAL_GPIO_DeInit(GPIOC, VIN_ADC_Pin|MOTOR_POWER_ADC_Pin|AUX_POWER_ADC_Pin|CD4051B_ADC_Pin);
 
     HAL_GPIO_DeInit(GPIOA, E_STOP1_ADC2_Pin|E_STOP2_ADC2_Pin|E_STOP3_ADC2_Pin|E_STOP4_ADC2_Pin);
 

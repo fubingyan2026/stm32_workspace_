@@ -17,11 +17,33 @@
 /* Includes ------------------------------------------------------------------*/
 #include "drv_hw_timer.h"
 
+#include "log.h"
 #include "tim.h"
+
+/* 模块日志开关 ----------------------------------------------------------------*/
+
+/** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
+#define DRV_HW_TIMER_LOG_ENABLE 1
+
+#if DRV_HW_TIMER_LOG_ENABLE
+#define DRV_HW_TIMER_LOG_E(...) LOG_E("drv_hw_timer", __VA_ARGS__)
+#define DRV_HW_TIMER_LOG_W(...) LOG_W("drv_hw_timer", __VA_ARGS__)
+#define DRV_HW_TIMER_LOG_I(...) LOG_I("drv_hw_timer", __VA_ARGS__)
+#define DRV_HW_TIMER_LOG_D(...) LOG_D("drv_hw_timer", __VA_ARGS__)
+#else
+#define DRV_HW_TIMER_LOG_E(...) ((void)0)
+#define DRV_HW_TIMER_LOG_W(...) ((void)0)
+#define DRV_HW_TIMER_LOG_I(...) ((void)0)
+#define DRV_HW_TIMER_LOG_D(...) ((void)0)
+#endif
 
 /* Private constants ---------------------------------------------------------*/
 
 #define DRV_HW_TIMER_CH_NUM ((uint32_t)DRV_HW_TIMER_NUM)
+
+/** @brief TIM 句柄 → 定时器实例号（TIM1_BASE + 0x400 递增） */
+#define TIM_INSTANCE_NUM(htim) \
+    (unsigned)(((uint32_t)(htim)->Instance - (uint32_t)TIM1_BASE) / 0x400U + 1U)
 
 /* Private variables ---------------------------------------------------------*/
 
@@ -59,6 +81,8 @@ void drv_hw_timer_init(void)
         s_initialized[ch] = true;
         s_running[ch] = false;
     }
+
+    DRV_HW_TIMER_LOG_I("硬件定时器初始化完成 (%u 通道)", (unsigned)DRV_HW_TIMER_CH_NUM);
 }
 
 void drv_hw_timer_deinit_all(void)
@@ -94,10 +118,14 @@ drv_hw_timer_error_t drv_hw_timer_start(drv_hw_timer_ch_t ch)
     }
 
     if (HAL_TIM_Base_Start_IT(s_ch_to_htim[ch]) != HAL_OK) {
+        DRV_HW_TIMER_LOG_E("TIM%u 启动失败 (ch=%u)",
+            TIM_INSTANCE_NUM(s_ch_to_htim[ch]), (unsigned)ch);
         return DRV_HW_TIMER_ERROR_UNINITIALIZED;
     }
 
     s_running[ch] = true;
+    DRV_HW_TIMER_LOG_I("TIM%u 启动 (ch=%u)",
+        TIM_INSTANCE_NUM(s_ch_to_htim[ch]), (unsigned)ch);
     return DRV_HW_TIMER_OK;
 }
 
@@ -113,6 +141,8 @@ drv_hw_timer_error_t drv_hw_timer_stop(drv_hw_timer_ch_t ch)
     HAL_TIM_Base_Stop_IT(s_ch_to_htim[ch]);
 
     s_running[ch] = false;
+    DRV_HW_TIMER_LOG_D("TIM%u 停止 (ch=%u)",
+        TIM_INSTANCE_NUM(s_ch_to_htim[ch]), (unsigned)ch);
     return DRV_HW_TIMER_OK;
 }
 

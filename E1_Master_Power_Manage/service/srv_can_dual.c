@@ -11,11 +11,35 @@
 
 #include <string.h>
 
+#include "drv_systick.h"
+#include "log.h"
+
+/* 模块日志开关 ----------------------------------------------------------------*/
+
+/** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
+#define SRV_CAN_DUAL_LOG_ENABLE 1
+
+#if SRV_CAN_DUAL_LOG_ENABLE
+#define SRV_CAN_DUAL_LOG_E(...) LOG_E("srv_can_dual", __VA_ARGS__)
+#define SRV_CAN_DUAL_LOG_W(...) LOG_W("srv_can_dual", __VA_ARGS__)
+#define SRV_CAN_DUAL_LOG_I(...) LOG_I("srv_can_dual", __VA_ARGS__)
+#define SRV_CAN_DUAL_LOG_D(...) LOG_D("srv_can_dual", __VA_ARGS__)
+#else
+#define SRV_CAN_DUAL_LOG_E(...) ((void)0)
+#define SRV_CAN_DUAL_LOG_W(...) ((void)0)
+#define SRV_CAN_DUAL_LOG_I(...) ((void)0)
+#define SRV_CAN_DUAL_LOG_D(...) ((void)0)
+#endif
+
+/** @brief 核心帧遥测日志限频窗口 (ms)：0x200 每 100ms 一帧，需限频防刷屏 */
+#define SRV_CAN_DUAL_CORE_LOG_PERIOD_MS (1000U)
+
 /* Private variables ---------------------------------------------------------*/
 
 static srv_can_dual_config_t s_config;
 static srv_can_dual_data_t s_data;
 static bool s_initialized;
+static uint32_t s_core_log_ts; /**< 上次核心帧遥测日志时间戳 (ms) */
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -38,6 +62,8 @@ srv_can_dual_error_t srv_can_dual_init(const srv_can_dual_config_t* config)
     s_config = *config;
     memset(&s_data, 0, sizeof(s_data));
     s_initialized = true;
+
+    SRV_CAN_DUAL_LOG_I("双电池 CAN 解析服务初始化完成");
 
     return SRV_CAN_DUAL_OK;
 }
@@ -127,6 +153,20 @@ static void parse_core(uint8_t bat_id, const uint8_t* data)
     c->cell_temp = (int8_t)data[6];
     c->is_charging = (data[7] != 0);
     *online = true;
+
+    /* 核心帧遥测（限频 1s；电压 0.01V / 电流 0.01A 手拆小数，禁止 %f） */
+    const uint32_t now_ms = millis();
+    if ((uint32_t)(now_ms - s_core_log_ts) >= SRV_CAN_DUAL_CORE_LOG_PERIOD_MS) {
+        s_core_log_ts = now_ms;
+        SRV_CAN_DUAL_LOG_D("电池%u 核心帧: 电压=%u.%02uV 电流=%d.%02uA SOC=%u%% 温度=%d°C %s",
+            (unsigned)bat_id,
+            (unsigned)(c->voltage / 100), (unsigned)(c->voltage % 100),
+            (int)(c->current / 100),
+            (unsigned)((c->current < 0) ? (unsigned)(-(c->current)) % 100 : (unsigned)(c->current % 100)),
+            (unsigned)c->soc,
+            (int)c->cell_temp,
+            c->is_charging ? "充电" : "放电");
+    }
 }
 
 /**
@@ -142,6 +182,8 @@ static void parse_core(uint8_t bat_id, const uint8_t* data)
 static void parse_info(const uint8_t* data)
 {
     uint8_t key = data[0];
+
+    SRV_CAN_DUAL_LOG_D("电池信息帧: key=0x%02X", (unsigned)key);
 
     if (key == SRV_CAN_DUAL_INFO_KEY_CAPACITY) {
         srv_can_dual_capacity_t* cap1 = &s_data.bat1_capacity;
@@ -190,6 +232,17 @@ static void parse_fault(uint8_t bat_id, const uint8_t* data)
         f->level = (data[7] <= SRV_CAN_DUAL_FAULT_LV_CRITICAL)
             ? (srv_can_dual_fault_level_t)data[7]
             : SRV_CAN_DUAL_FAULT_LV_NORMAL;
+
+        /* 故障日志（按严重等级：SEVERE 以上 E，MINOR W） */
+        if (f->level >= SRV_CAN_DUAL_FAULT_LV_SEVERE) {
+            SRV_CAN_DUAL_LOG_E("电池1 严重故障(level=%u): 电压=0x%02X 电流=0x%02X 温度=0x%02X 硬件=0x%02X 预警=0x%04X",
+                (unsigned)f->level, (unsigned)f->volt.raw, (unsigned)f->curr.raw,
+                (unsigned)f->temp.raw, (unsigned)f->hw.raw, (unsigned)f->warnings);
+        } else if (f->level == SRV_CAN_DUAL_FAULT_LV_MINOR) {
+            SRV_CAN_DUAL_LOG_W("电池1 轻微故障(level=%u): 电压=0x%02X 电流=0x%02X 温度=0x%02X 硬件=0x%02X 预警=0x%04X",
+                (unsigned)f->level, (unsigned)f->volt.raw, (unsigned)f->curr.raw,
+                (unsigned)f->temp.raw, (unsigned)f->hw.raw, (unsigned)f->warnings);
+        }
         return;
     }
 
@@ -203,6 +256,17 @@ static void parse_fault(uint8_t bat_id, const uint8_t* data)
         f->level = (data[7] <= SRV_CAN_DUAL_FAULT_LV_CRITICAL)
             ? (srv_can_dual_fault_level_t)data[7]
             : SRV_CAN_DUAL_FAULT_LV_NORMAL;
+
+        /* 故障日志（电池2 为 RYDER 协议，字段布局不同） */
+        if (f->level >= SRV_CAN_DUAL_FAULT_LV_SEVERE) {
+            SRV_CAN_DUAL_LOG_E("电池2 严重故障(level=%u): 温度=0x%02X 电压=0x%02X 电流=0x%02X FET/告警=0x%02X 预警=0x%04X",
+                (unsigned)f->level, (unsigned)f->temp.raw, (unsigned)f->volt.raw,
+                (unsigned)f->curr.raw, (unsigned)f->fet.raw, (unsigned)f->extra_warnings);
+        } else if (f->level == SRV_CAN_DUAL_FAULT_LV_MINOR) {
+            SRV_CAN_DUAL_LOG_W("电池2 轻微故障(level=%u): 温度=0x%02X 电压=0x%02X 电流=0x%02X FET/告警=0x%02X 预警=0x%04X",
+                (unsigned)f->level, (unsigned)f->temp.raw, (unsigned)f->volt.raw,
+                (unsigned)f->curr.raw, (unsigned)f->fet.raw, (unsigned)f->extra_warnings);
+        }
         return;
     }
 }

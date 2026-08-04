@@ -12,7 +12,31 @@
 
 #include "drv_systick.h"
 
+#include "log.h"
 #include "main.h"
+
+/* 模块日志开关 ----------------------------------------------------------------*/
+
+/** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
+#define DRV_SYSTICK_LOG_ENABLE 0
+
+#if DRV_SYSTICK_LOG_ENABLE
+#define DRV_SYSTICK_LOG_E(...) LOG_E("drv_systick", __VA_ARGS__)
+#define DRV_SYSTICK_LOG_W(...) LOG_W("drv_systick", __VA_ARGS__)
+#define DRV_SYSTICK_LOG_I(...) LOG_I("drv_systick", __VA_ARGS__)
+#define DRV_SYSTICK_LOG_D(...) LOG_D("drv_systick", __VA_ARGS__)
+#else
+#define DRV_SYSTICK_LOG_E(...) ((void)0)
+#define DRV_SYSTICK_LOG_W(...) ((void)0)
+#define DRV_SYSTICK_LOG_I(...) ((void)0)
+#define DRV_SYSTICK_LOG_D(...) ((void)0)
+#endif
+
+/* 注：本文件零日志调用。原因：
+ * 1) delay_init() 在 app_main 中先于 log_task_init() 执行，log_log() 因后端未初始化而丢弃日志；
+ * 2) delay_us/delay_ms/micros/millis 均为热路径 —— 日志输出每次经 millis() 取时间戳，
+ *    在此处打印会造成递归调用与性能退化。
+ * 因此日志开关默认置 0，防止误加。 */
 
 /* Private variables ---------------------------------------------------------*/
 
