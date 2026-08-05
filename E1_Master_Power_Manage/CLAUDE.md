@@ -62,9 +62,9 @@ main() → app_main() → for(;;) { sw_timer_tick(millis()); sw_timer_task(); }
 | Layer | Directory | Role |
 |-------|-----------|------|
 | **Tasks** | `tasks/` | Application entry points. Each task has an `_init()` called from [app_main.c](tasks/app_main.c), plus an optional `sw_timer` callback for periodic work (periods are per-task constants like `TASK_PERIOD_MS`). |
-| **Services** | `service/` | Business logic modules (`srv_*`): `srv_led` (FSM ON/OFF/BLINK/BREATH), `srv_fan_ctrl`, `srv_pwr_ctrl`, `srv_pwr_det`, `srv_adc`, `srv_can_mst/slv/dual`. Hardware-independent, callback-injected. See [service/led.md](service/led.md) for the LED design. |
+| **Services** | `service/` | Business logic modules (`srv_*`): `srv_led` (FSM ON/OFF/BLINK/BREATH), `srv_fan_ctrl`, `srv_pwr_ctrl`, `srv_pwr_det`, `srv_adc`, `srv_can_mst/slv/dual`, `srv_ws2812b` (WS2812B strip comet demo). Hardware-independent, callback-injected. See [service/led.md](service/led.md) for the LED design. |
 | **Middleware** | `../public_layer/m_middlewares/` | Reusable static library `m_middlewares`: `framework/` (sw_timer, fsm, daemon, event, msg_fifo), `algorithm/` (PID, PLL, filters, CRC, math), `utils/` (kfifo, clist), `protocol_tools/`, `log/`, `key_base/`, `Third_Party/` (CmBacktrace, EasyFlash, mpaland_printf, lwmem, SEGGER RTT, ring_storage). **Full module tables are in `../public_layer/m_middlewares/README.md`** — read it before editing middleware. |
-| **Device Drivers** | `device_drivers/` + `../public_layer/device_drivers/hal_flash/` | `drv_*` — thin HAL wrappers (CAN, ADC, UART, SysTick, LED GPIO, buzzer, power GPIO, HW timer, RGB LED, revision detect). The STM32F4 flash driver (`drv_stm32f4_flash`) and generic `hal_flash`/`ring_storage_port` live in the shared `public_layer` and are selected by `HAL_FLASH_CHIP_STM32F4`. |
+| **Device Drivers** | `device_drivers/` + `../public_layer/device_drivers/hal_flash/` | `drv_*` — thin HAL wrappers (CAN, ADC, UART, SysTick, LED GPIO, buzzer, power GPIO, HW timer, RGB LED, revision detect). The STM32F4 flash driver (`drv_stm32f4_flash`) and generic `hal_flash`/`ring_storage_port` live in the shared `public_layer` and are selected by `HAL_FLASH_CHIP_STM32F4`. The RGB LED (`drv_ws2812b`) is a **WS2812B strip driven over SPI1/SPI3** (bit-stream encoded, SPI DMA TX, 2 channels = RGB1/RGB2); the SPI peripheral exists in CubeMX (`Core/Src/spi.c`) solely for this — no other SPI user. |
 | **HAL (CubeMX)** | `Core/` | STM32CubeMX generated. Edit **only** inside `USER CODE BEGIN/END` guards. |
 
 ### Initialization order (critical)
@@ -77,6 +77,7 @@ log_task_init()     → UART DMA logging
 can_task_init()     → CAN (MUST precede power_task — registers read_data callback)
 fan_task_init()     → fan control (temp-driven speed + stall detection)
 led_task_init()     → status LED
+ws2812_task_init()  → WS2812B strip (SPI1/SPI3) init & comet demo
 sample_task_init()  → ADC sampling (TIM + DMA + VREFINT calibration)
 power_task_init()   → power management (GPIO control + power-up sequencing)
 ```

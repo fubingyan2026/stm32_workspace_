@@ -22,6 +22,7 @@
 #include "power_task.h"
 #include "sample_task.h"
 #include "sw_timer.h"
+#include "ws2812_task.h"
 
 /* 模块日志开关 ----------------------------------------------------------------*/
 
@@ -64,6 +65,10 @@ int app_main(void)
     /* LED 状态指示 */
     led_task_init();
     APP_MAIN_LOG_I("LED 任务初始化完成");
+
+    /* WS2812B 灯带（彗星流光演示） */
+    ws2812_task_init();
+    APP_MAIN_LOG_I("WS2812B 任务初始化完成");
 
     /* ADC 采样（TIM + DMA + VREFINT 校准） */
     sample_task_init();
