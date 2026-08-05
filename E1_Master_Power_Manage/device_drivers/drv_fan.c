@@ -58,7 +58,7 @@ typedef struct {
  */
 static const drv_fan_hw_t s_fans[] = {
     { &htim10, TIM_CHANNEL_1, FAN0_FG_IO_Pin, 2 },
-    { &htim11, TIM_CHANNEL_1, FAN0_FG_IOE1_Pin, 2 },
+    { &htim11, TIM_CHANNEL_1, FAN1_FG_IO_Pin, 2 },
 };
 #define FAN_COUNT (sizeof(s_fans) / sizeof(s_fans[0]))
 

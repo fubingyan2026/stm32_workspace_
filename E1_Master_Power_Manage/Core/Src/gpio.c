@@ -123,8 +123,8 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : FAN0_FG_IO_Pin FAN0_FG_IOE1_Pin */
-  GPIO_InitStruct.Pin = FAN0_FG_IO_Pin|FAN0_FG_IOE1_Pin;
+  /*Configure GPIO pins : FAN0_FG_IO_Pin FAN1_FG_IO_Pin */
+  GPIO_InitStruct.Pin = FAN0_FG_IO_Pin|FAN1_FG_IO_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);

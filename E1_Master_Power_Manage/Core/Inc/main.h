@@ -162,9 +162,9 @@ void Error_Handler(void);
 #define FAN0_FG_IO_Pin GPIO_PIN_0
 #define FAN0_FG_IO_GPIO_Port GPIOE
 #define FAN0_FG_IO_EXTI_IRQn EXTI0_IRQn
-#define FAN0_FG_IOE1_Pin GPIO_PIN_1
-#define FAN0_FG_IOE1_GPIO_Port GPIOE
-#define FAN0_FG_IOE1_EXTI_IRQn EXTI1_IRQn
+#define FAN1_FG_IO_Pin GPIO_PIN_1
+#define FAN1_FG_IO_GPIO_Port GPIOE
+#define FAN1_FG_IO_EXTI_IRQn EXTI1_IRQn
 
 /* USER CODE BEGIN Private defines */
 
