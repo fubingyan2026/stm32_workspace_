@@ -6,7 +6,7 @@
 
 | CAN ID | 方向 | 说明 |
 |--------|------|------|
-| `0x001` | 主机 ↔ 主电源板 | 系统状态 + 控制指令（详见 power_can_protocol.md） |
+| `0x001` | 主机 ↔ 主电源板 | 系统状态 + 控制指令（详见 protocol_master.md） |
 | `0x002` | **主电源板 → 从电源板** | 从板控制帧（HSD 输出，带 ACK 重试） |
 
 ---
@@ -97,7 +97,7 @@ srv_can_slv_process_rx(id, data, len);  // 检测 ACK
 
 ```c
 // 设置从板控制状态（外部调用）
-can_task_set_slave_ctrl(hsd_12v_on, hsd_24v_on);
+can_task_set_slave_ctrl(hsd_12v_on, reserved_channel);
 
 // 内部：can_task timer callback
 //   srv_can_slv_task()      ← 每 10ms 重试检查

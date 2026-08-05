@@ -22,6 +22,8 @@ stm32_workspace_/                  ← git root (commits span all projects)
 
 **Critical**: the build depends on the sibling `../public_layer`. Root `CMakeLists.txt` pulls it in via `add_subdirectory(../public_layer/m_middlewares m_middlewares)` and `aux_source_directory(${CMAKE_SOURCE_DIR}/../public_layer/device_drivers/hal_flash ...)`. Cloning or building `E1_Master_Power_Manage` standalone **without** the workspace (and `public_layer`) will fail. Edits to `public_layer` affect all sibling projects — treat them as shared code.
 
+> **Architecture view**: [E1_Master_Power_Manage.code-workspace](E1_Master_Power_Manage.code-workspace) is a multi-root workspace that displays this project's folders in architecture-layer order (`0_Project` → `1_Tasks` → `2_Applications` → `3_Services` → `4_Middleware` (shared `../public_layer/m_middlewares`) → `5_DeviceDrivers` + `5b_SharedDeviceDrivers` (`../public_layer/device_drivers/hal_flash`) → `6_HAL` …) via display-name reordering + `files.exclude` dedup (the layer subfolders are hidden under the `0_Project` root and shown as separate roots instead). Open that file for a layer-ordered explorer; opening the folder directly shows alphabetical order. Caveat: in multi-root, per-root `${workspaceFolder}` settings (e.g. `c_cpp_properties.json` `compileCommands`) resolve differently than single-root — clangd still finds `build/Debug/compile_commands.json` by walking up from each source file.
+
 ## Build & Develop
 
 ```bash
@@ -49,7 +51,7 @@ build.bat                   # Windows (CMD) — defaults to Debug
 - **No test infrastructure** exists in this project.
 - **Compile definitions** (root CMakeLists.txt): `HAL_FLASH_CHIP_STM32F4` selects the flash driver chip; `PRINTF_DISABLE_SUPPORT_FLOAT`/`PRINTF_DISABLE_SUPPORT_EXPONENTIAL` disable float formatting in mpaland_printf (F407 has no hardware double-precision).
 
-## Architecture: 5-Layer Cooperative Multitasking
+## Architecture: 6-Layer Cooperative Multitasking
 
 No RTOS. Execution is single-threaded via `sw_timer` cooperative scheduling:
 
@@ -62,7 +64,8 @@ main() → app_main() → for(;;) { sw_timer_tick(millis()); sw_timer_task(); }
 | Layer | Directory | Role |
 |-------|-----------|------|
 | **Tasks** | `tasks/` | Application entry points. Each task has an `_init()` called from [app_main.c](tasks/app_main.c), plus an optional `sw_timer` callback for periodic work (periods are per-task constants like `TASK_PERIOD_MS`). |
-| **Services** | `service/` | Business logic modules (`srv_*`): `srv_led` (FSM ON/OFF/BLINK/BREATH), `srv_fan_ctrl`, `srv_pwr_ctrl`, `srv_pwr_det`, `srv_adc`, `srv_can_mst/slv/dual`, `srv_ws2812b` (WS2812B strip comet demo). Hardware-independent, callback-injected. See [service/led.md](service/led.md) for the LED design. |
+| **App** | `applications/` | Use-case orchestration (`app_*`): cross-service workflows & report aggregation. Owns no sw_timer and never touches HAL/drivers — only calls services. Currently: `app_status_report` (aggregates `srv_pwr_det`/`srv_adc`/`srv_fan_ctrl`/`srv_can_dual` into the CAN status report; registered directly as `srv_can_mst`'s `read_data` callback in [can_task.c](tasks/can_task.c)) and `app_fault_policy` (fault protection: E-STOP / critical-rail loss → `srv_pwr_ctrl_emergency_off()` + fan full speed, latched until explicit `app_fault_policy_reset()`; driven by [power_task.c](tasks/power_task.c)). |
+| **Services** | `service/` | Reusable single-responsibility business logic modules (`srv_*`): `srv_led` (FSM ON/OFF/BLINK/BREATH), `srv_fan_ctrl`, `srv_pwr_ctrl`, `srv_pwr_det`, `srv_adc`, `srv_can_mst/slv/dual`, `srv_ws2812b` (WS2812B strip comet demo). Hardware-independent, callback-injected. See [service/led.md](service/led.md) for the LED design. |
 | **Middleware** | `../public_layer/m_middlewares/` | Reusable static library `m_middlewares`: `framework/` (sw_timer, fsm, daemon, event, msg_fifo), `algorithm/` (PID, PLL, filters, CRC, math), `utils/` (kfifo, clist), `protocol_tools/`, `log/`, `key_base/`, `Third_Party/` (CmBacktrace, EasyFlash, mpaland_printf, lwmem, SEGGER RTT, ring_storage). **Full module tables are in `../public_layer/m_middlewares/README.md`** — read it before editing middleware. |
 | **Device Drivers** | `device_drivers/` + `../public_layer/device_drivers/hal_flash/` | `drv_*` — thin HAL wrappers (CAN, ADC, UART, SysTick, LED GPIO, buzzer, power GPIO, HW timer, RGB LED, revision detect). The STM32F4 flash driver (`drv_stm32f4_flash`) and generic `hal_flash`/`ring_storage_port` live in the shared `public_layer` and are selected by `HAL_FLASH_CHIP_STM32F4`. The RGB LED (`drv_ws2812b`) is a **WS2812B strip driven over SPI1/SPI3** (bit-stream encoded, SPI DMA TX, 2 channels = RGB1/RGB2); the SPI peripheral exists in CubeMX (`Core/Src/spi.c`) solely for this — no other SPI user. |
 | **HAL (CubeMX)** | `Core/` | STM32CubeMX generated. Edit **only** inside `USER CODE BEGIN/END` guards. |
@@ -79,7 +82,7 @@ fan_task_init()     → fan control (temp-driven speed + stall detection)
 led_task_init()     → status LED
 ws2812_task_init()  → WS2812B strip (SPI1/SPI3) init & comet demo
 sample_task_init()  → ADC sampling (TIM + DMA + VREFINT calibration)
-power_task_init()   → power management (GPIO control + power-up sequencing)
+power_task_init()   → power management (GPIO control + power-up sequencing + fault protection via `app_fault_policy`)
 ```
 
 `can_task_init()` wires `power_task_read_status` (defined inside [can_task.c](tasks/can_task.c)) as the `read_data` callback for `srv_can_mst`, and also calls `srv_pwr_det_init()` — the power-status detection service (PGOOD rails / E-STOP via `drv_status`, A_IN1_IO~3 via the `srv_adc` CD4051B path) has **no dedicated task**; it's read on demand via `srv_pwr_det_read()` (see [can_task.c:71](tasks/can_task.c#L71)). If `power_task_init()` ran first and triggered CAN reporting, the callback wouldn't exist yet.

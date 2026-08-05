@@ -26,16 +26,16 @@
 | **20** | VSSA | `AGND` | **PWR** | 模拟地 / 模拟信号参考地 |
 | **21** | VREF+ | `VDDA` | **PWR** | ADC 外部正参考电压（连接至模拟电源VDDA） |
 | **22** | VDDA | `VDDA` | **PWR** | 模拟正电源（3.3V） |
-| **23** | PA0 | `E_STOP1_ADC1` | **ADC** | 急停通道1的 ADC 采样端（通道1） |
-| **24** | PA1 | `E_STOP2_ADC1` | **ADC** | 急停通道2的 ADC 采样端（通道1） |
-| **25** | PA2 | `E_STOP3_ADC1` | **ADC** | 急停通道3的 ADC 采样端（通道1） |
-| **26** | PA3 | `E_STOP4_ADC1` | **ADC** | 急停通道4的 ADC 采样端（通道1） |
+| **23** | PA0 | `E_STOP1_ADC1` | **ADC** | 急停通道1采样（ADC1 ch0） |
+| **24** | PA1 | `E_STOP1_ADC2` | **ADC** | 急停通道1采样（ADC2 ch1，双冗余） |
+| **25** | PA2 | `E_STOP2_ADC1` | **ADC** | 急停通道2采样（ADC1 ch2） |
+| **26** | PA3 | `E_STOP2_ADC2` | **ADC** | 急停通道2采样（ADC2 ch3，双冗余） |
 | **27** | VSS | `GND` | **PWR** | 系统地 |
 | **28** | VDD | `3V3_MCU` | **PWR** | 系统3.3V电源 |
-| **29** | PA4 | `E_STOP1_ADC2` | **ADC** | 急停通道1的 ADC 采样端（通道2） |
-| **30** | PA5 | `E_STOP2_ADC2` | **ADC** | 急停通道2的 ADC 采样端（通道2） |
-| **31** | PA6 | `E_STOP3_ADC2` | **ADC** | 急停通道3的 ADC 采样端（通道2） |
-| **32** | PA7 | `E_STOP4_ADC2` | **ADC** | 急停通道4的 ADC 采样端（通道2） |
+| **29** | PA4 | `E_STOP3_ADC1` | **ADC** | 急停通道3采样（ADC1 ch4） |
+| **30** | PA5 | `E_STOP3_ADC2` | **ADC** | 急停通道3采样（ADC2 ch5，双冗余） |
+| **31** | PA6 | `E_STOP4_ADC1` | **ADC** | 急停通道4采样（ADC1 ch6） |
+| **32** | PA7 | `E_STOP4_ADC2` | **ADC** | 急停通道4采样（ADC2 ch7，双冗余） |
 | **33** | PC4 | `AUX_POWER_ADC` | **ADC** | 辅助电源电压 ADC 模拟监控采样 |
 | **34** | PC5 | `CD4051B_ADC` | **ADC** | CD4051B 多路选择器公共输出 COM（A_IN1_IO/2_IO/3_IO 经多路选择后 ADC 采样） |
 | **35** | PB0 | `MOTOR_POWER_CHG_IN` | **OUT** | 电机充电功能控制输出 (gpio.c: OUTPUT_PP) |
@@ -58,21 +58,21 @@
 | **52** | PB13 | `LED_B_PB13` | **OUT** | 蓝色LED指示灯驱动控制端 |
 | **53** | PB14 | `LED_R_PB14` | **OUT** | 红色LED指示灯驱动控制端 |
 | **54** | PB15 | `BUZZER_IN` | **OUT** | 蜂鸣器 TIM12_CH2 PWM 驱动输出 |
-| **55** | PD8 | `MOTOR_POWER_EN` | **OUT** | 电机电源输出使能控制端 |
-| **56** | PD9 | `DBR_LSD_EN` | **OUT** | 低边驱动使能控制端 |
+| **55** | PD8 | `DBR_LSD_EN` | **OUT** | 低边驱动使能控制端 |
+| **56** | PD9 | `MOTOR_POWER_EN` | **OUT** | 电机电源输出使能控制端 |
 | **57** | PD10 | `AUX_POWER_EN` | **OUT** | 辅助电源输出使能控制端 |
 | **58** | PD11 | `HSD_FAULT` | **IN** | 高边驱动器总故障诊断反馈输入信号 |
 | **59** | PD12 | `24V_HSD2_IN` | **OUT** | 24V高边驱动器2通道控制输出 |
 | **60** | PD13 | `12V_HSD1_DIAG_EN` | **OUT** | 12V高边驱动器1诊断使能输出控制 |
 | **61** | PD14 | `12V_HSD1_IN` | **OUT** | 12V高边驱动器1通道控制输出 |
 | **62** | PD15 | `DC-DC_EN` | **OUT** | DC-DC电源转换器使能输出控制端 |
-| **63** | PC6 | `RGB1_DI_IO` | **OUT** | 第一路RGB控制总线数据控制引脚（配置为通用输出） |
+| **63** | PC6 | - | **NC** | 未使用 / 悬空 |
 | **64** | PC7 | - | **NC** | 未使用 / 悬空 |
 | **65** | PC8 | - | **NC** | 未使用 / 悬空 |
 | **66** | PC9 | - | **NC** | 未使用 / 悬空 |
 | **67** | PA8 | `P_CAN_STB` | **OUT** | CAN收发器待机（Standby）控制信号端 |
 | **68** | PA9 | `USART1_TX` | **COMM** | 调试串口发送（TXD）信号 |
-| **69** | PA10 | `USART2_RX` | **COMM** | 调试串口接收（RXD）信号 |
+| **69** | PA10 | `USART1_RX` | **COMM** | 调试串口接收（RXD）信号 |
 | **70** | PA11 | `P_CAN_RXD` | **COMM** | CAN总线接收数据信号 |
 | **71** | PA12 | `P_CAN_TXD` | **COMM** | CAN总线发送数据信号 |
 | **72** | PA13 | `SWDIO` | **DEBUG** | SWD调试接口双向数据信号 |
@@ -81,9 +81,9 @@
 | **75** | VDD | `3V3_MCU` | **PWR** | 系统3.3V电源 |
 | **76** | PA14 | `SWCLK` | **DEBUG** | SWD调试接口时钟输入信号 |
 | **77** | PA15 | - | **NC** | 未使用 / 悬空 |
-| **78** | PC10 | - | **NC** | 未使用 / 悬空 |
+| **78** | PC10 | `SPI3_SCK` | **COMM** | WS2812B 灯带1 SPI3 时钟（AF6） |
 | **79** | PC11 | - | **NC** | 未使用 / 悬空 |
-| **80** | PC12 | - | **NC** | 未使用 / 悬空 |
+| **80** | PC12 | `RGB1_DI_IO` | **COMM** | WS2812B 灯带1 数据（SPI3_MOSI, AF6） |
 | **81** | PD0 | `REV_PD0` | **REV / IO** | 保留通道0 GPIO（可用作IN/OUT信号） |
 | **82** | PD1 | `REV_PD1` | **REV / IO** | 保留通道1 GPIO（可用作IN/OUT信号） |
 | **83** | PD2 | `REV_PD2` | **REV / IO** | 保留通道2 GPIO（可用作IN/OUT信号） |
@@ -92,18 +92,28 @@
 | **86** | PD5 | `CD4051B_C` | **OUT** | CD4051B 通道选择引脚 C（Y 选择码 bit2） |
 | **87** | PD6 | - | **NC** | 未使用 / 悬空 |
 | **88** | PD7 | - | **NC** | 未使用 / 悬空 |
-| **89** | PB3 | - | **NC** | 未使用 / 悬空 |
+| **89** | PB3 | `SPI1_SCK` | **COMM** | WS2812B 灯带2 SPI1 时钟（AF5） |
 | **90** | PB4 | - | **NC** | 未使用 / 悬空 |
-| **91** | PB5 | `RGB2_DI_IO` | **OUT** | 第二路RGB控制总线数据控制引脚（配置为通用输出） |
+| **91** | PB5 | `RGB2_DI_IO` | **COMM** | WS2812B 灯带2 数据（SPI1_MOSI, AF5） |
 | **92** | PB6 | - | **NC** | 未使用 / 悬空 |
 | **93** | PB7 | - | **NC** | 未使用 / 悬空 |
 | **94** | BOOT0 | `BOOT0` | **SYS** | 系统启动选择引脚0 |
 | **95** | PB8 | `FAN0_PWM_IO` | **OUT** | 风扇0 PWM 调速输出控制信号（配置为定时器PWM输出） |
 | **96** | PB9 | `FAN1_PWM_IO` | **OUT** | 风扇1 PWM 调速输出控制信号（配置为定时器PWM输出） |
 | **97** | PE0 | `FAN0_FG_IO` | **IN** | 风扇0 速度反馈 EXTI0 输入（下降沿脉冲计数） |
-| **98** | PE1 | `FAN0_FG_IOE1` | **IN** | 风扇1 速度反馈 EXTI1 输入（下降沿脉冲计数） |
+| **98** | PE1 | `FAN1_FG_IO` | **IN** | 风扇1 速度反馈 EXTI1 输入（下降沿脉冲计数） |
 | **99** | VSS | `GND` | **PWR** | 系统地 |
 | **100** | VDD | `3V3_MCU` | **PWR** | 系统3.3V电源 |
+
+### WS2812B RGB 灯带（SPI1 / SPI3）
+
+两路 WS2812B 灯带经 SPI 位流编码驱动（`drv_ws2812b`，SPI 配置见 `Core/Src/spi.c`）：
+
+- 灯带1：`RGB1_DI_IO`(PC12) = **SPI3_MOSI**，SPI3_SCK=PC10（AF6）
+- 灯带2：`RGB2_DI_IO`(PB5) = **SPI1_MOSI**，SPI1_SCK=PB3（AF5）
+- SPI 主模式 8bit、CPOL=HIGH/CPHA=2EDGE、软 NSS；SPI DMA TX（SPI1_TX→DMA2_Stream3，SPI3_TX→DMA1_Stream5）
+- 位型编码：`0xC0`="0"、`0xF0`="1"（5.25MHz 下符合 WS2812B 判定窗口，见 `drv_ws2812b.c`）
+- 两通道各 24 颗 LED，由 `ws2812_task` / `srv_ws2812b` 驱动彗星流光演示
 
 ### CD4051B 多路选择器（A_IN1_IO/2_IO/3_IO 模拟采样输入）
 

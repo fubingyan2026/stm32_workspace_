@@ -31,7 +31,7 @@ typedef struct {
 
 /**
  * @brief 读取风扇区域温度回调（task 层实现）
- * @param id 风扇编号
+ * @param id 风扇编号 (0-max)
  * @return 当前温度（0.01°C，如 4500 = 45.00°C）
  */
 typedef int16_t (*srv_fan_ctrl_temp_read_cb_t)(uint8_t id);

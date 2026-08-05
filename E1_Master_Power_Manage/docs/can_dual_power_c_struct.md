@@ -1,3 +1,7 @@
+> **说明**：以下为协议参考结构（`#pragma pack(1)`）。固件实际解析类型定义在
+> `service/srv_can_dual.h`（`srv_can_dual_*`，采用匿名联合体按字节组织），
+> 字段布局与本参考定义等价。
+
 ``` c
 #include <stdint.h>
 
@@ -13,7 +17,7 @@ typedef struct {
     int16_t  current;           // Byte 3-4: 单包总电流 (0.01A/bit)
     uint8_t  soc;               // Byte 5:   单包 SOC (0~100%)
     int8_t   cell_temp;         // Byte 6:   电芯温度 (℃)
-    uint8_t  is_charging        // Byte 7: 是否正在充电
+    uint8_t  is_charging;       // Byte 7: 是否正在充电
 } Uplink_BatCore_t;
 
 // =========================================================

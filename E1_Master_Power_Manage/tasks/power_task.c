@@ -11,6 +11,7 @@
 
 #include "power_task.h"
 
+#include "app_fault_policy.h"
 #include "log.h"
 #include "srv_pwr_ctrl.h"
 #include "sw_timer.h"
@@ -49,6 +50,7 @@ static void power_timer_cb(void* user_data);
 void power_task_init(void)
 {
     srv_pwr_ctrl_init();
+    app_fault_policy_init();
     POWER_TASK_LOG_I("电源管理任务初始化完成 (period=%ums)", (unsigned)TASK_PERIOD_MS);
 
     const sw_timer_config_t timer_cfg = {
@@ -83,4 +85,5 @@ static void power_timer_cb(void* user_data)
 {
     (void)user_data;
     srv_pwr_ctrl_step(TASK_PERIOD_MS);
+    app_fault_policy_step(TASK_PERIOD_MS);
 }

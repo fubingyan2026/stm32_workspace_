@@ -1,0 +1,42 @@
+{
+	"folders": [
+		{ "path": ".", "name": "0_Project 根目录" },
+		{ "path": "tasks", "name": "1_Tasks 任务层" },
+		{ "path": "applications", "name": "2_Applications 应用层" },
+		{ "path": "service", "name": "3_Services 服务层" },
+		{ "path": "../public_layer/m_middlewares", "name": "4_Middleware 中间件层" },
+		{ "path": "device_drivers", "name": "5_DeviceDrivers 驱动层" },
+		{ "path": "../public_layer/device_drivers/hal_flash", "name": "5b_SharedDeviceDrivers (public_layer)" },
+		{ "path": "Core", "name": "6_HAL_CubeMX" },
+		{ "path": "Drivers", "name": "7_STM32HAL_Lib" },
+		{ "path": "cmake", "name": "8_BuildConfig 构建配置" },
+		{ "path": "docs", "name": "9_Docs 文档" },
+		{ "path": "build", "name": "10_Build 构建产物" }
+	],
+	"settings": {
+		"files.exclude": {
+			"tasks": true,
+			"applications": true,
+			"service": true,
+			"device_drivers": true,
+			"Core": true,
+			"Drivers": true,
+			"cmake": true,
+			"docs": true,
+			"build": true,
+			"**/CMakeFiles": true,
+			"**/*.o": true,
+			"**/*.d": true
+		},
+		"explorer.sortOrder": "default",
+		"C_Cpp.intelliSenseEngine": "disabled",
+		"C_Cpp.formatting": "disabled",
+		"C_Cpp.errorSquiggles": "disabled",
+		"stm32cube-ide-clangd.path": "cube",
+		"stm32cube-ide-clangd.arguments": [
+			"starm-clangd",
+			"--query-driver=${env:CUBE_BUNDLE_PATH}/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gcc*",
+			"--query-driver=${env:CUBE_BUNDLE_PATH}/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-g++*"
+		]
+	}
+}

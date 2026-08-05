@@ -8,8 +8,8 @@
  *
  * 遵循 service 层回调注入模式，不直接调用硬件驱动。
  *
- * ## 协议（详见 docs/slave_power_protocol.md）
- * - 主电源板 → 从电源板：0x002（RGB 灯效 + HSD3_12V 控制）
+ * ## 协议（详见 docs/protocol_slaver.md）
+ * - 主电源板 → 从电源板：0x002（HSD1_12V 控制 + 保留位）
  * - 从电源板 → 主电源板：0x002 ACK（8 字节任意内容，仅用于握手确认）
  * - 50ms 超时未收到 ACK 则重发
  *
@@ -54,7 +54,7 @@ extern "C" {
  * task 层通过 get_ctrl 回调填充此结构，service 打包为 0x002 帧发送。
  */
 typedef struct {
-    bool hsd1_12v_on; /**< HSD3_12V 输出：true=开, false=关 */
+    bool hsd1_12v_on; /**< HSD1_12V 输出：true=开, false=关 */
     bool reserved_channel; /**< 保留 */
 } srv_can_slv_ctrl_t;
 
