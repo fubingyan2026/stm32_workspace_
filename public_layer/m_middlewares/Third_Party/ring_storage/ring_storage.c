@@ -37,7 +37,7 @@
 /* Private constants ---------------------------------------------------------*/
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
-#define RING_STORAGE_LOG_ENABLE 0
+#define RING_STORAGE_LOG_ENABLE 1
 
 #if RING_STORAGE_LOG_ENABLE
 #define RING_STORAGE_LOG_E(...) LOG_E("ring_storage", __VA_ARGS__)

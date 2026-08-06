@@ -62,23 +62,6 @@ void power_task_init(void)
     sw_timer_start(&s_timer, TASK_PERIOD_MS, 0);
 }
 
-void power_task_request_on(void)
-{
-    POWER_TASK_LOG_I("上电请求转发至电源服务");
-    srv_pwr_ctrl_request_on();
-}
-
-void power_task_emergency_off(void)
-{
-    POWER_TASK_LOG_E("紧急断电请求: 全部电源轨关闭");
-    srv_pwr_ctrl_emergency_off();
-}
-
-bool power_task_is_powered_on(void)
-{
-    return srv_pwr_ctrl_is_powered_on();
-}
-
 /* Private functions ---------------------------------------------------------*/
 
 static void power_timer_cb(void* user_data)

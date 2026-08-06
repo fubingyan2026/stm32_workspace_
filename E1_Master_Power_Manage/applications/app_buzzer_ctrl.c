@@ -60,7 +60,7 @@ void app_buzzer_ctrl_init(srv_signal_handle_t* buzzer)
 
     s_buzzer = buzzer;
     s_mode = APP_BUZZER_MODE_SILENT;
-    s_beep_cmd = (srv_signal_cmd_t){
+    s_beep_cmd = (srv_signal_cmd_t) {
         .set_state = SRV_SIGNAL_STATE_BLINK_CODE,
         .blink_cycle_ms = APP_BUZZER_DEF_BEEP_CYCLE_MS,
         .blink_wait_ms = APP_BUZZER_DEF_BEEP_WAIT_MS,

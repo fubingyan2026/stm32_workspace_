@@ -17,6 +17,7 @@
 #include "drv_revision.h"
 #include "drv_systick.h"
 #include "fan_task.h"
+#include "flash_task.h"
 #include "led_task.h"
 #include "log.h"
 #include "log_task.h"
@@ -55,33 +56,29 @@ int app_main(void)
     APP_MAIN_LOG_I("硬件版本: rev=%u (%s)",
         (unsigned)drv_revision_read(), drv_revision_name());
 
+    /* Flash 存储（参数分区 + boot metadata；需在 log 之后、可能读参数的任务之前） */
+    flash_task_init();
+
     /* CAN 通信（需在 power_task 之前，注册 read_data 回调） */
     can_task_init();
-    APP_MAIN_LOG_I("CAN 任务初始化完成");
 
     /* 风扇控制（温控调速 + 堵转检测） */
     fan_task_init();
-    APP_MAIN_LOG_I("风扇任务初始化完成");
 
     /* LED 状态指示 */
     led_task_init();
-    APP_MAIN_LOG_I("LED 任务初始化完成");
 
     /* 蜂鸣器（复用 srv_signal 实例；需在 led_task 之后） */
     buzzer_task_init();
-    APP_MAIN_LOG_I("蜂鸣器任务初始化完成");
 
     /* WS2812B 灯带（彗星流光演示） */
     ws2812_task_init();
-    APP_MAIN_LOG_I("WS2812B 任务初始化完成");
 
     /* ADC 采样（TIM + DMA + VREFINT 校准） */
     sample_task_init();
-    APP_MAIN_LOG_I("采样任务初始化完成");
 
     /* 电源管理（GPIO 控制 + 上电时序） */
     power_task_init();
-    APP_MAIN_LOG_I("电源管理任务初始化完成");
 
     /* 主循环：所有周期性任务均由 sw_timer 驱动 */
     for (;;) {

@@ -23,9 +23,6 @@ extern "C" {
 
 void sample_task_init(void);
 
-/** @brief 获取最新 ADC 采样数据 */
-bool sample_task_get_latest(srv_adc_data_t* sample);
-
 #ifdef __cplusplus
 }
 #endif

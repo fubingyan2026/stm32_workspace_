@@ -43,6 +43,17 @@
 #define LOG_TASK_TX_BUF_SIZE (256)
 #define LOG_TASK_PERIOD_MS (20U)
 
+/* Exported types ------------------------------------------------------------*/
+
+/**
+ * @brief 日志输出后端
+ */
+typedef enum {
+    LOG_OUTPUT_NONE = 0, /**< 关闭输出 */
+    LOG_OUTPUT_UART, /**< USART1 DMA 输出（默认） */
+    LOG_OUTPUT_RTT, /**< SEGGER RTT 输出 */
+} log_task_output_t;
+
 /* Private variables ---------------------------------------------------------*/
 
 static uint8_t s_tx_buf[LOG_TASK_TX_BUF_SIZE];
@@ -62,7 +73,7 @@ void log_task_init(void)
         .get_timestamp_cb = millis,
     };
     log_init(&log_cfg);
-    log_set_level(LOG_LEVEL_DEBUG);
+    log_set_level(LOG_LEVEL_INFO);
 
     /* 注：drv_uart_init() 由 app_main 统一调用，此处不再单独调用 */
     drv_log_uart_init();
@@ -80,11 +91,6 @@ void log_task_init(void)
 
     LOG_TASK_LOG_I("日志任务初始化完成: 输出=UART DMA, 周期=%ums, 级别=DEBUG",
         (unsigned)LOG_TASK_PERIOD_MS);
-}
-
-void log_task_set_output(log_task_output_t mode)
-{
-    s_output_mode = mode;
 }
 
 /* Private functions ---------------------------------------------------------*/
@@ -127,11 +133,11 @@ static void log_timer_cb(void* user_data)
     }
 
     /* ── RX ── */
-    // {
-    //     uint8_t rx_buf[128];
-    //     uint32_t rx_len = drv_uart_rx_read(DRV_UART_CH_1, rx_buf, sizeof(rx_buf));
-    //     if (rx_len > 0) {
-    //         log_hexdump("UART0", rx_buf, rx_len);
-    //     }
-    // }
+    {
+        uint8_t rx_buf[128];
+        uint32_t rx_len = drv_log_uart_rx_read(rx_buf, sizeof(rx_buf));
+        if (rx_len > 0) {
+            log_hexdump("UART1", rx_buf, rx_len);
+        }
+    }
 }

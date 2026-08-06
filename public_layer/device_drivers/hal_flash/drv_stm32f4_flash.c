@@ -26,7 +26,7 @@
 /* 模块日志开关 ----------------------------------------------------------------*/
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
-#define FLASH_LOG_ENABLE 0
+#define FLASH_LOG_ENABLE 1
 
 #if FLASH_LOG_ENABLE
 #define FLASH_LOG_E(...) LOG_E("flash", __VA_ARGS__)
@@ -49,13 +49,13 @@
 
 /* Private variables ---------------------------------------------------------*/
 
-static uint64_t s_write_buf; /* Flash 写入临时缓冲区 (64-bit 对齐) */
-static uint64_t s_read_buf; /* Flash 读取校验缓冲区 (64-bit 对齐) */
+static uint32_t s_write_buf; /* Flash 写入临时缓冲区 (32-bit 对齐) */
+static uint32_t s_read_buf; /* Flash 读取校验缓冲区 (32-bit 对齐) */
 
 /* Private const -------------------------------------------------------------*/
 
-static const uint32_t FLASH_PROGRAM_SIZE = 8; /* 编程粒度: 64-bit 双字 */
-static const uint64_t FLASH_ERASED_VAL = (~0ULL); /* Flash 擦除后默认值 */
+static const uint32_t FLASH_PROGRAM_SIZE = 4; /* 编程粒度: 32-bit 字 */
+static const uint32_t FLASH_ERASED_VAL = (~0U); /* Flash 擦除后默认值 */
 static const uint32_t FLASH_BASE_ADDR = 0x08000000U; /* F4 Flash 基地址 */
 static const uint32_t FLASH_TOTAL_SIZE = 0x00100000U; /* 1 MB */
 
@@ -191,7 +191,7 @@ static hal_flash_err_t f4_write(uint32_t offset, const uint8_t* buf, size_t size
         }
 
         if (s_write_buf != FLASH_ERASED_VAL) {
-            if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, addr, s_write_buf) != HAL_OK) {
+            if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, addr, s_write_buf) != HAL_OK) {
                 FLASH_LOG_E("Flash program error: i=%u, addr=0x%08lX, HAL_Error=0x%08lX",
                     (unsigned)i, (unsigned long)addr,
                     (unsigned long)HAL_FLASH_GetError());
@@ -200,13 +200,13 @@ static hal_flash_err_t f4_write(uint32_t offset, const uint8_t* buf, size_t size
             }
         }
 
-        s_read_buf = *(volatile uint64_t*)addr;
+        s_read_buf = *(volatile uint32_t*)addr;
         if (s_read_buf != s_write_buf) {
             FLASH_LOG_E("Flash readback mismatch: i=%u, addr=0x%08lX, "
-                        "written=0x%016llX, readback=0x%016llX",
+                        "written=0x%08lX, readback=0x%08lX",
                 (unsigned)i, (unsigned long)addr,
-                (unsigned long long)s_write_buf,
-                (unsigned long long)s_read_buf);
+                (unsigned long)s_write_buf,
+                (unsigned long)s_read_buf);
             result = HAL_FLASH_WRITE_ERR;
             goto exit_write;
         }
@@ -253,7 +253,7 @@ hal_flash_dev_t f4_dev = {
         .addr = 0x08000000U,
         .total_size = FLASH_TOTAL_SIZE,
         .erase_size = 0x4000U,
-        .write_gran = HAL_FLASH_WRITE_GRAN_64,
+        .write_gran = HAL_FLASH_WRITE_GRAN_32,
         .erase_size_uniform = false,
         .has_ecc = false,
         .has_write_protect = false,

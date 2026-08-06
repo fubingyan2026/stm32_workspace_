@@ -130,3 +130,13 @@ uint32_t millis(void)
 {
     return HAL_GetTick();
 }
+
+/**
+ * @brief 系统软件复位
+ * @note 复位后由 bootloader（若存在）接管；常与 boot metadata 的
+ *       upgrade_flag 配合用于「从 APP 进入 boot 模式」。
+ */
+void drv_system_reset(void)
+{
+    HAL_NVIC_SystemReset();
+}

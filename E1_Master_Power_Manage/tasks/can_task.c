@@ -123,21 +123,6 @@ void can_task_init(void)
         (unsigned)TASK_PERIOD_MS, (unsigned)REPORT_INTERVAL_MS);
 }
 
-void can_task_request(uint8_t feedback_select)
-{
-    srv_can_mst_request(feedback_select);
-}
-
-void can_task_set_slave_ctrl(bool hsd_12v_on, bool reserved_channel)
-{
-    s_slave_ctrl.hsd1_12v_on = hsd_12v_on;
-    s_slave_ctrl.reserved_channel = reserved_channel;
-
-    CAN_TASK_LOG_I("从板控制更新: hsd1_12v=%d reserved=%d",
-        (int)hsd_12v_on, (int)reserved_channel);
-    srv_can_slv_request();
-}
-
 /* Private functions ---------------------------------------------------------*/
 
 static void can_timer_cb(void* user_data)

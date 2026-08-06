@@ -61,11 +61,6 @@ void sample_task_init(void)
     sw_timer_start(&s_timer, ADC_PERIOD_MS, 0);
 }
 
-bool sample_task_get_latest(srv_adc_data_t* sample)
-{
-    return srv_adc_get_latest(sample);
-}
-
 /* Private functions ---------------------------------------------------------*/
 
 static void sample_timer_cb(void* user_data)

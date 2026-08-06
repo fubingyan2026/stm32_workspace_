@@ -65,7 +65,7 @@ main() → app_main() → for(;;) { sw_timer_tick(millis()); sw_timer_task(); }
 |-------|-----------|------|
 | **Tasks** | `tasks/` | Application entry points. Each task has an `_init()` called from [app_main.c](tasks/app_main.c), plus an optional `sw_timer` callback for periodic work (periods are per-task constants like `TASK_PERIOD_MS`). |
 | **App** | `applications/` | Use-case orchestration (`app_*`): cross-service workflows & report aggregation. Owns no sw_timer and never touches HAL/drivers — only calls services. Currently: `app_status_report` (aggregates `srv_pwr_det`/`srv_adc`/`srv_fan_ctrl`/`srv_can_dual` into the CAN status report; registered directly as `srv_can_mst`'s `read_data` callback in [can_task.c](tasks/can_task.c)), `app_fault_policy` (fault protection: E-STOP / critical-rail loss → `srv_pwr_ctrl_emergency_off()` + fan full speed, latched until explicit `app_fault_policy_reset()`; driven by [power_task.c](tasks/power_task.c)), `app_status_indicator` (fault/warning → blue+red LED pattern policy, priority-encoded; reuses `app_status_report_fill` for the aggregated fault bits; driven by [led_task.c](tasks/led_task.c)), `app_buzzer_ctrl` (buzzer behavior-mode switching: SILENT/CONTINUOUS/BEEP_CODE/BREATH mapped to the buzzer's `srv_signal` pseudo-instance states; handle injected by [buzzer_task.c](tasks/buzzer_task.c)). |
-| **Services** | `service/` | Reusable single-responsibility business logic modules (`srv_*`). Two patterns coexist: **callback-injected** services (`srv_signal`, `srv_can_mst/slv/dual`, `srv_device_monitor`) receive HW callbacks from the task layer and never touch device drivers; **driver-wrapping** services (`srv_adc`, `srv_fan_ctrl`, `srv_pwr_ctrl`, `srv_pwr_det`, `srv_ws2812b`) directly own `drv_*` — compiling HAL raw values into business semantics (NTC→temperature, GPIO→PGOOD, etc.). App layer sees only `srv_*` APIs regardless of the internal pattern. See [service/srv_signal.md](service/srv_signal.md) for the signal/output design. |
+| **Services** | `service/` | Reusable single-responsibility business logic modules (`srv_*`). Two patterns coexist: **callback-injected** services (`srv_signal`, `srv_can_mst/slv/dual`, `srv_device_monitor`) receive HW callbacks from the task layer and never touch device drivers; **driver-wrapping** services (`srv_adc`, `srv_fan_ctrl`, `srv_pwr_ctrl`, `srv_pwr_det`, `srv_ws2812b`, `srv_param_store`, `srv_boot_ctrl`) directly own `drv_*`/`hal_flash` — compiling HAL raw values into business semantics (NTC→temperature, GPIO→PGOOD, params↔Flash, etc.). `srv_param_store` (APP params) and `srv_boot_ctrl` (BOOT metadata) each hold their **own independent `ring_storage`/`hal_flash` instance** — same-layer decoupled, they don't call each other. App layer sees only `srv_*` APIs regardless of the internal pattern. See [service/srv_signal.md](service/srv_signal.md) for the signal/output design. |
 | **Middleware** | `../public_layer/m_middlewares/` | Reusable static library `m_middlewares`: `framework/` (sw_timer, fsm, daemon, event, msg_fifo), `algorithm/` (PID, PLL, filters, CRC, math), `utils/` (kfifo, clist), `protocol_tools/`, `log/`, `key_base/`, `Third_Party/` (CmBacktrace, EasyFlash, mpaland_printf, lwmem, SEGGER RTT, ring_storage). **Full module tables are in `../public_layer/m_middlewares/README.md`** — read it before editing middleware. |
 | **Device Drivers** | `device_drivers/` + `../public_layer/device_drivers/hal_flash/` | `drv_*` — thin HAL wrappers (CAN, ADC, UART, SysTick, LED GPIO, buzzer, power GPIO, HW timer, RGB LED, revision detect). The STM32F4 flash driver (`drv_stm32f4_flash`) and generic `hal_flash`/`ring_storage_port` live in the shared `public_layer` and are selected by `HAL_FLASH_CHIP_STM32F4`. The RGB LED (`drv_ws2812b`) is a **WS2812B strip driven over SPI1/SPI3** (bit-stream encoded, SPI DMA TX, 2 channels = RGB1/RGB2); the SPI peripheral exists in CubeMX (`Core/Src/spi.c`) solely for this — no other SPI user. |
 | **HAL (CubeMX)** | `Core/` | STM32CubeMX generated. Edit **only** inside `USER CODE BEGIN/END` guards. |
@@ -77,6 +77,7 @@ In [app_main.c](tasks/app_main.c), task inits must follow this order:
 ```
 delay_init()        → SysTick
 log_task_init()     → UART DMA logging
+flash_task_init()   → flash storage (Flash partitions via `srv_param_store`/ring_storage + boot metadata via `srv_boot_ctrl`; before tasks that read params)
 can_task_init()     → CAN (MUST precede power_task — registers read_data callback)
 fan_task_init()     → fan control (temp-driven speed + stall detection)
 led_task_init()     → status LED (drives `app_status_indicator` — fault→LED pattern policy)
@@ -88,7 +89,7 @@ power_task_init()   → power management (GPIO control + power-up sequencing + f
 
 `can_task_init()` wires `app_status_report_fill` (defined in [app_status_report.c](applications/app_status_report.c)) as the `read_data` callback for `srv_can_mst`, and also calls `srv_pwr_det_init()` — the power-status detection service (PGOOD rails / E-STOP via `drv_status`, A_IN1_IO~3 via the `srv_adc` CD4051B path) has **no dedicated task**; it's read on demand via `srv_pwr_det_read()` (see [app_status_report.c:47](applications/app_status_report.c#L47)). If `power_task_init()` ran first and triggered CAN reporting, the callback wouldn't exist yet.
 
-> **Not yet wired**: `power_task_request_on()` / `power_task_emergency_off()` (wrapping `srv_pwr_ctrl`'s power-up FSM) are exported but currently have **no callers** — no task, CAN host command, or button drives power sequencing yet. Likewise, the 0x001 control frame's command fields (RGB mode/color, buzzer duty, HSD/LSD outputs) are parsed into `srv_can_mst_cmd_t` but **not consumed** by any module. Host frames only *report* power status; they don't command power on/off.
+> **Not yet wired**: the 0x001 control frame's command fields (RGB mode/color, buzzer duty, HSD/LSD outputs) are parsed into `srv_can_mst_cmd_t` but **not consumed** by any module (`power_task_request_on()/emergency_off()` were removed as dead code). Host frames only *report* power status; they don't command power on/off.
 
 ### Framework primitives actually used here
 
@@ -121,7 +122,7 @@ Sampling is a two-stage `trigger`/`step` pair driven by [sample_task.c](tasks/sa
 
 The CD4051B 8-channel analog mux (`drv_cd4051b`, select pins PD3/4/5) feeds the three A_INx_IO inputs (`A_IN1_IO`/`A_IN2_IO`/`A_IN3_IO`) into `DRV_ADC_CH_CD4051B` (PC5 → ADC2_IN15, Rank 8). `srv_adc` rotates the mux across Y1/Y2/Y3 — one A_INx_IO per trigger cycle; the ISR snapshots which input was selected (`raw.ain_mux_idx`) and `srv_adc_step()` stores the **unfiltered** raw value into `srv_adc_data_t.a_in1_io_raw/2_io_raw/3_io_raw` (PT1 filter is skipped here, as the channel input changes every cycle). `srv_adc_read_ain()` thresholds those raws (≥2048 ≈ 50% VDDA) into a bitmask that `can_task` packs into the CAN status report.
 
-`sample_task_get_latest()` exposes the newest `srv_adc_data_t` for consumers.
+`srv_adc_get_latest()` exposes the newest `srv_adc_data_t` for consumers.
 
 ## CAN Communication Architecture
 
@@ -142,7 +143,7 @@ In `can_rx_callback`: `0x001`+len=7 → `srv_can_mst_process_rx`; every other ID
 ### TX flow
 
 - **`srv_can_mst`**: `app_status_report_fill` ([app_status_report.c](applications/app_status_report.c)) packs board status (power faults, E-STOP, fan faults, dual-battery snapshot) into `srv_can_mst_data_t`. The 0x001 status frame is a **packed bitfield union** (`srv_can_mst_status_frame_t`), so frame building is one `memcpy` (field layout is GCC-little-endian — `srv_can_mst_init` runs a layout self-check); battery data rides continuous TX IDs 0x011–0x015 (capacity/cycles, voltage+current, HW/SW version, faults, temp+fault-level), merged from 7→5 frames in the recent refactor. Queued via `msg_fifo`, one frame per task tick (pending-frame retry when TX busy), with a 100ms periodic `srv_can_mst_request(0x00)` (status frame only; battery frames on-demand from host via `feedback_select` bitmask, bit0–4 = frames 0x011–0x015).
-- **`srv_can_slv`**: sends 0x002 control frame, waits for ACK (50ms timeout with retry). `can_task` polls it every 100ms as a slave liveness probe (the ACK, 0x002 len=8, feeds `srv_device_monitor`'s slaver watchdog); ACK → `SLAVE_ACKED` → auto-reset to `SLAVE_IDLE` in `srv_can_slv_task()` so the next poll can fire. `can_task_set_slave_ctrl()` sets the HSD/reserved control bits from other tasks (currently no callers).
+- **`srv_can_slv`**: sends 0x002 control frame, waits for ACK (50ms timeout with retry). `can_task` polls it every 100ms as a slave liveness probe (the ACK, 0x002 len=8, feeds `srv_device_monitor`'s slaver watchdog); ACK → `SLAVE_ACKED` → auto-reset to `SLAVE_IDLE` in `srv_can_slv_task()` so the next poll can fire.
 - **`srv_can_dual`**: parses incoming battery data into `srv_can_dual_data_t` snapshot; `srv_can_dual_get_snapshot()` provides lock-free read access.
 
 ### Protocol documentation
@@ -181,7 +182,7 @@ When the `.ioc` file is modified and code regenerated:
 - **EasyFlash** (`../public_layer/m_middlewares/Third_Party/easyflash/`) — lightweight KV database on MCU internal flash. Ported via `ef_port.c` + the shared `drv_stm32f4_flash` driver.
 - **mpaland_printf** (`.../Third_Party/mpaland_printf/`) — the project's printf implementation; float/exponential output is compiled out via the `PRINTF_DISABLE_SUPPORT_*` defines.
 
-> **Note**: `EasyFlash` and `ring_storage` are built into the shared `m_middlewares`/`hal_flash` layer but **not yet wired into this app** — no task or service calls them (only their code is compiled). Don't assume an init path exists; if you add flash persistence, check `ring_storage_port.c` in `public_layer` first.
+> **Note**: `ring_storage` is wired into this app via `srv_param_store`/`srv_boot_ctrl` (`flash_task_init()` → `hal_flash_init` + partitioned ring_storage). `EasyFlash` is still **not wired** — only its code is compiled. When adding flash persistence, register KVs through `srv_param_store` rather than calling `hal_flash` directly.
 - **lwmem** (`.../Third_Party/lwmem/`) — lightweight dynamic memory allocator (full-featured mode: free/realloc).
 - **SEGGER RTT** (`.../Third_Party/SEGGER_RTT/`) — J-Link real-time transfer, used for debug output in [log_task.c](tasks/log_task.c).
 - **ring_storage** (`.../Third_Party/ring_storage/`) — flash ring storage on top of `hal_flash` (see `ring_storage_port.c` in `public_layer/device_drivers/hal_flash/`).

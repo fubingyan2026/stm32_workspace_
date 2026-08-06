@@ -22,12 +22,6 @@ extern "C" {
 #endif
 
 void can_task_init(void);
-void can_task_request(uint8_t feedback_select);
-
-/**
- * @brief 设置当前从板控制状态（由 host RX 或电源时序触发）
- */
-void can_task_set_slave_ctrl(bool hsd_12v_on, bool reserved_channel);
 
 #ifdef __cplusplus
 }

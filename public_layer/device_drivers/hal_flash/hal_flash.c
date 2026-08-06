@@ -101,6 +101,10 @@ static hal_flash_err_t check_common(uint32_t offset, size_t size)
 
 hal_flash_err_t hal_flash_init(void)
 {
+    /* 幂等：多个 service 各自调用时只真正初始化一次 */
+    if (FLASH_DEV.initialized) {
+        return HAL_FLASH_OK;
+    }
     if (!FLASH_DEV.ops.init) {
         return HAL_FLASH_PARAM_ERR;
     }
