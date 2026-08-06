@@ -47,21 +47,6 @@ void srv_pwr_det_init(void);
 /** @brief 读取电源状态（批量，推荐用于 CAN 上报打包） */
 void srv_pwr_det_read(srv_pwr_det_status_t* status);
 
-/** @brief 所有 PGOOD 信号是否都正常 */
-bool srv_pwr_det_all_power_ok(void);
-
-/** @brief 是否有 HSD 故障 */
-bool srv_pwr_det_has_hsd_fault(void);
-
-/** @brief 是否有制动电阻过流 */
-bool srv_pwr_det_has_dbr_ocp(void);
-
-/** @brief 急停是否触发 */
-bool srv_pwr_det_is_estop(void);
-
-/** @brief 是否有电机充电过流 */
-bool srv_pwr_det_has_motor_chg_ocp(void);
-
 #ifdef __cplusplus
 }
 #endif

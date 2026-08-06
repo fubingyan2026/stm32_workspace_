@@ -9,6 +9,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "srv_can_mst.h"
 
+#include <stddef.h>
 #include <string.h>
 
 #include "drv_systick.h"
@@ -24,7 +25,7 @@
 #define SRV_CAN_MST_LOG_E(...) LOG_E("srv_can_mst", __VA_ARGS__)
 #define SRV_CAN_MST_LOG_W(...) LOG_W("srv_can_mst", __VA_ARGS__)
 #define SRV_CAN_MST_LOG_I(...) LOG_I("srv_can_mst", __VA_ARGS__)
-#define SRV_CAN_MST_LOG_D(...) LOG_D("srv_can_mst", __VA_ARGS__)
+#define SRV_CAN_MST_LOG_D(...) ((void)0) // LOG_D("srv_can_mst", __VA_ARGS__)
 #else
 #define SRV_CAN_MST_LOG_E(...) ((void)0)
 #define SRV_CAN_MST_LOG_W(...) ((void)0)
@@ -46,6 +47,10 @@ typedef struct {
     uint8_t data[8];
     uint8_t len;
 } cm_frame_t;
+
+/* 0x001 帧布局编译期断言：status 首成员即 8 字节整帧，其后无填充字节 */
+_Static_assert(sizeof(srv_can_mst_status_frame_t) == 8U, "0x001 状态帧必须为 8 字节");
+_Static_assert(offsetof(srv_can_mst_data_t, bat1) == 8U, "0x001 帧后不得有填充字节");
 
 /* Private variables ---------------------------------------------------------*/
 
@@ -69,12 +74,7 @@ static uint32_t s_req_log_ts;
 static void cm_enqueue(uint16_t id, const uint8_t* data, uint8_t len);
 static void cm_build_0x001(const srv_can_mst_data_t* d);
 static void cm_build_battery(const srv_can_mst_data_t* d, uint8_t fb);
-static uint8_t pack_byte0(const srv_can_mst_data_t* d);
-static uint8_t pack_byte1(const srv_can_mst_data_t* d);
-static uint8_t pack_byte2(const srv_can_mst_data_t* d);
-static uint8_t pack_byte3(const srv_can_mst_data_t* d);
-static uint8_t pack_byte4(const srv_can_mst_data_t* d);
-static uint8_t pack_byte5(const srv_can_mst_data_t* d);
+static bool cm_check_status_frame_layout(void);
 
 /* Exported functions --------------------------------------------------------*/
 
@@ -86,6 +86,13 @@ srv_can_mst_error_t srv_can_mst_init(const srv_can_mst_config_t* config)
 
     if (s_initialized) {
         srv_can_mst_deinit();
+    }
+
+    /* 位域布局自检：位域分配由编译器/ABI 决定，更换工具链可能改变协议字节位；
+     * 启动时校验一次，失败则拒绝初始化，避免发出错乱帧。 */
+    if (!cm_check_status_frame_layout()) {
+        SRV_CAN_MST_LOG_E("0x001 帧位域布局与协议不符，禁止初始化");
+        return SRV_CAN_MST_ERROR_LAYOUT;
     }
 
     s_config = *config;
@@ -196,7 +203,7 @@ void srv_can_mst_process_rx(const uint8_t* data, uint8_t len)
     s_cmd_pending = true;
 
     /* 主机指令日志（配置变更，I 级） */
-    SRV_CAN_MST_LOG_I("收到主机指令: fb=0x%02X rgb_mode=%u rgb=0x%06lX buzzer=%u hsd1_12v=%d hsd2_12v=%d lsd1_24v=%d lsd2_24v=%d",
+    SRV_CAN_MST_LOG_D("收到主机指令: fb=0x%02X rgb_mode=%u rgb=0x%06lX buzzer=%u hsd1_12v=%d hsd2_12v=%d lsd1_24v=%d lsd2_24v=%d",
         (unsigned)s_last_cmd.feedback_select,
         (unsigned)s_last_cmd.rgb_mode,
         (unsigned long)s_last_cmd.rgb_color,
@@ -232,207 +239,77 @@ static void cm_enqueue(uint16_t id, const uint8_t* data, uint8_t len)
 
 static void cm_build_0x001(const srv_can_mst_data_t* d)
 {
-    uint8_t frame[8] = {
-        pack_byte0(d),
-        pack_byte1(d),
-        pack_byte2(d),
-        pack_byte3(d),
-        pack_byte4(d),
-        pack_byte5(d),
-        d->bat1_soc,
-        d->bat2_soc,
-    };
-    cm_enqueue(SRV_CAN_MST_ID_STATUS, frame, 8);
+    /* 0x001 帧 = status(Byte0-7) 完整 8 字节，偏移由文件顶部 offsetof 静态断言保障，
+     * 整段 memcpy 无需逐位搬移。 */
+    cm_enqueue(SRV_CAN_MST_ID_STATUS, (const uint8_t*)d, 8);
 }
 
-static uint8_t pack_byte0(const srv_can_mst_data_t* d)
+static bool cm_check_status_frame_layout(void)
 {
-    uint8_t b = 0;
-    if (d->stop_key_state)
-        b |= (1U << 0);
-    if (d->battery_key_state)
-        b |= (1U << 1);
-    if (d->battery_charging)
-        b |= (1U << 2);
-    if (d->battery_temp_error)
-        b |= (1U << 3);
-    if (d->bat1_online)
-        b |= (1U << 4);
-    if (d->bat_has_error)
-        b |= (1U << 5);
-    if (d->bat2_online)
-        b |= (1U << 6);
-    return b;
+    /* 对 8 个字节各选一个代表位/字节置位，比对期望值。
+     * 期望值源自协议文档位定义，与 GCC ARM (little-endian) 实测一致。 */
+    srv_can_mst_status_frame_t f;
+    memset(&f, 0, sizeof(f));
+    f.bits.stop_key_state = 1U; /* byte0 bit0 */
+    f.bits.device_online_bat1 = 1U; /* byte0 bit6 */
+    f.bits.err_24v_user = 1U; /* byte1 bit7 */
+    f.bits.err_dbr = 1U; /* byte2 bit7 */
+    f.bits.byte3_fixed1 = 1U; /* byte3 bit7 */
+    f.bits.err_ntc7 = 1U; /* byte4 bit7 */
+    f.bits.seq_motor_fault = 1U; /* byte5 bit5 */
+    f.bits.bat1_soc = 0xA5U; /* byte6 */
+    f.bits.bat2_soc = 0x5AU; /* byte7 */
+    const uint8_t expect[8] = { 0x41U, 0x80U, 0x80U, 0x80U, 0x80U, 0x20U, 0xA5U, 0x5AU };
+    return memcmp(f.bytes, expect, sizeof(expect)) == 0;
 }
 
-static uint8_t pack_byte1(const srv_can_mst_data_t* d)
-{
-    uint8_t b = 0;
-    if (d->err_vin)
-        b |= (1U << 0);
-    if (d->err_vin_dcdc)
-        b |= (1U << 1);
-    if (d->err_12v_int)
-        b |= (1U << 2);
-    if (d->err_5v_int)
-        b |= (1U << 3);
-    if (d->err_12v_ext)
-        b |= (1U << 4);
-    if (d->err_24v_ext)
-        b |= (1U << 5);
-    if (d->err_12v_user)
-        b |= (1U << 6);
-    if (d->err_24v_user)
-        b |= (1U << 7);
-    return b;
-}
-
-static uint8_t pack_byte2(const srv_can_mst_data_t* d)
-{
-    uint8_t b = 0;
-    if (d->err_24v_comp)
-        b |= (1U << 0);
-    if (d->err_power)
-        b |= (1U << 1);
-    if (d->err_motor)
-        b |= (1U << 2);
-    if (d->err_chg_out)
-        b |= (1U << 3);
-    if (d->err_hsd1_12v)
-        b |= (1U << 4);
-    if (d->err_hsd2_12v)
-        b |= (1U << 5);
-    if (d->err_hsd3_12v)
-        b |= (1U << 6);
-    if (d->err_dbr)
-        b |= (1U << 7);
-    return b;
-}
-
-static uint8_t pack_byte3(const srv_can_mst_data_t* d)
-{
-    uint8_t b = 0;
-    if (d->err_hsd1_24v)
-        b |= (1U << 0);
-    if (d->err_hsd2_24v)
-        b |= (1U << 1);
-    if (d->err_hsd3_24v)
-        b |= (1U << 2);
-    if (d->err_lsd1_24v)
-        b |= (1U << 3);
-    if (d->err_lsd2_24v)
-        b |= (1U << 4);
-    if (d->err_fan[0])
-        b |= (1U << 5);
-    if (d->err_fan[1])
-        b |= (1U << 6);
-    if (d->err_fan[2])
-        b |= (1U << 7);
-    return b;
-}
-
-static uint8_t pack_byte4(const srv_can_mst_data_t* d)
-{
-    uint8_t b = 0;
-    for (uint32_t i = 0; i < 8; i++) {
-        if (d->err_ntc[i]) {
-            b |= (1U << i);
-        }
-    }
-    return b;
-}
-
-static uint8_t pack_byte5(const srv_can_mst_data_t* d)
-{
-    uint8_t b = 0;
-    if (d->a_in1_io)
-        b |= (1U << 0);
-    if (d->a_in2_io)
-        b |= (1U << 1);
-    if (d->a_in3_io)
-        b |= (1U << 2);
-    if (d->seq_vin_fault)
-        b |= (1U << 3);
-    if (d->seq_chg_fault)
-        b |= (1U << 4);
-    if (d->seq_motor_fault)
-        b |= (1U << 5);
-    return b;
-}
-
-/* --- 电池数据帧构建 (0x011-0x0B1) --- */
+/* --- 电池数据帧构建 (0x011-0x015) --- */
 
 static void cm_build_battery(const srv_can_mst_data_t* d, uint8_t fb)
 {
     uint8_t frame[8];
 
-    /* 0x011 — 双电池 SOC + 双电池容量 */
+    /* 0x011 — 双电池容量 + 循环次数 + 充电标志（soc 已在 0x001 上报，不重复） */
     if (fb & SRV_CAN_MST_FEEDBACK_BAT_BASE) {
-        frame[0] = d->bat1_soc;
-        frame[1] = d->bat2_soc;
-        frame[2] = (uint8_t)(d->bat1_capacity_mah >> 8U);
-        frame[3] = (uint8_t)(d->bat1_capacity_mah >> 16U);
-        frame[4] = (uint8_t)(d->bat2_capacity_mah >> 8U);
-        frame[5] = (uint8_t)(d->bat2_capacity_mah >> 16U);
-        frame[6] = (uint8_t)(d->bat1_cycle_count >> 0U);
-        frame[7] = (uint8_t)(d->bat2_cycle_count >> 0U);
+        frame[0] = (uint8_t)(d->bat1.capacity_mah >> 8U);
+        frame[1] = (uint8_t)(d->bat1.capacity_mah >> 16U);
+        frame[2] = (uint8_t)(d->bat2.capacity_mah >> 8U);
+        frame[3] = (uint8_t)(d->bat2.capacity_mah >> 16U);
+        frame[4] = (uint8_t)(d->bat1.cycle_count >> 0U);
+        frame[5] = (uint8_t)(d->bat2.cycle_count >> 0U);
+        frame[6] = (uint8_t)(d->bat1.charging ? (1U << 0) : 0)
+            | (uint8_t)(d->bat2.charging ? (1U << 1) : 0);
+        frame[7] = 0; /* 保留 */
         cm_enqueue(SRV_CAN_MST_ID_BAT_BASE, frame, 8);
     }
 
-    /* 0x021 — 双电池电压 + 充电标志 */
+    /* 0x012 — 双电池电压 + 电流 */
     if (fb & SRV_CAN_MST_FEEDBACK_BAT_VOLTAGE) {
-        frame[0] = (uint8_t)(d->bat1_voltage_dv >> 0U);
-        frame[1] = (uint8_t)(d->bat1_voltage_dv >> 8U);
-        frame[2] = (uint8_t)(d->bat2_voltage_dv >> 0U);
-        frame[3] = (uint8_t)(d->bat2_voltage_dv >> 8U);
-        frame[4] = (uint8_t)(d->bat1_charging ? (1U << 0) : 0)
-            | (uint8_t)(d->bat2_charging ? (1U << 1) : 0);
-        frame[5] = 0;
-        frame[6] = 0;
-        frame[7] = 0;
+        frame[0] = (uint8_t)(d->bat1.voltage_dv >> 0U);
+        frame[1] = (uint8_t)(d->bat1.voltage_dv >> 8U);
+        frame[2] = (uint8_t)(d->bat2.voltage_dv >> 0U);
+        frame[3] = (uint8_t)(d->bat2.voltage_dv >> 8U);
+        frame[4] = (uint8_t)(d->bat1.current_da >> 0U);
+        frame[5] = (uint8_t)(d->bat1.current_da >> 8U);
+        frame[6] = (uint8_t)(d->bat2.current_da >> 0U);
+        frame[7] = (uint8_t)(d->bat2.current_da >> 8U);
         cm_enqueue(SRV_CAN_MST_ID_BAT_VOLT, frame, 8);
     }
 
-    /* 0x041 — 双电池温度 */
-    if (fb & SRV_CAN_MST_FEEDBACK_BAT_TEMPERATURE) {
-        frame[0] = (uint8_t)d->bat1_temp_c;
-        frame[1] = (uint8_t)d->bat2_temp_c;
-        frame[2] = 0;
-        frame[3] = 0;
-        frame[4] = 0;
-        frame[5] = 0;
-        frame[6] = 0;
-        frame[7] = 0;
-        cm_enqueue(SRV_CAN_MST_ID_BAT_TEMP14, frame, 8);
-    }
-
-    /* 0x031 — 双电池电流 */
-    if (fb & SRV_CAN_MST_FEEDBACK_BAT_CURRENT) {
-        frame[0] = (uint8_t)(d->bat1_current_da >> 0U);
-        frame[1] = (uint8_t)(d->bat1_current_da >> 8U);
-        frame[2] = (uint8_t)(d->bat2_current_da >> 0U);
-        frame[3] = (uint8_t)(d->bat2_current_da >> 8U);
-        frame[4] = 0;
-        frame[5] = 0;
-        frame[6] = 0;
-        frame[7] = 0;
-        cm_enqueue(SRV_CAN_MST_ID_BAT_CURR, frame, 8);
-    }
-
-    /* 0x051 — 双电池版本信息 */
+    /* 0x013 — 双电池版本信息 */
     if (fb & SRV_CAN_MST_FEEDBACK_BAT_STATUS) {
-        frame[0] = (uint8_t)(d->bat1_hw_version >> 0U);
-        frame[1] = (uint8_t)(d->bat1_hw_version >> 8U);
-        frame[2] = (uint8_t)(d->bat1_sw_version >> 0U);
-        frame[3] = (uint8_t)(d->bat1_sw_version >> 8U);
-        frame[4] = (uint8_t)(d->bat2_hw_version >> 0U);
-        frame[5] = (uint8_t)(d->bat2_hw_version >> 8U);
-        frame[6] = (uint8_t)(d->bat2_sw_version >> 0U);
-        frame[7] = (uint8_t)(d->bat2_sw_version >> 8U);
+        frame[0] = (uint8_t)(d->bat1.hw_version >> 0U);
+        frame[1] = (uint8_t)(d->bat1.hw_version >> 8U);
+        frame[2] = (uint8_t)(d->bat1.sw_version >> 0U);
+        frame[3] = (uint8_t)(d->bat1.sw_version >> 8U);
+        frame[4] = (uint8_t)(d->bat2.hw_version >> 0U);
+        frame[5] = (uint8_t)(d->bat2.hw_version >> 8U);
+        frame[6] = (uint8_t)(d->bat2.sw_version >> 0U);
+        frame[7] = (uint8_t)(d->bat2.sw_version >> 8U);
         cm_enqueue(SRV_CAN_MST_ID_BAT_STATUS, frame, 8);
     }
 
-    /* 0x061 — 双电池故障码 */
+    /* 0x014 — 双电池故障码 */
     if (fb & SRV_CAN_MST_FEEDBACK_BAT_ERROR) {
         frame[0] = d->bat1_fault.volt.raw;
         frame[1] = d->bat1_fault.curr.raw;
@@ -445,7 +322,7 @@ static void cm_build_battery(const srv_can_mst_data_t* d, uint8_t fb)
         cm_enqueue(SRV_CAN_MST_ID_BAT_ERROR, frame, 8);
     }
 
-    /* 0x071 — 故障等级 + 预警 */
+    /* 0x015 — 故障等级 + 预警 + 温度 */
     if (fb & SRV_CAN_MST_FEEDBACK_BAT_COUNTER) {
         frame[0] = (uint8_t)(d->bat1_fault.warnings >> 0U);
         frame[1] = (uint8_t)(d->bat1_fault.warnings >> 8U);
@@ -453,8 +330,8 @@ static void cm_build_battery(const srv_can_mst_data_t* d, uint8_t fb)
         frame[3] = (uint8_t)d->bat2_fault.level;
         frame[4] = (uint8_t)(d->bat2_fault.extra_warnings >> 0U);
         frame[5] = (uint8_t)(d->bat2_fault.extra_warnings >> 8U);
-        frame[6] = 0;
-        frame[7] = 0;
+        frame[6] = (uint8_t)d->bat1.temp_c;
+        frame[7] = (uint8_t)d->bat2.temp_c;
         cm_enqueue(SRV_CAN_MST_ID_BAT_CNT, frame, 8);
     }
 }

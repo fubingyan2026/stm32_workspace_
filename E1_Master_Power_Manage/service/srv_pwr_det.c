@@ -44,10 +44,10 @@ static uint32_t s_pwr_det_log_ts;
 
 /** @brief 需要做边沿检测的故障类信号（0→1 断言 / 1→0 清除） */
 static const drv_status_signal_t s_fault_signals[] = {
-    DRV_STATUS_HSD_FAULT,      /**< HSD 高边驱动器故障汇总 */
-    DRV_STATUS_DBR_OCP_FLAG,   /**< 制动电阻过流 */
-    DRV_STATUS_MOTOR_CHG_OCP,  /**< 电机充电过流 */
-    DRV_STATUS_E_STOP_ON,      /**< 急停 */
+    DRV_STATUS_HSD_FAULT, /**< HSD 高边驱动器故障汇总 */
+    DRV_STATUS_DBR_OCP_FLAG, /**< 制动电阻过流 */
+    DRV_STATUS_MOTOR_CHG_OCP, /**< 电机充电过流 */
+    DRV_STATUS_E_STOP_ON, /**< 急停 */
 };
 #define SRV_PWR_DET_FAULT_SIG_NUM \
     (uint32_t)(sizeof(s_fault_signals) / sizeof(s_fault_signals[0]))
@@ -114,40 +114,4 @@ void srv_pwr_det_read(srv_pwr_det_status_t* status)
             (unsigned)status->hsd_fault, (unsigned)status->dbr_ocp,
             (unsigned)status->motor_chg_ocp, (unsigned)status->estop_on);
     }
-}
-
-bool srv_pwr_det_all_power_ok(void)
-{
-    srv_pwr_det_status_t st;
-    srv_pwr_det_read(&st);
-    return st.ext_12v_ok && st.ext_24v_ok && st.comp_24v_ok
-        && st.aux_power_ok && st.motor_power_ok;
-}
-
-bool srv_pwr_det_has_hsd_fault(void)
-{
-    srv_pwr_det_status_t st;
-    srv_pwr_det_read(&st);
-    return st.hsd_fault;
-}
-
-bool srv_pwr_det_has_dbr_ocp(void)
-{
-    srv_pwr_det_status_t st;
-    srv_pwr_det_read(&st);
-    return st.dbr_ocp;
-}
-
-bool srv_pwr_det_is_estop(void)
-{
-    srv_pwr_det_status_t st;
-    srv_pwr_det_read(&st);
-    return st.estop_on;
-}
-
-bool srv_pwr_det_has_motor_chg_ocp(void)
-{
-    srv_pwr_det_status_t st;
-    srv_pwr_det_read(&st);
-    return st.motor_chg_ocp;
 }

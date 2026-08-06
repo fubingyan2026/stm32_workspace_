@@ -20,7 +20,7 @@
 /* 模块日志开关 ----------------------------------------------------------------*/
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
-#define SRV_FAN_CTRL_LOG_ENABLE 1
+#define SRV_FAN_CTRL_LOG_ENABLE 0
 
 #if SRV_FAN_CTRL_LOG_ENABLE
 #define SRV_FAN_CTRL_LOG_E(...) LOG_E("srv_fan_ctrl", __VA_ARGS__)

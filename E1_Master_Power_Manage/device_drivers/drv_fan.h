@@ -23,7 +23,7 @@ extern "C" {
 
 /* Exported constants --------------------------------------------------------*/
 
-#define DRV_FAN_MAX (3U) /**< 最大风扇数量 */
+#define DRV_FAN_MAX (2U) /**< 最大风扇数量 */
 
 /* Exported functions prototypes ---------------------------------------------*/
 
