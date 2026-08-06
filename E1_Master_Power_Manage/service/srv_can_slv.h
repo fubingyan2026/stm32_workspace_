@@ -95,7 +95,11 @@ bool srv_can_slv_is_initialized(void);
 /** @brief 请求发送一次从板控制帧 */
 void srv_can_slv_request(void);
 
-/** @brief 周期任务：重试 pending 帧，发送新请求 */
+/**
+ * @brief 周期任务：重试 pending 帧，并将 ACKED 复位回 IDLE
+ * @note  ACK 握手完成后自动回到 IDLE，供 can_task 周期调用 srv_can_slv_request()
+ *        做从板存活探测（0x002 每 100ms 一发，ACK 到达即在线）。
+ */
 void srv_can_slv_task(void);
 
 /**

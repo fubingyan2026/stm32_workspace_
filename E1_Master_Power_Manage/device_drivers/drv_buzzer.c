@@ -33,7 +33,7 @@
 
 /** @brief 蜂鸣器 PWM 硬件（来自 CubeMX tim.c: PB15 → TIM12_CH2） */
 #define BUZZER_HTIM (&htim12)
-#define BUZZER_CH   (TIM_CHANNEL_2)
+#define BUZZER_CH (TIM_CHANNEL_2)
 
 /* Private variables ---------------------------------------------------------*/
 

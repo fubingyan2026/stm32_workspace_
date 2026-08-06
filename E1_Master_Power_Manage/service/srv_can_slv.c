@@ -17,7 +17,7 @@
 /* 模块日志开关 ----------------------------------------------------------------*/
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
-#define SRV_CAN_SLV_LOG_ENABLE 1
+#define SRV_CAN_SLV_LOG_ENABLE 0
 
 #if SRV_CAN_SLV_LOG_ENABLE
 #define SRV_CAN_SLV_LOG_E(...) LOG_E("srv_can_slv", __VA_ARGS__)
@@ -115,7 +115,17 @@ void srv_can_slv_request(void)
 
 void srv_can_slv_task(void)
 {
-    if (!s_initialized || s_state != SLAVE_PENDING) {
+    if (!s_initialized) {
+        return;
+    }
+
+    /* 一轮请求/ACK 握手完成：回到 IDLE，允许下轮周期存活探测 */
+    if (s_state == SLAVE_ACKED) {
+        s_state = SLAVE_IDLE;
+        return;
+    }
+
+    if (s_state != SLAVE_PENDING) {
         return;
     }
 

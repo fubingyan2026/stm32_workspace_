@@ -12,6 +12,7 @@
  * 初始化硬件后进入主循环，运行 RS-485 DMA 收发任务。
  */
 
+#include "buzzer_task.h"
 #include "can_task.h"
 #include "drv_revision.h"
 #include "drv_systick.h"
@@ -65,6 +66,10 @@ int app_main(void)
     /* LED 状态指示 */
     led_task_init();
     APP_MAIN_LOG_I("LED 任务初始化完成");
+
+    /* 蜂鸣器（复用 srv_signal 实例；需在 led_task 之后） */
+    buzzer_task_init();
+    APP_MAIN_LOG_I("蜂鸣器任务初始化完成");
 
     /* WS2812B 灯带（彗星流光演示） */
     ws2812_task_init();

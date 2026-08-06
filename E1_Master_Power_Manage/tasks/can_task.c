@@ -18,6 +18,7 @@
 #include "srv_can_dual.h"
 #include "srv_can_mst.h"
 #include "srv_can_slv.h"
+#include "srv_device_monitor.h"
 #include "srv_pwr_det.h"
 #include "sw_timer.h"
 
@@ -45,6 +46,9 @@
 #define TASK_PERIOD_MS (10U)
 #define REPORT_INTERVAL_MS (100U)
 
+/** @brief 从板存活探测间隔 (ms)：周期发 0x002，ACK 到达即在线 */
+#define SLAVE_POLL_PERIOD_MS (100U)
+
 /** @brief CAN TX/RX 日志限频窗口 (ms)：总线繁忙时防止刷屏 */
 #define CAN_TASK_ERR_LOG_PERIOD_MS (1000U)
 
@@ -52,6 +56,7 @@
 
 static sw_timer_t s_timer;
 static uint16_t s_report_ms;
+static uint16_t s_slave_poll_ms;
 static uint32_t s_tx_err_log_ts;
 static uint32_t s_rx_log_ts;
 
@@ -97,10 +102,14 @@ void can_task_init(void)
     const srv_can_dual_config_t dual_cfg = { .send_frame = can_send_frame };
     srv_can_dual_init(&dual_cfg);
 
+    /* 设备在线监控（daemon 封装；心跳喂狗点见 can_rx_callback） */
+    srv_device_monitor_init(NULL);
+
     /* 注册 CAN 接收回调 */
     drv_can_register_rx_callback(DRV_CAN_CH_1, can_rx_callback);
 
     s_report_ms = 0;
+    s_slave_poll_ms = 0;
 
     const sw_timer_config_t timer_cfg = {
         .priority = SW_TIMER_PRIO_NORMAL,
@@ -112,12 +121,6 @@ void can_task_init(void)
 
     CAN_TASK_LOG_I("CAN 任务初始化完成 (period=%ums, report=%ums)",
         (unsigned)TASK_PERIOD_MS, (unsigned)REPORT_INTERVAL_MS);
-}
-
-void can_task_tick(void)
-{
-    srv_can_mst_task();
-    srv_can_slv_task();
 }
 
 void can_task_request(uint8_t feedback_select)
@@ -143,12 +146,20 @@ static void can_timer_cb(void* user_data)
 
     srv_can_mst_task();
     srv_can_slv_task();
+    srv_device_monitor_step();
 
     /* 周期触发主机上报 */
     s_report_ms += TASK_PERIOD_MS;
     if (s_report_ms >= REPORT_INTERVAL_MS) {
         s_report_ms = 0;
         srv_can_mst_request(0x00); /* 仅发送 0x001 状态帧，电池帧按需由主机触发 */
+    }
+
+    /* 周期从板存活探测：发送 0x002，ACK 到达即喂狗判在线 */
+    s_slave_poll_ms += TASK_PERIOD_MS;
+    if (s_slave_poll_ms >= SLAVE_POLL_PERIOD_MS) {
+        s_slave_poll_ms = 0;
+        srv_can_slv_request();
     }
 }
 
@@ -200,6 +211,14 @@ static void can_rx_callback(drv_can_channel_t ch, const drv_can_msg_t* msg)
     if (msg->id == 0x001 && msg->dlc == 7) {
         srv_can_mst_process_rx(msg->data, msg->dlc);
         return;
+    }
+
+    /* 设备在线喂狗（ISR 安全：daemon_reload 仅时间戳更新） */
+    if (msg->id == SRV_CAN_SLV_ID_CTRL && msg->dlc == SRV_CAN_SLV_ACK_LEN) {
+        srv_device_monitor_feed(SRV_DEVICE_SLAVER);
+    } else if (msg->id == SRV_CAN_DUAL_ID_CORE || msg->id == SRV_CAN_DUAL_ID_INFO
+        || msg->id == SRV_CAN_DUAL_ID_FAULT) {
+        srv_device_monitor_feed(SRV_DEVICE_DUAL);
     }
 
     /* 从板控制 ACK 处理（0x002） */

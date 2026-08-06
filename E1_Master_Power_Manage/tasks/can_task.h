@@ -22,7 +22,6 @@ extern "C" {
 #endif
 
 void can_task_init(void);
-void can_task_tick(void);
 void can_task_request(uint8_t feedback_select);
 
 /**

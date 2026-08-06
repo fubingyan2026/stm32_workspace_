@@ -26,7 +26,7 @@
 #endif
 
 /**
- * @brief 亮度分辨率上限 (srv_led 输出 0-1023)
+ * @brief 亮度分辨率上限 (srv_signal 输出 0-1023)
  * @note  TIM1 ARR = Period(1023)-1 = 1022；PWM2 互补输出下 CCR=duty 直接映射:
  *        CCR=0 → N 通道 0% → 灭；CCR≥1023 → N 通道 100% → 最亮。
  *        CCR 允许略大于 ARR，等效 100% 占空，无副作用。
