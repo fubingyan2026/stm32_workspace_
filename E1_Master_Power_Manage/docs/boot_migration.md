@@ -170,8 +170,12 @@ cmake --preset Release && ninja -C build/Release
 
 ## 5. 已知说明 / 后续
 
+- **代码位置**：Boot 升级栈（`boot_transport`/`boot_fsm`/`boot_flash`）与 `boot_task` 已从 E1 的
+  `service/boot/`、`tasks/` **迁移到共享层** `../public_layer/service/boot/` 与 `../public_layer/task/`
+  （跨工程复用；依赖 E1 的 `drv_can`/`drv_systick`/`log_task` 接口，其他工程接入时需提供同名接口）。
+  上文迁移步骤中的旧路径为**历史记录**，当前以 public_layer 为准。
 - **联调修复 ① A/B 切换判定**：`boot_task_init` 曾用 `upgrade_flag==0` 判「有无有效 App」，导致 0x003 触发
-  （upgrade_flag=1）时永远写 A。改为以 **`fw_size>0`** 判定（[boot_task.c](../tasks/boot_task.c)）。
+  （upgrade_flag=1）时永远写 A。改为以 **`fw_size>0`** 判定（[boot_task.c](../public_layer/task/boot_task.c)）。
 - **联调修复 ③ A/B 链接地址缺陷（运行槽提升）**：App 固定链接于 A（`0x08020000`），提交到 B 后 Boot 直接跳
   B 的内嵌 PC（仍是 A 链接地址）→ 落到 A 的旧/空区，取指失败进 `Default_Handler`。改为 `boot_flash_promote_to_a()`：
   Boot 校验通过后若活动分区为 B，先拷贝 B→A 再从 A 启动（Boot 跑在 `0x08000000` 区，写 A 安全）。
@@ -182,12 +186,15 @@ cmake --preset Release && ninja -C build/Release
 - **后续增强（跳转/复位前日志排空）**：`log_task_flush()` 排空 log 缓冲并等待 UART DMA 完成；
   在 Boot→App 跳转、REBOOT/回滚复位、App→Boot（0x003）复位前调用，确保最后几句日志
   （"跳转分区"、"请求进入 bootloader"）不被复位打断丢失。
-- **后续增强（Boot 蓝色 LED 状态指示）**：Boot 复用 `srv_signal.c` + `led_task.c`（`E1_BUILD_BOOT` 变体）
+- **后续增强（Boot 蓝色 LED 状态指示）**：Boot 复用 `srv_signal.c`（已上移 `../public_layer/service/`）+ `led_task.c`（`E1_BUILD_BOOT` 变体）
   + `drv_led.c`，按升级状态驱动蓝色 LED（IDLE 慢闪/传输快闪/校验速闪/重启常亮）；
   `led_task_init` 经 `boot_task_get_state()` 读取升级 FSM 状态。
+- **后续增强（初始等待超时）**：Boot 进入升级模式后未收到 START，先于 `BOOT_IDLE_WARN_MS`（默认 10s）打
+  警告日志，至 `BOOT_IDLE_ROLLBACK_MS`（默认 30s）仍无指令且存在有效上个版本则复位跳回上个版本，
+  否则保持等待（[boot_task.c](../public_layer/task/boot_task.c) `boot_rollback_to_prev()`）。
 - **后续增强（失败/取消自动回滚）**：升级会话失败或 CANCEL 回到 IDLE 后，经 `BOOT_ROLLBACK_DELAY_MS`
   （默认 2000ms，可调）无新会话，即清除 `upgrade_flag` 并复位，Boot 跳转上个已提交版本
-  （[boot_task.c](../tasks/boot_task.c) `boot_check_rollback()`/`boot_rollback()`）。
+  （[boot_task.c](../public_layer/task/boot_task.c) `boot_check_rollback()`/`boot_rollback()`）。
 - **后续增强（Boot 心跳 beacon）**：Boot 在 IDLE 态每 1s 发一帧 beacon（`0x702`，命令 `0x09`，携带
   `hw_id`），上位机据此自动判断「设备是否已在 Boot」——收到则跳过 `0x003`，未收到才发 `0x003` 触发。
   实现于 `boot_transport_build_beacon()` + `boot_fsm_tick()`（IDLE 分支），上位机 `worker.py` 新增

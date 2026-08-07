@@ -12,7 +12,9 @@
  * 初始化硬件后进入主循环，运行 RS-485 DMA 收发任务。
  */
 
-#include "boot_task.h"
+#if defined(E1_BUILD_BOOT)
+#include "boot_task.h" /* 位于 ../public_layer/task（Boot 目标 include path 提供） */
+#endif
 #include "buzzer_task.h"
 #include "can_task.h"
 #include "drv_revision.h"

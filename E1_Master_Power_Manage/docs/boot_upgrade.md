@@ -16,8 +16,9 @@
 | **E1_Master_Power_Manage**（App） | `0x08020000` | 128KB | 现有主控电源固件 | 升级对象；上电由 Boot 校验后跳转 |
 | **E1_Boot**（Boot） | `0x08000000` | 128KB | 启动决策 + CAN 升级接收 | 首烧/升级后不再变动 |
 
-- **Boot 镜像**：`tasks/app_main.c` 的 `E1_BUILD_BOOT` 分支 + `tasks/boot_task.*` + `service/boot/*` +
-  最小驱动集（systick / log_uart / can）。启动即做「跳转 or 升级」决策，决策失败则进入升级接收循环。
+- **Boot 镜像**：`tasks/app_main.c` 的 `E1_BUILD_BOOT` 分支 + `public_layer/task/boot_task.*` +
+  `public_layer/service/boot/*`（跨工程共享）+ 最小驱动集（systick / log_uart / can）。
+  启动即做「跳转 or 升级」决策，决策失败则进入升级接收循环。
 - **App 镜像**：现有全部任务/服务/应用，仅新增 0x003 进 boot 命令；向量表重定位到分区
   （`USER_VECT_TAB_ADDRESS` + `VECT_TAB_OFFSET=0x00020000U`，`system_stm32f4xx.c` 于 SystemInit 内写 `SCB->VTOR`）。
 
@@ -35,7 +36,7 @@
 - `boot_flash`（Boot 侧）与 `srv_boot_ctrl`（App 侧）各自持有独立 ring_storage 实例，但**同一区域、同一
   `boot_metadata_t` 字节契约**（`magic=0x424F4F54` + partition/upgrade_flag/version/fw_size/fw_checksum/reboot_counts）。
   两者不同时运行（Boot 模式 or App 模式），字段布局不得增删。
-- `boot_metadata_t` 在 `service/boot/boot_flash.h` 与 `service/srv_boot_ctrl.c` 各定义一份，逐字节一致。
+- `boot_metadata_t` 在 `public_layer/service/boot/boot_flash.h` 与 `service/srv_boot_ctrl.c` 各定义一份，逐字节一致。
 
 ## 3. 升级流程
 
@@ -74,9 +75,14 @@
 - **状态指示（Boot 蓝色 LED）**：Boot 复用 `srv_signal` + `led_task`（`E1_BUILD_BOOT` 变体）驱动蓝色 LED
   指示升级状态——IDLE 慢闪（等待）→ START/DATA 快闪（传输中）→ VERIFY 中速闪（校验中）→ REBOOT 前常亮。
 - **失败/取消自动回滚**：升级会话（收到过 START）失败或被 CANCEL 回到 IDLE 后，等待
-  `BOOT_ROLLBACK_DELAY_MS`（[boot_task.c](../tasks/boot_task.c)，默认 2000ms，可调）内无新会话，
+  `BOOT_ROLLBACK_DELAY_MS`（[boot_task.c](../public_layer/task/boot_task.c)，默认 2000ms，可调）内无新会话，
   即清除 `upgrade_flag`（保留已提交分区）并复位——Boot 校验已提交（上个）分区并跳转，恢复旧版本。
-  该窗口内主机可重新发起升级（新 START 会取消回滚倒计时）。刚进入 boot 的初始 IDLE 不触发回滚。
+  该窗口内主机可重新发起升级（新 START 会取消回滚倒计时）。
+- **初始等待超时（无会话）**：Boot 进入升级模式后若始终未收到 START，先于 `BOOT_IDLE_WARN_MS`
+  （默认 10s）打 `W 等待升级指令超时` 警告；至 `BOOT_IDLE_ROLLBACK_MS`（默认 30s）仍无指令，
+  若上个版本**完整有效**（magic + `fw_size>0` + 分区 32-bit 累加和匹配 + 向量表合法，
+  `boot_partition_is_valid()`）则清除 upgrade_flag 复位跳回上个版本，否则保持 Boot 模式继续等待。
+  仅凭 magic/fw_size 判断不足——分区损坏会导致回滚后复位→校验失败→再进 boot 的循环。
 
 ## 4. 升级协议（CAN 0x701 / 0x702）
 
@@ -120,11 +126,11 @@ cd updata_tool && python -m flash_tool
 
 | 文件 | 职责 |
 |------|------|
-| [tasks/boot_task.c](../tasks/boot_task.c) | 启动决策 + 升级接收（胶水层） |
+| [public_layer/task/boot_task.c](../public_layer/task/boot_task.c) | 启动决策 + 升级接收（胶水层） |
 | [tasks/app_main.c](../tasks/app_main.c) | `E1_BUILD_BOOT` 分支（Boot 入口）/ App 入口 |
-| [service/boot/boot_transport.{h,c}](../service/boot/boot_transport.c) | 协议帧编解码 |
-| [service/boot/boot_fsm.{h,c}](../service/boot/boot_fsm.c) | 升级状态机 |
-| [service/boot/boot_flash.{h,c}](../service/boot/boot_flash.c) | 分区擦写/校验/Metadata |
+| [public_layer/service/boot/boot_transport.{h,c}](../public_layer/service/boot/boot_transport.c) | 协议帧编解码 |
+| [public_layer/service/boot/boot_fsm.{h,c}](../public_layer/service/boot/boot_fsm.c) | 升级状态机 |
+| [public_layer/service/boot/boot_flash.{h,c}](../public_layer/service/boot/boot_flash.c) | 分区擦写/校验/Metadata |
 | [service/srv_boot_ctrl.c](../service/srv_boot_ctrl.c) | App 侧 Metadata 管理 + `request_boot()` |
 | [tasks/can_task.c](../tasks/can_task.c) | 0x003 进 boot 命令 |
 | [STM32F407XX_FLASH.ld](../STM32F407XX_FLASH.ld) / [STM32F407XX_BOOT.ld](../STM32F407XX_BOOT.ld) | App/Boot 链接脚本 |

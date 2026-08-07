@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import time
 
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import Qt, QTimer, Signal, Slot
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
     QPushButton, QLabel, QProgressBar, QTextEdit, QCheckBox,
@@ -12,6 +12,12 @@ from PySide6.QtWidgets import (
 )
 
 from ..protocol import compute_checksum32
+
+# 日志面板最大行数：超出丢弃最旧（防止 QTextDocument 无限增长导致每次 insertHtml 全量重排、升级变慢）
+MAX_LOG_BLOCKS = 2000
+# 日志批量刷新：消息先进缓冲，定时器统一一次性 insertHtml，避免每条日志都触发文档重排
+LOG_FLUSH_INTERVAL_MS = 150
+LOG_FLUSH_BATCH = 500
 
 
 class FirmwarePanel(QWidget):
@@ -22,8 +28,15 @@ class FirmwarePanel(QWidget):
         super().__init__(parent)
         self._fw_path: str = ""
         self._building = False
+        self._log_buffer: list[str] = []
+        self._log_at_bottom = True  # 是否停在日志底部（决定是否自动滚动）
         self._build_ui()
         self._wire_signals()
+        # 日志批量刷新定时器
+        self._log_timer = QTimer(self)
+        self._log_timer.setInterval(LOG_FLUSH_INTERVAL_MS)
+        self._log_timer.timeout.connect(self._flush_logs)
+        self._log_timer.start()
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -75,6 +88,10 @@ class FirmwarePanel(QWidget):
         self.log_text.setReadOnly(True)
         self.log_text.setFontFamily("Consolas, monospace")
         self.log_text.setLineWrapMode(QTextEdit.NoWrap)
+        # 限制文档块数：文档无限增长 → 每次 insertHtml 全量重排 → GUI 线程变慢、拖累升级
+        self.log_text.document().setMaximumBlockCount(MAX_LOG_BLOCKS)
+        # 跟踪用户是否停留在底部（决定批量刷新后是否自动滚动）
+        self.log_text.verticalScrollBar().valueChanged.connect(self._on_log_scroll)
         log_layout.addWidget(self.log_text)
 
         log_row = QHBoxLayout()
@@ -149,11 +166,16 @@ class FirmwarePanel(QWidget):
         self.log_text.setEnabled(enabled)
         if not enabled:
             self.log_text.clear()
+            self._log_buffer.clear()
 
-    @Slot(str)
-    def on_log(self, msg: str):
-        if not self.log_enable_chk.isChecked():
-            return  # 日志显示已关闭，不再打印
+    @Slot(int)
+    def _on_log_scroll(self, value: int):
+        """记录用户是否停留在底部（用于批量刷新后是否自动滚动）。"""
+        sb = self.log_text.verticalScrollBar()
+        self._log_at_bottom = (value >= sb.maximum() - 8)
+
+    def _format_log_html(self, msg: str) -> str:
+        """单条日志 → HTML（含换行），供批量刷新拼接。"""
         ts = time.strftime("%H:%M:%S")
         level = msg[0] if len(msg) > 1 else "I"
         rest = msg[2:] if len(msg) > 2 else msg
@@ -166,16 +188,34 @@ class FirmwarePanel(QWidget):
         }
         color = level_colors.get(level, "#A5D6A7")
         ts_color = "#888888"
-
-        html = (f'<span style="color:{color};">{level}</span> '
+        # 每条日志独立成 <p> 块：setMaximumBlockCount 按块裁剪才有效（<br> 是段内换行，会被并进同一块）
+        return (f'<p style="margin:0;"><span style="color:{color};">{level}</span> '
                 f'<span style="color:{ts_color};">({ts})</span> '
-                f'<span style="color:{color};">{rest}</span>')
+                f'<span style="color:{color};">{rest}</span></p>')
+
+    def _flush_logs(self):
+        """批量刷新：把缓冲内所有日志一次性 insertHtml，避免逐条触发文档重排。"""
+        if not self._log_buffer:
+            return
+        msgs, self._log_buffer = self._log_buffer, []
+        html = "".join(self._format_log_html(m) for m in msgs)
 
         cursor = self.log_text.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
-        cursor.insertHtml(html + "<br>")
-        scrollbar = self.log_text.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        cursor.insertHtml(html)
+
+        if self._log_at_bottom:
+            sb = self.log_text.verticalScrollBar()
+            sb.setValue(sb.maximum())
+
+    @Slot(str)
+    def on_log(self, msg: str):
+        if not self.log_enable_chk.isChecked():
+            return  # 日志显示已关闭，不再打印
+        self._log_buffer.append(msg)
+        # 缓冲过大（GUI 事件循环可能被阻塞）时立即冲刷，避免积压
+        if len(self._log_buffer) >= LOG_FLUSH_BATCH:
+            self._flush_logs()
 
     @Slot(bool)
     def on_finished(self, success: bool):

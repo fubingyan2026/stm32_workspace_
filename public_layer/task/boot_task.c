@@ -23,7 +23,7 @@
 /* Private constants ---------------------------------------------------------*/
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
-#define BOOT_TASK_LOG_ENABLE 1
+#define BOOT_TASK_LOG_ENABLE 0
 
 #if BOOT_TASK_LOG_ENABLE
 #define BOOT_TASK_LOG_E(...) LOG_E("boot_task", __VA_ARGS__)
@@ -52,11 +52,15 @@
 /** 升级失败/取消后，等待多少 ms 无新升级会话即回滚到上个版本（可调） */
 #define BOOT_ROLLBACK_DELAY_MS 2000U
 
+/** 初始 IDLE（无任何升级会话）等待升级指令：先警告、再回滚（可调） */
+#define BOOT_IDLE_WARN_MS (6000U) /**< 等待超时警告 */
+#define BOOT_IDLE_ROLLBACK_MS (12000U) /**< 等待超时回滚（仅当存在有效上个版本） */
+
 /** App 分区 Flash 地址范围（用于跳转前向量表合法性校验） */
 #define BOOT_APP_FLASH_START (0x08020000U)
-#define BOOT_APP_FLASH_END   (0x08040000U) /* 分区起始 + 128KB */
-#define BOOT_RAM_START       (0x20000000U)
-#define BOOT_RAM_END         (0x20020000U) /* 128KB */
+#define BOOT_APP_FLASH_END (0x08040000U) /* 分区起始 + 128KB */
+#define BOOT_RAM_START (0x20000000U)
+#define BOOT_RAM_END (0x20020000U) /* 128KB */
 
 /* Private variables ---------------------------------------------------------*/
 
@@ -82,9 +86,15 @@ static boot_partition_t s_target_partition = BOOT_PARTITION_A;
 static uint32_t s_busoff_poll_tick = 0U;
 
 /* 失败/取消回滚状态 */
-static bool s_session_started;     /**< 本次 boot 会话是否开始过（收到过 START） */
-static bool s_rollback_armed;      /**< 回滚倒计时是否已启动 */
+static bool s_session_started; /**< 本次 boot 会话是否开始过（收到过 START） */
+static bool s_rollback_armed; /**< 回滚倒计时是否已启动 */
 static uint32_t s_rollback_deadline; /**< 回滚触发时刻（毫秒） */
+
+/* 初始 IDLE 等待升级指令超时（无会话场景） */
+static bool s_idle_timer_active; /**< 空闲计时进行中 */
+static uint32_t s_idle_start_ms; /**< 进入初始 IDLE 的时刻 */
+static bool s_idle_warned; /**< 已发等待超时警告 */
+static bool s_idle_rollback_done; /**< 已执行回滚判定（防重复） */
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -92,6 +102,8 @@ static void can_rx_callback(drv_can_channel_t ch, const drv_can_msg_t* msg);
 static void boot_timer_cb(void* user_data);
 static void boot_check_rollback(uint32_t now_ms);
 static void boot_rollback(void);
+static void boot_rollback_to_prev(void);
+static bool boot_partition_is_valid(const boot_metadata_t* meta);
 
 /* 回调函数 */
 static uint8_t write_block_cb(void* user_data, uint32_t offset,
@@ -459,14 +471,32 @@ static void reset_cb(void* user_data)
 static void boot_check_rollback(uint32_t now_ms)
 {
     if (boot_fsm_get_state(&s_fsm_ctx) != BOOT_STATE_IDLE) {
-        /* 会话进行中或已重新开始：取消回滚倒计时 */
+        /* 会话进行中或已重新开始：取消回滚倒计时与空闲计时 */
         s_session_started = true;
         s_rollback_armed = false;
+        s_idle_timer_active = false;
+        s_idle_warned = false;
+        s_idle_rollback_done = false;
         return;
     }
 
     if (!s_session_started) {
-        /* 初始 IDLE：尚未开始过任何会话，不启动回滚 */
+        /* 初始 IDLE：尚未开始任何会话——等待升级指令超时处理（先警告，有上个版本则回滚） */
+        if (!s_idle_timer_active) {
+            s_idle_timer_active = true;
+            s_idle_start_ms = now_ms;
+        }
+        const uint32_t idle_elapsed = (uint32_t)(now_ms - s_idle_start_ms);
+        if (idle_elapsed >= BOOT_IDLE_WARN_MS && !s_idle_warned) {
+            s_idle_warned = true;
+            BOOT_TASK_LOG_W("等待升级指令超时(%ums)，%ums 内仍无指令将回滚到上个版本",
+                (unsigned)BOOT_IDLE_WARN_MS,
+                (unsigned)(BOOT_IDLE_ROLLBACK_MS - BOOT_IDLE_WARN_MS));
+        }
+        if (idle_elapsed >= BOOT_IDLE_ROLLBACK_MS && !s_idle_rollback_done) {
+            s_idle_rollback_done = true;
+            boot_rollback_to_prev();
+        }
         return;
     }
 
@@ -505,4 +535,66 @@ static void boot_rollback(void)
     s_session_started = false;
     s_rollback_armed = false;
     reset_cb(NULL);
+}
+
+/**
+ * @brief 初始 IDLE 等待升级指令超时回滚：有有效上个版本则清除 upgrade_flag 并复位跳回，
+ *        上个版本无效（首烧/校验坏/向量表非法）则保持 Boot 模式继续等待。
+ */
+static void boot_rollback_to_prev(void)
+{
+    boot_metadata_t meta;
+    boot_flash_read_metadata(&s_flash_ctx, &meta);
+
+    if (!boot_partition_is_valid(&meta)) {
+        BOOT_TASK_LOG_W("上个版本无效 (magic/fw_size/校验和/向量表)，保持 Boot 模式等待升级");
+        return; /* 无有效版本可回，保持等待（s_idle_rollback_done 已置位，不重复） */
+    }
+
+    BOOT_TASK_LOG_I("等待升级指令超时(%ums)，回滚到上个版本 (分区 %c)...",
+        (unsigned)BOOT_IDLE_ROLLBACK_MS,
+        (meta.boot_partition == BOOT_PARTITION_A) ? 'A' : 'B');
+    meta.upgrade_flag = 0U;
+    boot_flash_write_metadata(&s_flash_ctx, &meta);
+    s_session_started = false;
+    s_rollback_armed = false;
+    reset_cb(NULL);
+}
+
+/**
+ * @brief 判断 metadata 指向的已提交分区是否为可运行的有效固件
+ *
+ * 与 boot_task_try_boot_app 的跳转前校验一致：magic + fw_size>0 + 分区
+ * 32-bit 累加和匹配 + 向量表合法（SP 在 RAM、PC 在 App 分区）。
+ * 仅用 magic/fw_size 判断不足——分区数据可能损坏，会导致回滚后复位→校验失败→
+ * 再进 boot→再回滚的无限循环。
+ */
+static bool boot_partition_is_valid(const boot_metadata_t* meta)
+{
+    if (meta->magic != BOOT_METADATA_MAGIC || meta->fw_size == 0U
+        || meta->boot_partition > BOOT_PARTITION_B) {
+        return false;
+    }
+
+    const boot_partition_t part = (meta->boot_partition == BOOT_PARTITION_A)
+        ? BOOT_PARTITION_A
+        : BOOT_PARTITION_B;
+
+    /* 整包 32-bit 累加和比对 */
+    uint32_t calc = 0U;
+    if (boot_flash_compute_checksum(&s_flash_ctx, part, meta->fw_size, &calc) != BOOT_FLASH_OK
+        || calc != meta->fw_checksum) {
+        return false;
+    }
+
+    /* 向量表合法性（初始 SP 允许 == RAM_END，栈向下生长） */
+    const uint32_t app_addr = boot_flash_partition_addr(part);
+    const uint32_t app_sp = *(const volatile uint32_t*)app_addr;
+    const uint32_t app_pc = *(const volatile uint32_t*)(app_addr + 4U);
+    if (app_sp < BOOT_RAM_START || app_sp > BOOT_RAM_END
+        || app_pc < BOOT_APP_FLASH_START || app_pc >= BOOT_APP_FLASH_END) {
+        return false;
+    }
+
+    return true;
 }

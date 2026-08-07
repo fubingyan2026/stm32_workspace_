@@ -62,9 +62,8 @@ aux_source_directory(${CMAKE_SOURCE_DIR}/service SERVICE)
 aux_source_directory(${CMAKE_SOURCE_DIR}/applications APP)
 
 # ============================ App 目标 =====================================
-# Boot 任务/服务仅编译进 Boot 镜像：从 App 源列表中排除 boot_task.c
-# （service/boot/ 为子目录，aux_source_directory 非递归，自动排除）
-list(REMOVE_ITEM TASKS ${CMAKE_SOURCE_DIR}/tasks/boot_task.c)
+# Boot 任务/服务已移至 public_layer/service/boot 与 public_layer/task，
+# 仅由 Boot 目标显式编译，App 的 aux_source_directory 不会收录。
 
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
@@ -73,6 +72,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${SERVICE}
     ${APP}
     ${TASKS}
+    # 共享信号服务（public_layer/service，App 的 LED/蜂鸣器使用）
+    ${CMAKE_SOURCE_DIR}/../public_layer/service/srv_signal.c
 )
 
 # Add include paths
@@ -83,6 +84,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     service
     applications
     ../public_layer/device_drivers/hal_flash
+    ../public_layer/service
 )
 
 # Add project symbols (macros)
@@ -121,13 +123,14 @@ add_custom_command(
 )
 
 # ============================ Boot 目标 ====================================
-# Boot 专属源（显式列表：升级服务 + boot 任务 + 最小驱动集；Core 由 stm32cubemx 挂接）
+# Boot 专属源（显式列表）：升级服务/boot 任务取自 public_layer（跨工程复用），
+# 其余为 E1 最小驱动集 + srv_signal + led_task；Core 由 stm32cubemx 挂接。
 set(BOOT_SOURCES
-    ${CMAKE_SOURCE_DIR}/service/boot/boot_transport.c
-    ${CMAKE_SOURCE_DIR}/service/boot/boot_fsm.c
-    ${CMAKE_SOURCE_DIR}/service/boot/boot_flash.c
-    ${CMAKE_SOURCE_DIR}/service/srv_signal.c
-    ${CMAKE_SOURCE_DIR}/tasks/boot_task.c
+    ${CMAKE_SOURCE_DIR}/../public_layer/service/boot/boot_transport.c
+    ${CMAKE_SOURCE_DIR}/../public_layer/service/boot/boot_fsm.c
+    ${CMAKE_SOURCE_DIR}/../public_layer/service/boot/boot_flash.c
+    ${CMAKE_SOURCE_DIR}/../public_layer/task/boot_task.c
+    ${CMAKE_SOURCE_DIR}/../public_layer/service/srv_signal.c
     ${CMAKE_SOURCE_DIR}/tasks/app_main.c
     ${CMAKE_SOURCE_DIR}/tasks/log_task.c
     ${CMAKE_SOURCE_DIR}/tasks/led_task.c
@@ -146,9 +149,11 @@ target_include_directories(${E1_BOOT_TARGET} PRIVATE
     tasks
     device_drivers
     service
-    service/boot
     applications
     ../public_layer/device_drivers/hal_flash
+    ../public_layer/service
+    ../public_layer/service/boot
+    ../public_layer/task
 )
 
 target_compile_definitions(${E1_BOOT_TARGET} PRIVATE

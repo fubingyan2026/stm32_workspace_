@@ -67,8 +67,10 @@ typedef void (*boot_fsm_reset_cb_t)(void* user_data);
  * 1000ms→2000ms 进一步容忍 Windows USB 偶发 >1s 卡顿（仍配合全局 6s 会话超时检出死机主机）。 */
 #define BOOT_BLOCK_TIMEOUT_MS  1000U
 
-/** IDLE 心跳（beacon）周期（ms） */
-#define BOOT_BEACON_PERIOD_MS  500U
+/* IDLE 心跳（beacon）周期（ms）。
+ * 需与上位机 TRIGGER_WAIT_TIMEOUT 匹配：首帧在复位后 ~周期+20ms 才发出，
+ * 周期过大 + 1s 触发窗口会擦边漏检。200ms → 首帧 ~220ms，1s 窗口内有多次机会。 */
+#define BOOT_BEACON_PERIOD_MS  200U
 
 /* Exported functions prototypes ---------------------------------------------*/
 

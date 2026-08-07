@@ -420,10 +420,9 @@ class FlashWorker(QObject):
                     f"{status_name(n_code)} (0x{n_code:02X})")
 
             tag = f"{block_idx+1}/{total_blocks}"
+            # 仅异常/重试打日志；正常块不打印（进度由进度条体现，避免每块 2 行刷屏）
             if attempt > 0:
-                self._log_i("BLOCK", f"{tag} 重试 #{attempt}")
-            self._log_i("BLOCK", f"{tag} DATA_START → ACK ✓, "
-                        f"{frames_per_block} 帧 (offset={block_idx * BLOCK_SIZE})")
+                self._log_w("BLOCK", f"{tag} 重试 #{attempt} (DATA_START → ACK ✓)")
 
             # ── 发送 DATA 帧序列（途中非阻塞监听，丢包即时中止）+ DATA_END ──
             interrupted_to = None
@@ -460,7 +459,9 @@ class FlashWorker(QObject):
 
             ack, resp = self._wait_block(CMD_DATA_END)
             if ack:
-                self._log_i("BLOCK", f"{block_idx+1} → ACK ✓")
+                # 正常块不打印（进度由进度条体现），仅重试成功才提示
+                if attempt > 0:
+                    self._log_i("BLOCK", f"{block_idx+1} 重试后 → ACK ✓")
                 block_idx += 1
                 attempt = 0
                 continue

@@ -273,7 +273,7 @@ sequenceDiagram
 | 块重试上限 | `3` 次 | Block 校验失败 | 超限中止 |
 | 回滚延时 | `2000ms` | 会话结束回 IDLE 后无新会话 | 清 `upgrade_flag` + 复位，跳回上个版本 |
 | REBOOT ACK 发送等待 | 有界轮询 ≤`50ms` | 发 REBOOT ACK 后 | 等 TX 邮箱空闲再复位，避免 ACK 被打断 |
-| beacon 周期 | `100ms` | Boot 处于 IDLE | 周期发送 `0x09` |
+| beacon 周期 | `200ms` | Boot 处于 IDLE | 周期发送 `0x09`；首帧 ~220ms，配合 1s 触发窗口可靠检出 |
 
 ### 6.2 状态转移矩阵
 
@@ -367,7 +367,7 @@ sequenceDiagram
 | `BOOT_HW_COMPAT_ID` | `0x0002` | E1 Boot 硬件兼容 ID |
 | `BOOT_FSM_TIMEOUT_MS` | `6000` | 全局会话超时 |
 | `BOOT_BLOCK_TIMEOUT_MS` | `2000` | 块级帧间隔超时 |
-| `BOOT_BEACON_PERIOD_MS` | `100` | beacon 周期 |
+| `BOOT_BEACON_PERIOD_MS` | `200` | beacon 周期 |
 | `BOOT_ROLLBACK_DELAY_MS` | `2000` | 失败/取消回滚延时 |
 | `BOOT_FLASH_BOOT_SIZE` | `0x20000` | Boot 区 128 KB |
 | `BOOT_FLASH_APP_SIZE` | `0x20000` | App 分区 128 KB |
