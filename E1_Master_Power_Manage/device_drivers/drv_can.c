@@ -40,7 +40,7 @@
 
 typedef struct {
     drv_can_rx_callback_t rx_callback;
-    bool                  initialized;
+    bool initialized;
 } drv_can_ctx_t;
 
 /* Private constants ---------------------------------------------------------*/
@@ -148,9 +148,9 @@ drv_can_error_t drv_can_send(drv_can_channel_t ch, const drv_can_msg_t* msg)
     CAN_TxHeaderTypeDef tx = {
         .StdId = msg->is_extended ? 0 : msg->id,
         .ExtId = msg->is_extended ? msg->id : 0,
-        .IDE   = msg->is_extended ? CAN_ID_EXT : CAN_ID_STD,
-        .RTR   = CAN_RTR_DATA,
-        .DLC   = msg->dlc,
+        .IDE = msg->is_extended ? CAN_ID_EXT : CAN_ID_STD,
+        .RTR = CAN_RTR_DATA,
+        .DLC = msg->dlc,
         .TransmitGlobalTime = DISABLE,
     };
 
@@ -176,6 +176,15 @@ bool drv_can_tx_ready(drv_can_channel_t ch)
         return false;
     }
     return HAL_CAN_GetTxMailboxesFreeLevel(s_hcan[ch]) > 0;
+}
+
+bool drv_can_tx_all_done(drv_can_channel_t ch)
+{
+    if (ch >= DRV_CAN_CH_NUM || !s_ctx[ch].initialized) {
+        return true; /* 未初始化视作空闲 */
+    }
+    /* bxCAN 3 个 TX 邮箱全部空闲 = 所有已提交帧均已发出（TSR.TME 硬件置位） */
+    return HAL_CAN_GetTxMailboxesFreeLevel(s_hcan[ch]) == 3U;
 }
 
 /* ===== HAL 回调 ===== */
@@ -229,5 +238,41 @@ drv_can_error_t drv_can_register_rx_callback(drv_can_channel_t ch,
 
     s_ctx[ch].rx_callback = callback;
     DRV_CAN_LOG_I("CAN%u 接收回调已注册", (unsigned)ch + 1U);
+    return DRV_CAN_OK;
+}
+
+/* --- Bus-Off 检测 / 自恢复 --- */
+
+bool drv_can_is_bus_off(drv_can_channel_t ch)
+{
+    if (ch >= DRV_CAN_CH_NUM || !s_ctx[ch].initialized) {
+        return false;
+    }
+    /* bxCAN ESR.BOFF：内核已进入 Bus-Off 并离线 */
+    return (s_hcan[ch]->Instance->ESR & CAN_ESR_BOFF) != 0U;
+}
+
+drv_can_error_t drv_can_recover(drv_can_channel_t ch)
+{
+    if (ch >= DRV_CAN_CH_NUM || !s_ctx[ch].initialized) {
+        return DRV_CAN_ERROR_INVALID_PARAM;
+    }
+    if (!drv_can_is_bus_off(ch)) {
+        return DRV_CAN_OK;
+    }
+
+    /* Stop/Start 触发内核 128×11 隐性位恢复；滤波器硬件配置保留 */
+    if (HAL_CAN_Stop(s_hcan[ch]) != HAL_OK) {
+        return DRV_CAN_ERROR_UNINITIALIZED;
+    }
+    if (HAL_CAN_Start(s_hcan[ch]) != HAL_OK) {
+        return DRV_CAN_ERROR_UNINITIALIZED;
+    }
+    /* 重使能 RX FIFO0 中断（幂等），确保恢复后继续接收 */
+    if (HAL_CAN_ActivateNotification(s_hcan[ch], CAN_IT_RX_FIFO0_MSG_PENDING) != HAL_OK) {
+        return DRV_CAN_ERROR_UNINITIALIZED;
+    }
+
+    DRV_CAN_LOG_I("CAN%u 已从 Bus-Off 恢复", (unsigned)ch + 1U);
     return DRV_CAN_OK;
 }

@@ -12,6 +12,7 @@
  * 初始化硬件后进入主循环，运行 RS-485 DMA 收发任务。
  */
 
+#include "boot_task.h"
 #include "buzzer_task.h"
 #include "can_task.h"
 #include "drv_revision.h"
@@ -42,6 +43,39 @@
 #define APP_MAIN_LOG_I(...) ((void)0)
 #define APP_MAIN_LOG_D(...) ((void)0)
 #endif
+
+#if defined(E1_BUILD_BOOT)
+/* ===== Boot 镜像入口（E1_BUILD_BOOT 编译宏切换，见根 CMakeLists） ========== */
+
+int app_main(void)
+{
+    /* 系统节拍（延时/时间戳）——先于 log_init()，此处不可打印 */
+    delay_init();
+
+    /* 日志输出（UART DMA） */
+    log_task_init();
+
+    /* 状态指示：蓝色 LED 按升级状态闪烁（等待/传输/校验/重启） */
+    led_task_init();
+
+    APP_MAIN_LOG_I("==== E1_Master_Power_Manage Bootloader ====");
+
+    /* 启动决策：校验通过则跳转 App 分区，否则进入 CAN 升级接收 */
+    if (!boot_task_try_boot_app()) {
+        boot_task_init();
+    }
+
+    /* 主循环：所有周期性任务均由 sw_timer 驱动 */
+    for (;;) {
+        sw_timer_tick(millis());
+        sw_timer_task();
+    }
+
+    return 0;
+}
+
+#else
+/* ===== App 镜像入口（现有主控电源固件） =================================== */
 
 int app_main(void)
 {
@@ -88,3 +122,4 @@ int app_main(void)
 
     return 0;
 }
+#endif /* E1_BUILD_BOOT */

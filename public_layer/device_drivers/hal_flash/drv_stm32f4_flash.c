@@ -174,7 +174,7 @@ static hal_flash_err_t f4_write(uint32_t offset, const uint8_t* buf, size_t size
     uint32_t addr = FLASH_BASE_ADDR + offset;
     const uint8_t* src = buf;
 
-    FLASH_LOG_I("Write: addr=0x%08lX, size=%lu",
+    FLASH_LOG_D("Write: addr=0x%08lX, size=%lu",
         (unsigned long)addr, (unsigned long)size);
 
     HAL_FLASH_Unlock();

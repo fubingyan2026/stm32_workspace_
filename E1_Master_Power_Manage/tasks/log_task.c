@@ -93,6 +93,60 @@ void log_task_init(void)
         (unsigned)LOG_TASK_PERIOD_MS);
 }
 
+void log_task_flush(void)
+{
+    uint8_t buf[LOG_TASK_TX_BUF_SIZE];
+
+    /* 1) 把 log 缓冲全部搬移到输出后端（UART 非阻塞发送前先等上一段 DMA 空闲） */
+    for (uint32_t guard = 0U; guard < 256U; guard++) {
+        const uint32_t pending = log_tx_len();
+        if (pending == 0U) {
+            break;
+        }
+        const uint32_t len = (pending > sizeof(buf)) ? sizeof(buf) : pending;
+
+        switch (s_output_mode) {
+        case LOG_OUTPUT_NONE:
+            (void)log_tx_get(buf, len); /* 丢弃 */
+            break;
+        case LOG_OUTPUT_RTT: {
+            const uint32_t actual = log_tx_get(buf, len);
+            if (actual > 0U) {
+                SEGGER_RTT_Write(0, buf, actual);
+            }
+            break;
+        }
+        case LOG_OUTPUT_UART:
+        default: {
+            /* 等上一段 DMA 空闲（有界等待），避免非阻塞发送被丢弃 */
+            const uint32_t t0 = millis();
+            while (drv_log_uart_is_tx_busy()) {
+                if ((uint32_t)(millis() - t0) > 100U) {
+                    break;
+                }
+            }
+            if (!drv_log_uart_is_tx_busy()) {
+                const uint32_t actual = log_tx_get(buf, len);
+                if (actual > 0U) {
+                    drv_log_uart_send(buf, actual);
+                }
+            }
+            break;
+        }
+        }
+    }
+
+    /* 2) 等最后一段 UART DMA 传输完成（有界等待，UART 波特率 115200 下 256B ≈ 22ms） */
+    {
+        const uint32_t t0 = millis();
+        while (drv_log_uart_is_tx_busy()) {
+            if ((uint32_t)(millis() - t0) > 200U) {
+                break;
+            }
+        }
+    }
+}
+
 /* Private functions ---------------------------------------------------------*/
 
 /**

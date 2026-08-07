@@ -15,6 +15,7 @@
 #include "drv_can.h"
 #include "drv_systick.h"
 #include "log.h"
+#include "srv_boot_ctrl.h"
 #include "srv_can_dual.h"
 #include "srv_can_mst.h"
 #include "srv_can_slv.h"
@@ -52,6 +53,11 @@
 /** @brief CAN TX/RX 日志限频窗口 (ms)：总线繁忙时防止刷屏 */
 #define CAN_TASK_ERR_LOG_PERIOD_MS (1000U)
 
+/** @brief 进 boot 命令帧（主机 → 板卡）：触发 App 置 upgrade_flag 并复位进入升级模式 */
+#define BOOT_REQUEST_CAN_ID (0x003U)
+#define BOOT_REQUEST_LEN (1U)
+#define BOOT_REQUEST_MAGIC (0x01U)
+
 /* Private variables ---------------------------------------------------------*/
 
 static sw_timer_t s_timer;
@@ -62,6 +68,9 @@ static uint32_t s_rx_log_ts;
 
 /** @brief 当前从板控制状态（由外部通过 can_task_set_slave_ctrl 设置） */
 static srv_can_slv_ctrl_t s_slave_ctrl;
+
+/** @brief 收到 0x003 进 boot 命令标志（ISR 置位，主循环 can_timer_cb 消费） */
+static volatile bool s_enter_boot_requested;
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -129,6 +138,16 @@ static void can_timer_cb(void* user_data)
 {
     (void)user_data;
 
+    /* 消费进 boot 请求（主循环上下文；request_boot 涉及 Flash 写 + 复位，不能放 ISR） */
+    if (s_enter_boot_requested) {
+        s_enter_boot_requested = false;
+        CAN_TASK_LOG_W("收到 bootloader 请求,准备调转");
+
+        if (srv_boot_ctrl_request_boot() != SRV_BOOT_CTRL_OK) {
+            CAN_TASK_LOG_E("进入 bootloader 请求失败");
+        }
+    }
+
     srv_can_mst_task();
     srv_can_slv_task();
     srv_device_monitor_step();
@@ -190,6 +209,15 @@ static void can_rx_callback(drv_can_channel_t ch, const drv_can_msg_t* msg)
     if ((uint32_t)(now_ms - s_rx_log_ts) >= CAN_TASK_ERR_LOG_PERIOD_MS) {
         s_rx_log_ts = now_ms;
         CAN_TASK_LOG_D("CAN RX: id=0x%03X dlc=%u", (unsigned)msg->id, (unsigned)msg->dlc);
+    }
+
+    /* 进 boot 命令（0x003, 载荷首字节 0x01）：仅置标志，由主循环 can_timer_cb 消费。
+     * dlc 放宽为 >=1（≥ BOOT_REQUEST_LEN）：上位机可能按 1 字节或 8 字节填充发送，
+     * 只要首字节为 magic 即触发。 */
+    if (msg->id == BOOT_REQUEST_CAN_ID && msg->dlc >= BOOT_REQUEST_LEN
+        && msg->data[0] == BOOT_REQUEST_MAGIC) {
+        s_enter_boot_requested = true;
+        return;
     }
 
     /* 主机控制指令解析（0x001, len=7） */

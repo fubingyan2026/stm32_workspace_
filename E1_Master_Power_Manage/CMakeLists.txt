@@ -31,10 +31,18 @@ message("Build type: " ${CMAKE_BUILD_TYPE})
 # Enable CMake support for ASM and C languages
 enable_language(C ASM)
 
-# Create an executable object type
+# ==============================================================================
+# 双镜像目标
+#   - ${CMAKE_PROJECT_NAME} : App 镜像（主控电源固件，链接于 0x08020000 分区）
+#   - E1_Boot               : Boot 镜像（启动决策 + CAN 升级接收，链接于 0x08000000）
+# 分区布局见 docs/boot_upgrade.md。
+# ==============================================================================
 add_executable(${CMAKE_PROJECT_NAME})
 
-# Add STM32CubeMX generated sources
+set(E1_BOOT_TARGET E1_Boot)
+add_executable(${E1_BOOT_TARGET})
+
+# Add STM32CubeMX generated sources (attach 到 App 与 Boot 两个目标)
 add_subdirectory(cmake/stm32cubemx)
 
 # Add middleware (platform-independent static library via public_layer junction)
@@ -53,7 +61,11 @@ aux_source_directory(${CMAKE_SOURCE_DIR}/../public_layer/device_drivers/hal_flas
 aux_source_directory(${CMAKE_SOURCE_DIR}/service SERVICE)
 aux_source_directory(${CMAKE_SOURCE_DIR}/applications APP)
 
-# Add sources to executable
+# ============================ App 目标 =====================================
+# Boot 任务/服务仅编译进 Boot 镜像：从 App 源列表中排除 boot_task.c
+# （service/boot/ 为子目录，aux_source_directory 非递归，自动排除）
+list(REMOVE_ITEM TASKS ${CMAKE_SOURCE_DIR}/tasks/boot_task.c)
+
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     ${DEV_DRV}
@@ -80,10 +92,16 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # mpaland_printf: STM32F407 FPv4-SP 无硬件双精度，禁用浮点输出
     PRINTF_DISABLE_SUPPORT_FLOAT
     PRINTF_DISABLE_SUPPORT_EXPONENTIAL
+    # App 向量表重定位到 0x08020000（system_stm32f4xx.c 于 SystemInit 内设置 SCB->VTOR）
+    USER_VECT_TAB_ADDRESS
+    VECT_TAB_OFFSET=0x00020000U
 )
 
-# Remove wrong libob.a library dependency when using cpp files
-list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
+# App 链接脚本与 map（App 分区 0x08020000）
+target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
+    -Wl,-T,${CMAKE_SOURCE_DIR}/STM32F407XX_FLASH.ld
+    -Wl,-Map=${CMAKE_PROJECT_NAME}.map
+)
 
 # Add linked libraries
 target_link_libraries(${CMAKE_PROJECT_NAME}
@@ -93,11 +111,69 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
     # Add user defined libraries
 )
 
-# 生成Bin文件
+# 生成 App Bin/Hex
 add_custom_command(
-        TARGET ${CMAKE_PROJECT_NAME}
-        POST_BUILD
-        COMMAND ${CMAKE_OBJCOPY} ${CMAKE_PROJECT_NAME}.elf -Oihex ${CMAKE_PROJECT_NAME}.hex
-        COMMAND ${CMAKE_OBJCOPY} ${CMAKE_PROJECT_NAME}.elf -Obinary ${CMAKE_PROJECT_NAME}.bin
-        COMMENT "Generating hex || bin file for STM32"
+    TARGET ${CMAKE_PROJECT_NAME}
+    POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} $<TARGET_FILE:${CMAKE_PROJECT_NAME}> -Oihex $<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>/${CMAKE_PROJECT_NAME}.hex
+    COMMAND ${CMAKE_OBJCOPY} $<TARGET_FILE:${CMAKE_PROJECT_NAME}> -Obinary $<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>/${CMAKE_PROJECT_NAME}.bin
+    COMMENT "Generating hex || bin file for App"
+)
+
+# ============================ Boot 目标 ====================================
+# Boot 专属源（显式列表：升级服务 + boot 任务 + 最小驱动集；Core 由 stm32cubemx 挂接）
+set(BOOT_SOURCES
+    ${CMAKE_SOURCE_DIR}/service/boot/boot_transport.c
+    ${CMAKE_SOURCE_DIR}/service/boot/boot_fsm.c
+    ${CMAKE_SOURCE_DIR}/service/boot/boot_flash.c
+    ${CMAKE_SOURCE_DIR}/service/srv_signal.c
+    ${CMAKE_SOURCE_DIR}/tasks/boot_task.c
+    ${CMAKE_SOURCE_DIR}/tasks/app_main.c
+    ${CMAKE_SOURCE_DIR}/tasks/log_task.c
+    ${CMAKE_SOURCE_DIR}/tasks/led_task.c
+    ${CMAKE_SOURCE_DIR}/device_drivers/drv_systick.c
+    ${CMAKE_SOURCE_DIR}/device_drivers/drv_log_uart.c
+    ${CMAKE_SOURCE_DIR}/device_drivers/drv_can.c
+    ${CMAKE_SOURCE_DIR}/device_drivers/drv_led.c
+)
+
+target_sources(${E1_BOOT_TARGET} PRIVATE
+    ${BOOT_SOURCES}
+    ${DEV_DRV_HAL_FLASH}
+)
+
+target_include_directories(${E1_BOOT_TARGET} PRIVATE
+    tasks
+    device_drivers
+    service
+    service/boot
+    applications
+    ../public_layer/device_drivers/hal_flash
+)
+
+target_compile_definitions(${E1_BOOT_TARGET} PRIVATE
+    E1_BUILD_BOOT
+    HAL_FLASH_CHIP_STM32F4
+    PRINTF_DISABLE_SUPPORT_FLOAT
+    PRINTF_DISABLE_SUPPORT_EXPONENTIAL
+)
+
+# Boot 链接脚本与 map（Boot 区 0x08000000）
+target_link_options(${E1_BOOT_TARGET} PRIVATE
+    -Wl,-T,${CMAKE_SOURCE_DIR}/STM32F407XX_BOOT.ld
+    -Wl,-Map=${E1_BOOT_TARGET}.map
+)
+
+target_link_libraries(${E1_BOOT_TARGET}
+    stm32cubemx
+    m_middlewares
+)
+
+# 生成 Boot Bin/Hex
+add_custom_command(
+    TARGET ${E1_BOOT_TARGET}
+    POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} $<TARGET_FILE:${E1_BOOT_TARGET}> -Oihex $<TARGET_FILE_DIR:${E1_BOOT_TARGET}>/${E1_BOOT_TARGET}.hex
+    COMMAND ${CMAKE_OBJCOPY} $<TARGET_FILE:${E1_BOOT_TARGET}> -Obinary $<TARGET_FILE_DIR:${E1_BOOT_TARGET}>/${E1_BOOT_TARGET}.bin
+    COMMENT "Generating hex || bin file for Boot"
 )

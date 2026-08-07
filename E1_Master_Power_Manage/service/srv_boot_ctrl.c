@@ -15,6 +15,8 @@
 #include "drv_systick.h"
 #include "hal_flash.h"
 #include "log.h"
+/* log_task_flush：跳转/复位前排空日志（跨层系统工具，服务层显式调用） */
+#include "log_task.h"
 #include "ring_storage.h"
 #include "ring_storage_port_hal.h"
 
@@ -65,8 +67,8 @@ typedef struct {
 
 /* Private constants ---------------------------------------------------------*/
 
-/** @brief BOOT 分区 Flash 几何（bootloader 共享分区，占位，可按固件布局调整） */
-#define SRV_BOOT_CTRL_START_ADDR (0x080C0000U) /* Flash 末尾扇区 10-11，128KB×2 */
+/** @brief BOOT 分区 Flash 几何（Metadata，扇区 7-8；与 boot_flash 共享同一区域与字节契约） */
+#define SRV_BOOT_CTRL_START_ADDR (0x08060000U) /* 扇区 7-8，128KB×2 */
 #define SRV_BOOT_CTRL_AREA_SIZE (0x00040000U) /* 256KB = 2×128KB */
 #define SRV_BOOT_CTRL_SECTOR_SIZE (RING_STORAGE_SECTOR_128K)
 
@@ -167,6 +169,8 @@ srv_boot_ctrl_error_t srv_boot_ctrl_request_boot(void)
     }
 
     SRV_BOOT_CTRL_LOG_I("请求进入 bootloader，系统复位...");
+    /* 复位前排空日志（UART DMA 异步），确保"请求进入 bootloader"已真正发出 */
+    log_task_flush();
     drv_system_reset();
 
     /* 复位后不可达 */

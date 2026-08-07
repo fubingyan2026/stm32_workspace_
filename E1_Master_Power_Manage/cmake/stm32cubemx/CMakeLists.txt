@@ -31,12 +31,15 @@ set(MX_Application_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/stm32f4xx_hal_msp.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/sysmem.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/syscalls.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/system_stm32f4xx.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../startup_stm32f407xx.s
 )
 
 # STM32 HAL/LL Drivers
+# 注：system_stm32f4xx.c 置于 MX_Application_Src（每目标独立编译），
+#     App 目标以 USER_VECT_TAB_ADDRESS + VECT_TAB_OFFSET 重定位向量表，
+#     Boot 目标不定义该宏保持 0x08000000；若放在共享 STM32_Drivers 则宏不生效。
 set(STM32_Drivers_Src
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/system_stm32f4xx.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_adc.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_adc_ex.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_adc.c
@@ -85,17 +88,19 @@ target_sources(STM32_Drivers PRIVATE ${STM32_Drivers_Src})
 target_link_libraries(STM32_Drivers PUBLIC stm32cubemx)
 
 
-# Add STM32CubeMX generated application sources to the project
-target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${MX_Application_Src})
+# Attach CubeMX generated sources/libs to App 与 Boot 两个可执行目标。
+# ${E1_BOOT_TARGET} 由根 CMakeLists 定义；未定义时仅挂接 App 目标。
+set(MX_TARGETS ${CMAKE_PROJECT_NAME})
+if(DEFINED E1_BOOT_TARGET)
+    list(APPEND MX_TARGETS ${E1_BOOT_TARGET})
+endif()
 
-# Link directories setup
-target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE ${MX_LINK_DIRS})
-
-# Add libraries to the project
-target_link_libraries(${CMAKE_PROJECT_NAME} ${MX_LINK_LIBS})
-
-# Add the map file to the list of files to be removed with 'clean' target
-set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES ADDITIONAL_CLEAN_FILES ${CMAKE_PROJECT_NAME}.map)
+foreach(tgt IN LISTS MX_TARGETS)
+    target_sources(${tgt} PRIVATE ${MX_Application_Src})
+    target_link_directories(${tgt} PRIVATE ${MX_LINK_DIRS})
+    target_link_libraries(${tgt} ${MX_LINK_LIBS})
+    set_target_properties(${tgt} PROPERTIES ADDITIONAL_CLEAN_FILES ${tgt}.map)
+endforeach()
 
 # Validate that STM32CubeMX code is compatible with C standard
 if((CMAKE_C_STANDARD EQUAL 90) OR (CMAKE_C_STANDARD EQUAL 99))

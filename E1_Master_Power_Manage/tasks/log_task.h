@@ -30,6 +30,13 @@ extern "C" {
  */
 void log_task_init(void);
 
+/**
+ * @brief 排空日志缓冲并等待输出后端发送完成（UART DMA / RTT）
+ * @note  跳转 App / 系统复位前调用，确保最后的日志（如"跳转分区 X"、"请求进入 bootloader"）
+ *        已真正发出，不被跳转/复位打断。
+ */
+void log_task_flush(void);
+
 #ifdef __cplusplus
 }
 #endif

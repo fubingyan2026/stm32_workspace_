@@ -33,8 +33,8 @@
 
 /* Private constants ---------------------------------------------------------*/
 
-/** @brief 本分区 Flash 几何（APP 常用参数分区，占位，可按固件布局调整） */
-#define SRV_PARAM_STORE_START_ADDR (0x08080000U) /* 扇区 8-9，128KB×2 */
+/** @brief 本分区 Flash 几何（APP 常用参数分区，扇区 9-10，128KB×2） */
+#define SRV_PARAM_STORE_START_ADDR (0x080A0000U) /* 扇区 9-10，128KB×2 */
 #define SRV_PARAM_STORE_AREA_SIZE (0x00040000U) /* 256KB = 2×128KB */
 #define SRV_PARAM_STORE_SECTOR_SIZE (RING_STORAGE_SECTOR_128K)
 
