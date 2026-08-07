@@ -6,26 +6,22 @@
 
 /**
  * @file    led_task.h
- * @brief   LED 状态指示任务（sw_timer 驱动）
+ * @brief   运行 LED 状态指示任务（sw_timer 驱动）
  */
 
 #ifndef __LED_TASK_H
 #define __LED_TASK_H
 
-#include <stdint.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-void led_task_init(void);
-
 /**
- * @brief 启动 LED 编码闪烁
- * @param count    闪烁次数（0 = 无限循环）
- * @param cycle_ms 闪烁半周期 (ms)
+ * @brief 初始化运行 LED 任务
+ *
+ * 点亮运行 LED 并启动 sw_timer：正常运行常亮，升级期间闪烁。
  */
-void led_task_start_blink(uint16_t count, uint16_t cycle_ms);
+void led_task_init(void);
 
 #ifdef __cplusplus
 }

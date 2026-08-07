@@ -7,6 +7,11 @@
  *   BOOT 0x08000000 (128KB) / AppA 0x08020000 (128KB) / AppB 0x08040000 (128KB)
  *   Metadata 0x08060000 (256KB) —— 与 srv_boot_ctrl 共享同一区域与字节契约。
  * 封装 hal_flash，提供分区维度的擦除/写入/校验操作。
+ *
+ * 分区大小为板级可覆写宏（#ifndef 默认 F407 值）；其他工程通过编译定义传入本板布局。
+ * 单分区模式：编译定义 BOOT_SINGLE_PARTITION 后仅 App A 一个槽位，
+ *   Metadata 起始地址 = base + BOOT + APP（非 base + BOOT + APP*2）。
+ * 默认双分区（不定义 BOOT_SINGLE_PARTITION），E1_Master/F407 行为不变。
  */
 
 #ifndef __BOOT_FLASH_H
@@ -24,10 +29,16 @@ extern "C" {
 
 /* Exported constants --------------------------------------------------------*/
 
-/** 分区布局（F407，与 srv_boot_ctrl / srv_param_store 分区表一致） */
+/** 分区布局（默认 F407，与 srv_boot_ctrl / srv_param_store 分区表一致；板级可覆写） */
+#ifndef BOOT_FLASH_BOOT_SIZE
 #define BOOT_FLASH_BOOT_SIZE    0x20000U      /**< Bootloader: 128 KB (扇区 0-4) */
+#endif
+#ifndef BOOT_FLASH_APP_SIZE
 #define BOOT_FLASH_APP_SIZE     0x20000U      /**< App 分区:  128 KB (扇区 5 / 6) */
+#endif
+#ifndef BOOT_FLASH_META_SIZE
 #define BOOT_FLASH_META_SIZE    0x40000U      /**< Metadata: 256 KB (扇区 7-8, ring_storage ≥2 扇区) */
+#endif
 
 /** Metadata 魔数 */
 #define BOOT_METADATA_MAGIC     0x424F4F54U  /**< "BOOT" */
@@ -35,10 +46,14 @@ extern "C" {
 
 /* Exported types ------------------------------------------------------------*/
 
-/** 引导分区标识 */
+/** 引导分区标识
+ * 单分区模式（BOOT_SINGLE_PARTITION）：仅 BOOT_PARTITION_A。
+ * 默认双分区：A/B 两个槽位，升级写对侧，保留旧固件防砖。 */
 typedef enum {
     BOOT_PARTITION_A = 0U, /**< App A 分区 */
-    BOOT_PARTITION_B = 1U, /**< App B 分区 */
+#ifndef BOOT_SINGLE_PARTITION
+    BOOT_PARTITION_B = 1U, /**< App B 分区（双分区模式） */
+#endif
 } boot_partition_t;
 
 /** 引导 Metadata 结构体（字节契约与 srv_boot_ctrl.c 的 boot_metadata_t 完全一致，
@@ -148,6 +163,7 @@ boot_flash_error_t boot_flash_write_metadata(boot_flash_context_t* ctx,
 boot_flash_error_t boot_flash_compute_checksum(boot_flash_context_t* ctx,
     boot_partition_t partition, uint32_t size, uint32_t* checksum);
 
+#ifndef BOOT_SINGLE_PARTITION
 /**
  * @brief 将源分区镜像提升（拷贝）到 A 分区
  * @param ctx 上下文指针
@@ -156,9 +172,11 @@ boot_flash_error_t boot_flash_compute_checksum(boot_flash_context_t* ctx,
  * @return 操作结果
  * @note  App 固定链接于 A 分区（0x08020000），只能从 A 运行。Boot 判定活动分区为 B 时，
  *        需先把 B 镜像拷到 A 再从 A 启动；Boot 自身执行于 0x08000000 区，写 A 安全。
+ *        单分区模式不定义此函数（无 B→A 提升需求）。
  */
 boot_flash_error_t boot_flash_promote_to_a(boot_flash_context_t* ctx,
     boot_partition_t src, uint32_t size);
+#endif /* !BOOT_SINGLE_PARTITION */
 
 /**
  * @brief 获取分区起始地址

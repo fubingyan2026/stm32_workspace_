@@ -23,7 +23,7 @@
 /* Private constants ---------------------------------------------------------*/
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
-#define BOOT_TASK_LOG_ENABLE 0
+#define BOOT_TASK_LOG_ENABLE 1
 
 #if BOOT_TASK_LOG_ENABLE
 #define BOOT_TASK_LOG_E(...) LOG_E("boot_task", __VA_ARGS__)
@@ -37,8 +37,11 @@
 #define BOOT_TASK_LOG_D(...) ((void)0)
 #endif
 
-/** 硬件兼容 ID（与上位机工具 hw_id 字段对应；G474 为 0x0001，本板取 0x0002 防误刷） */
+/** 硬件兼容 ID（与上位机工具 hw_id 字段对应；板级可覆写）。
+ * 默认 F407/E1_Master 取 0x0002；G474 等经编译定义 BOOT_HW_COMPAT_ID=0x0001U 覆盖。 */
+#ifndef BOOT_HW_COMPAT_ID
 #define BOOT_HW_COMPAT_ID (0x0002U)
+#endif
 
 /** CAN RX 消息队列容量 */
 #define BOOT_MSG_FIFO_SIZE 256U
@@ -56,11 +59,22 @@
 #define BOOT_IDLE_WARN_MS (6000U) /**< 等待超时警告 */
 #define BOOT_IDLE_ROLLBACK_MS (12000U) /**< 等待超时回滚（仅当存在有效上个版本） */
 
-/** App 分区 Flash 地址范围（用于跳转前向量表合法性校验） */
+/** App 分区 Flash 地址范围（用于跳转前向量表合法性校验；板级可覆写）。
+ * 默认 F407：AppA 0x08020000 + 128KB；G474 等经编译定义覆盖（如
+ * BOOT_APP_FLASH_START=0x08010000U / BOOT_APP_FLASH_END=0x08016000U）。 */
+#ifndef BOOT_APP_FLASH_START
 #define BOOT_APP_FLASH_START (0x08020000U)
+#endif
+#ifndef BOOT_APP_FLASH_END
 #define BOOT_APP_FLASH_END (0x08040000U) /* 分区起始 + 128KB */
+#endif
+/** RAM 范围（向量表 SP 校验；默认 128KB，F407 与 G474 相同） */
+#ifndef BOOT_RAM_START
 #define BOOT_RAM_START (0x20000000U)
+#endif
+#ifndef BOOT_RAM_END
 #define BOOT_RAM_END (0x20020000U) /* 128KB */
+#endif
 
 /* Private variables ---------------------------------------------------------*/
 
@@ -151,9 +165,13 @@ bool boot_task_try_boot_app(void)
 
     /* 校验和验证 App 分区 */
     uint32_t calculated_checksum;
+#ifdef BOOT_SINGLE_PARTITION
+    const boot_partition_t part = BOOT_PARTITION_A;
+#else
     boot_partition_t part = (meta.boot_partition == BOOT_PARTITION_A)
         ? BOOT_PARTITION_A
         : BOOT_PARTITION_B;
+#endif
     if (boot_flash_compute_checksum(&s_flash_ctx, part,
             meta.fw_size, &calculated_checksum)
         != BOOT_FLASH_OK) {
@@ -168,6 +186,7 @@ bool boot_task_try_boot_app(void)
         return false;
     }
 
+#ifndef BOOT_SINGLE_PARTITION
     /* App 固定链接于 A（0x08020000），只能从 A 运行：
      * 活动分区为 B 时先提升（拷贝 B→A），再从 A 启动——否则跳 B 的内嵌 PC 会落到 A 的
      * 旧地址，取指失败进 Default_Handler。 */
@@ -184,6 +203,7 @@ bool boot_task_try_boot_app(void)
         part = BOOT_PARTITION_A;
         BOOT_TASK_LOG_I("提升完成，从 A 分区启动");
     }
+#endif /* !BOOT_SINGLE_PARTITION */
 
     /* 跳转到 App */
     BOOT_TASK_LOG_I("校验和验证通过，跳转到分区 %c, 版本=%u",
@@ -206,6 +226,17 @@ bool boot_task_try_boot_app(void)
     /* 跳转前排空日志（UART DMA 异步，不 flush 则最后几句日志在跳转瞬间被打断丢失） */
     log_task_flush();
 
+/* 恢复外设和时钟到默认状态 */
+{
+#include "usart.h"
+    /* 关闭 SysTick */
+    SysTick->CTRL = 0;
+    SysTick->LOAD = 0;
+    SysTick->VAL = 0;
+    HAL_UART_DeInit(&huart1);
+    HAL_RCC_DeInit();
+    HAL_DeInit();
+}
     /* 关闭全局中断，设置 MSP 并跳转（App 启动流程会重设 SCB->VTOR） */
     __disable_irq();
     __set_MSP(app_sp);
@@ -245,13 +276,17 @@ void boot_task_init(void)
     }
     BOOT_TASK_LOG_D("Flash 管理器已初始化");
 
-    /* 读取 Metadata，确定目标升级分区（A/B 切换） */
+    /* 读取 Metadata，确定目标升级分区 */
     {
+#ifdef BOOT_SINGLE_PARTITION
+        s_target_partition = BOOT_PARTITION_A;
+        BOOT_TASK_LOG_I("单分区模式, 目标分区 A");
+#else
         boot_metadata_t meta;
         boot_flash_read_metadata(&s_flash_ctx, &meta);
         /* “有有效 App” 以 fw_size>0 判定（当前分区确有固件），不能用 upgrade_flag：
          * 0x003 触发的升级会话 upgrade_flag=1，但对侧旧分区仍有效，应写相反分区；
-         * 反之全新板（fw_size=0）upgrade_flag=0 也不该误判为“有 App”。 */
+         * 反之全新板（fw_size=0）upgrade_flag=0 也不该误判为”有 App”。 */
         if (meta.magic == BOOT_METADATA_MAGIC && meta.fw_size > 0U
             && meta.boot_partition <= BOOT_PARTITION_B) {
             /* 有有效 App → 升级到相反分区 */
@@ -265,6 +300,7 @@ void boot_task_init(void)
             s_target_partition = BOOT_PARTITION_A;
             BOOT_TASK_LOG_I("无有效 App, 目标分区 A");
         }
+#endif /* !BOOT_SINGLE_PARTITION */
     }
 
     /* 初始化 CAN（E1 驱动无参，内部句柄表） */
@@ -572,13 +608,22 @@ static void boot_rollback_to_prev(void)
 static bool boot_partition_is_valid(const boot_metadata_t* meta)
 {
     if (meta->magic != BOOT_METADATA_MAGIC || meta->fw_size == 0U
+#ifdef BOOT_SINGLE_PARTITION
+        || meta->boot_partition != BOOT_PARTITION_A) {
+#else
         || meta->boot_partition > BOOT_PARTITION_B) {
+#endif
         return false;
     }
 
+#ifdef BOOT_SINGLE_PARTITION
+    const boot_partition_t part = BOOT_PARTITION_A;
+    (void)meta;
+#else
     const boot_partition_t part = (meta->boot_partition == BOOT_PARTITION_A)
         ? BOOT_PARTITION_A
         : BOOT_PARTITION_B;
+#endif
 
     /* 整包 32-bit 累加和比对 */
     uint32_t calc = 0U;

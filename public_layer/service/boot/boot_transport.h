@@ -24,9 +24,14 @@ extern "C" {
 
 /* Exported constants --------------------------------------------------------*/
 
-/** CAN ID 定义 */
+/** CAN ID 定义（板级可覆写，默认 0x701/0x702；需与上位机工具 Host ID 一致，
+ *  其他工程经编译定义 BOOT_CAN_ID_HOST_TO_NODE / BOOT_CAN_ID_NODE_TO_HOST 覆盖） */
+#ifndef BOOT_CAN_ID_HOST_TO_NODE
 #define BOOT_CAN_ID_HOST_TO_NODE  0x701U   /**< 上位机 → 板卡 */
+#endif
+#ifndef BOOT_CAN_ID_NODE_TO_HOST
 #define BOOT_CAN_ID_NODE_TO_HOST  0x702U   /**< 板卡 → 上位机 */
+#endif
 
 /** 支持的离散帧物理长度集合（经典 bxCAN 仅 8 字节） */
 #define BOOT_FRAME_SIZE_CLASSIC_CAN  8U     /**< 经典 CAN：8 字节 */

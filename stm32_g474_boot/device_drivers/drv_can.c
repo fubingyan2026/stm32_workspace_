@@ -9,6 +9,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "drv_can.h"
 
+#include "fdcan.h" /* extern hfdcan1：drv_can_init(void) 无参初始化使用 */
 #include "main.h"
 
 #include <string.h>
@@ -68,7 +69,7 @@ static drv_can_dlc_t dlc_code_to_bytes(uint32_t code)
 
 /* --- 初始化 / 生命周期 --- */
 
-drv_can_error_t drv_can_init(drv_can_channel_t ch, void* hcan)
+drv_can_error_t drv_can_init_channel(drv_can_channel_t ch, void* hcan)
 {
     if (ch >= DRV_CAN_CH_NUM || !hcan) {
         return DRV_CAN_ERROR_INVALID_PARAM;
@@ -103,6 +104,11 @@ drv_can_error_t drv_can_init(drv_can_channel_t ch, void* hcan)
 
     ctx->initialized = true;
     return DRV_CAN_OK;
+}
+
+drv_can_error_t drv_can_init(void)
+{
+    return drv_can_init_channel(DRV_CAN_CH_1, &hfdcan1);
 }
 
 void drv_can_deinit(drv_can_channel_t ch)
@@ -172,6 +178,14 @@ bool drv_can_tx_ready(drv_can_channel_t ch)
         return false;
     }
     return HAL_FDCAN_GetTxFifoFreeLevel(s_ctx[ch].hfdcan) > 0;
+}
+
+bool drv_can_tx_all_done(drv_can_channel_t ch)
+{
+    if (ch >= DRV_CAN_CH_NUM || !s_ctx[ch].initialized) {
+        return true; /* 未初始化视作无在途帧 */
+    }
+    return HAL_FDCAN_GetTxFifoFreeLevel(s_ctx[ch].hfdcan) == 3U;
 }
 
 /* ===== HAL 回调 ===== */

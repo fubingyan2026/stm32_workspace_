@@ -88,11 +88,19 @@ typedef void (*drv_can_rx_callback_t)(drv_can_channel_t ch, const drv_can_msg_t*
 /* --- 初始化 / 生命周期 --- */
 
 /**
- * @brief 初始化 CAN 通道
+ * @brief 初始化 CAN 通道（指定句柄）
  * @param ch   通道号
  * @param hcan HAL 句柄 (FDCAN_HandleTypeDef*)，CubeMX 生成的 &hfdcan1/2
  */
-drv_can_error_t drv_can_init(drv_can_channel_t ch, void* hcan);
+drv_can_error_t drv_can_init_channel(drv_can_channel_t ch, void* hcan);
+
+/**
+ * @brief 初始化 CAN1（无参，boot/升级栈使用）
+ *
+ * 与 public_layer boot_task.c 的 drv_can_init() 调用契约一致：
+ * 内部使用 CubeMX 全局句柄 hfdcan1 初始化 DRV_CAN_CH_1。
+ */
+drv_can_error_t drv_can_init(void);
 void drv_can_deinit(drv_can_channel_t ch);
 bool drv_can_is_initialized(drv_can_channel_t ch);
 
@@ -110,6 +118,15 @@ drv_can_error_t drv_can_send(drv_can_channel_t ch, const drv_can_msg_t* msg);
  * @return true=有空闲邮箱
  */
 bool drv_can_tx_ready(drv_can_channel_t ch);
+
+/**
+ * @brief 查询 TX FIFO 是否全部发送完成（3 个槽位全空闲）
+ * @param ch 通道号
+ * @return true=所有已提交帧均发出（或未初始化）
+ * @note  与 E1_Master drv_can_tx_all_done() 语义一致：FDCAN TX FIFO 深度固定为 3，
+ *        3 个槽位全空闲即表示无在途帧，用于升级 REBOOT 前排空 ACK。
+ */
+bool drv_can_tx_all_done(drv_can_channel_t ch);
 
 /* --- 接收回调 --- */
 

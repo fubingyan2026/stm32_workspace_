@@ -163,6 +163,9 @@ target_compile_definitions(${E1_BOOT_TARGET} PRIVATE
     HAL_FLASH_CHIP_STM32F4
     PRINTF_DISABLE_SUPPORT_FLOAT
     PRINTF_DISABLE_SUPPORT_EXPONENTIAL
+    # F407 非均匀扇区，Metadata 区位于 128KB 扇区；覆写共享 boot_flash.c 的默认扇区大小
+    BOOT_META_SECTOR_SIZE=RING_STORAGE_SECTOR_128K
+    BOOT_SINGLE_PARTITION
 )
 
 # Boot 链接脚本与 map（Boot 区 0x08000000）

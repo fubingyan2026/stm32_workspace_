@@ -34,7 +34,7 @@ The STM32G474 has 128 KB of internal flash. The linker script (`STM32G474XX_FLAS
 | App B | `0x08016000` | 24 KB | Alternate firmware slot |
 | Metadata | `0x0801C000` | 16 KB | Managed via `ring_storage` KV; stores `boot_metadata_t` |
 
-> **Note:** Sizes are defined in [`boot_flash.h`](service/boot/boot_flash.h#L25-L27): `BOOT_FLASH_BOOT_SIZE = 0x10000`, `BOOT_FLASH_APP_SIZE = 0x6000`, `BOOT_FLASH_META_SIZE = 0x4000`.
+> **Note:** Sizes are board-parameterized in the shared [`boot_flash.h`](../public_layer/service/boot/boot_flash.h) (`#ifndef`-guarded, F407 defaults). This project's G474 values are set in [`CMakeLists.txt`](CMakeLists.txt): `BOOT_FLASH_BOOT_SIZE = 0x10000`, `BOOT_FLASH_APP_SIZE = 0x6000`, `BOOT_FLASH_META_SIZE = 0x4000`.
 
 **Linker script note:** [`STM32G474XX_FLASH.ld`](STM32G474XX_FLASH.ld) maps `FLASH` as 64 KB (`LENGTH = 64K`), matching the bootloader region. Do not enlarge the linker FLASH region without understanding the partition boundary.
 
@@ -47,10 +47,9 @@ The flash driver (`drv_stm32g4_flash`) auto-detects single-bank (4 KB pages) vs.
 | `Core/` | CubeMX **generated** | HAL init, `main.c`, peripheral config (`gpio.c`, `fdcan.c`, `spi.c`, etc.). Contains `USER CODE BEGIN`/`END` guards. |
 | `Drivers/` | **Vendor** (ST) | HAL + CMSIS. Do not modify. |
 | `cmake/stm32cubemx/` | CubeMX **generated** | CMake config for HAL sources. Regenerated with CubeMX. |
-| `tasks/` | **User** | Application glue layer. `app_main` lives here; each task owns `sw_timer` instances and wires drivers to services. |
-| `device_drivers/` | **User** | Hardware abstraction layer (CAN, log UART, systick). Direct HAL usage lives here. Flash HAL is **shared** — see `../public_layer/device_drivers/hal_flash`. |
-| `service/` | **User** | Domain logic layer (`boot/` FSM + flash + transport, `led` FSM). No HAL calls — receives callbacks for hardware access. **Warning:** `service/boot/` here is a *local copy* of the boot stack — see "Two copies of the boot stack". |
-| `../public_layer/` | **User (shared)** | Cross-project shared code. This project compiles `device_drivers/hal_flash/` and `m_middlewares/` from here; it also holds shared `service/boot/`, `service/srv_signal.{c,h}`, and `task/boot_task.{c,h}` that this project does **not** compile. |
+| `tasks/` | **User** | Application glue layer. `app_main` lives here; each task owns `sw_timer` instances and wires drivers to services. Only project-local tasks remain (`app_main`, `led_task`) — the boot/log tasks are shared. |
+| `device_drivers/` | **User** | Hardware abstraction layer (CAN, log UART, systick, LED). Direct HAL usage lives here. Flash HAL is **shared** — see `../public_layer/device_drivers/hal_flash`. |
+| `../public_layer/` | **User (shared)** | Cross-project shared code. This project compiles `device_drivers/hal_flash/`, `m_middlewares/`, the boot stack (`service/boot/*`, `task/boot_task`, `task/log_task`), and `service/srv_signal.{c,h}` (drives the running LED in `led_task`) from here. There is no local `service/` directory. |
 | `m_middlewares/public.h` | **User** | Central include umbrella under `extern "C"` — application code includes only this to get all middleware headers. |
 | `updata_tool/` | **User** | Host-side Python/PySide6 flashing tool that drives the bootloader over CAN (via CANable USB-CAN adapter). |
 | `stm32_g474_boot.ioc` | CubeMX **config** | Source of truth for pin mux, clocks, and peripheral assignment. |
@@ -63,16 +62,17 @@ This project is part of a larger workspace at `stm32_workspace_/`. **The git rep
 |---|---|
 | `stm32_g474_boot` | **This project** — G474 bootloader |
 | `E1_Hand_G474` | G474 dexterous hand firmware |
-| `E1_Master_Power_Manage` | Power management firmware. Its boot stack is the **shared** `public_layer` copy (see "Two copies of the boot stack") |
-| `public_layer/` | **Shared cross-project code** — `m_middlewares/`, `device_drivers/hal_flash/`, `service/boot/`, `service/srv_signal.{c,h}`, `task/boot_task.{c,h}` |
+| `E1_Master_Power_Manage` | Power management firmware (F407). Shares the same `public_layer` boot stack, parameterized for its layout. |
+| `public_layer/` | **Shared cross-project code** — `m_middlewares/`, `device_drivers/hal_flash/` (incl. `ring_storage_port_hal.h`), `service/boot/`, `service/srv_signal.{c,h}`, `task/boot_task.{c,h}`, `task/log_task.{c,h}` |
 
 ### Shared middleware pattern
 
-Shared code lives in `../public_layer/` (not locally). This project's `CMakeLists.txt` consumes it two ways:
+Shared code lives in `../public_layer/` (not locally). This project's `CMakeLists.txt` consumes it three ways:
 - `m_middlewares/` as a static library via `add_subdirectory(../public_layer/m_middlewares m_middlewares)` — built once per project.
 - `device_drivers/hal_flash/` via an explicit `aux_source_directory(../public_layer/device_drivers/hal_flash ...)`.
+- The **boot stack** (`service/boot/*.c`, `task/boot_task.c`, `task/log_task.c`) via an explicit source list.
 
-Modifications to `public_layer/m_middlewares/` and `public_layer/device_drivers/hal_flash/` affect all projects. **Do not duplicate these locally.** The one intentional exception is the boot stack — see the warning in "Two copies of the boot stack".
+Modifications to anything under `public_layer/` affect all projects. **Do not duplicate any of it locally.** The boot stack is board-parameterized: `boot_flash.h`/`boot_task.c` wrap their board-specific constants in `#ifndef` with F407 defaults, and each project passes its own values via `target_compile_definitions` (G474's are in [`CMakeLists.txt`](CMakeLists.txt) — partition sizes, `BOOT_HW_COMPAT_ID=0x0001U`, App flash range).
 
 ## Architecture
 
@@ -101,23 +101,23 @@ There is **no RTOS**. All periodic work runs through `sw_timer` — a cooperativ
 ### Four-layer architecture
 
 ```
-tasks/          → Glue: owns sw_timers, wires drivers to services
-service/        → Domain logic (boot FSM, flash ops, transport; LED FSM)
-device_drivers/ → HAL calls, DMA, interrupts, kfifo buffering
-m_middlewares/  → Reusable frameworks and algorithms
+tasks/            → Glue: owns sw_timers, wires drivers to services
+service/ (shared) → Domain logic (boot FSM, flash ops, transport; srv_signal) — lives in ../public_layer/service
+device_drivers/   → HAL calls, DMA, interrupts, kfifo buffering
+m_middlewares/    → Reusable frameworks and algorithms
 ```
 
 Tasks are thin — they own timers and stitch layers together. Services contain business logic but never touch HAL directly (they receive callback function pointers instead). Device drivers wrap HAL and expose `init()`/`deinit()`/`is_initialized()` lifecycles.
 
 ### Bootloader design
 
-This project implements a **dual A/B partition** firmware upgrade system over CAN/CAN FD. The protocol is fully specified in [`boot_protocol_spec.md`](boot_protocol_spec.md). The CAN FD DLC padding fix is documented in [`can_fd_dlc_padding_fix.md`](can_fd_dlc_padding_fix.md).
+This project implements a **dual A/B partition** firmware upgrade system over CAN. The protocol is fully specified in [`boot_protocol_spec.md`](boot_protocol_spec.md). The CAN FD DLC padding fix is documented in [`can_fd_dlc_padding_fix.md`](can_fd_dlc_padding_fix.md).
 
-> **⚠ Two copies of the boot stack — this project builds the LOCAL one.** The upgrade stack exists in two places that have diverged:
-> - **This project's build** compiles `service/boot/*.c` + `tasks/boot_task.c` (the original; App jump still commented out).
-> - `../public_layer/service/boot/` + `../public_layer/task/boot_task.c` are the **promoted** copy (commit `5814429`, forked from `E1_Master_Power_Manage`), with extra rollback logic (reboot-count, fallback partition) and an **enabled** App jump. `E1_Master_Power_Manage`'s CMake compiles these; **this project does not**.
->
-> Editing one copy has no effect on the other. Change boot behavior for this board in `service/boot/` + `tasks/boot_task.c` here. To unify, migrate this project's CMake to the `public_layer` copies (mirror `E1_Master_Power_Manage/CMakeLists.txt`).
+**The entire boot stack is shared** — it lives in `../public_layer/service/boot/` + `../public_layer/task/` and is compiled into this project (and `E1_Master_Power_Manage`) from the same sources. Do **not** create local copies. The shared code is board-parameterized via `#ifndef`-guarded macros whose defaults are the F407 layout; this project supplies its own values in [`CMakeLists.txt`](CMakeLists.txt):
+- `BOOT_FLASH_BOOT_SIZE=0x10000U`, `BOOT_FLASH_APP_SIZE=0x6000U`, `BOOT_FLASH_META_SIZE=0x4000U`
+- `BOOT_HW_COMPAT_ID=0x0001U`, `BOOT_APP_FLASH_START=0x08010000U`, `BOOT_APP_FLASH_END=0x08016000U`
+- `BOOT_CAN_ID_HOST_TO_NODE=0x701U`, `BOOT_CAN_ID_NODE_TO_HOST=0x702U` (can be changed per board/host)
+- Metadata sector defaults to `hal_flash_get_caps()->erase_size` (G4 uniform pages).
 
 **Protocol basics:**
 - CAN IDs `0x701` (Host→Node) and `0x702` (Node→Host) — Host ID configurable in the GUI, Node ID = Host ID + 1
@@ -125,15 +125,15 @@ This project implements a **dual A/B partition** firmware upgrade system over CA
 - 1 KB block checksums (16-bit additive) with checksum at fixed offset (Byte 2-3) to avoid CAN FD padding issues
 - Full-image verification: 32-bit additive checksum (`sum(fw_data) & 0xFFFFFFFF`) instead of CRC32
 - Commands: `START` (0x01), `METADATA` (0x02), `DATA` (0x03), `VERIFY` (0x04), `REBOOT` (0x05), `CANCEL` (0x06), `DATA_START` (0x07), `DATA_END` (0x08), `ACK` (0x10), `NACK` (0x11)
-- Support for both Classic CAN (8-byte frames) and CAN FD (up to 64-byte frames), frame size negotiated at START from the discrete set `{8, 12, 16, 20, 24, 32, 48, 64}`
+- **Classic CAN only on G474 today**: the shared `boot_transport` advertises only the 8-byte frame size (`{8}`) because it was adapted for the F407's bxCAN. The former local G474 transport negotiated the full CAN FD set `{8,12,16,20,24,32,48,64}`; restoring CAN FD means widening the shared transport's `s_supported_frame_sizes`.
 
-**Boot service layer (`service/boot/`):**
+**Boot service layer (`../public_layer/service/boot/`):**
 
 | Component | File | Role |
 |---|---|---|
 | Transport | `boot_transport.c` | Stateless frame encode/decode. Parses all 10 command types and builds ACK/NACK responses. |
 | FSM | `boot_fsm.c` | Upgrade state machine (5 states: IDLE → START → DATA_TRANSFER → VERIFY_PENDING → REBOOT_PENDING). Uses the `fsm` library's guard matrix for transition validation. Drives the upgrade through callbacks — never touches hardware directly. |
-| Flash | `boot_flash.c` | Partition-aware flash manager. Erases/writes/verifies App partitions (size defined by `BOOT_FLASH_APP_SIZE`), manages the metadata page, computes checksums over flash. Delegates to `drv_stm32g4_flash` (`ef_port_*` API). |
+| Flash | `boot_flash.c` | Partition-aware flash manager. Erases/writes/verifies App partitions (size defined by `BOOT_FLASH_APP_SIZE`), manages the metadata page, computes checksums over flash. Delegates to the shared `hal_flash` layer. |
 
 **Upgrade flow (4 phases):**
 1. **Handshake**: START (negotiate frame size, validate HW compat ID, erase target partition) → METADATA (32-bit additive checksum + version)
@@ -147,8 +147,11 @@ This project implements a **dual A/B partition** firmware upgrade system over CA
 
 **Boot decision (`boot_task_try_boot_app`):**
 1. Read metadata page at `0x0801C000` (start of the `BOOT_FLASH_META_SIZE` ring_storage area, computed as `boot_flash_base() + BOOT_FLASH_BOOT_SIZE + BOOT_FLASH_APP_SIZE * 2`)
-2. If `magic != 0x424F4F54` or `upgrade_flag != 0` or App 32-bit additive checksum mismatch → enter bootloader
-3. Otherwise → jump to App (currently **commented out** in this project's `tasks/boot_task.c` — the `__set_MSP` / function-pointer jump is disabled and the function returns `false`). The shared `public_layer/task/boot_task.c` implements the same jump **enabled**, plus rollback — use it as the reference for a production build.
+2. If `magic != 0x424F4F54` or `upgrade_flag != 0` or `fw_size == 0` or App 32-bit additive checksum mismatch → enter bootloader
+3. Otherwise → jump to App (**enabled** in the shared `../public_layer/task/boot_task.c`): promote partition B→A if active, validate the vector table (SP in RAM, PC within `[BOOT_APP_FLASH_START, BOOT_APP_FLASH_END)`), `log_task_flush()`, `__disable_irq()`, `__set_MSP()`, then jump.
+4. **Rollback safety** (shared task): after a failed/cancelled upgrade session (2 s idle) or a 12 s initial idle with a valid previous version, it clears `upgrade_flag` and resets back to the last-good App.
+
+> **⚠ App-link caveat:** the G474 App (`E1_Hand_G474`) currently links at flash base `0x08000000` with no VTOR relocation — it does **not** sit in partition A (`0x08010000`). The shared boot task's vector-table check would therefore reject it and the bootloader stays in upgrade mode. Boot-to-App stays inactive until the App is relinked to partition A with `USER_VECT_TAB_ADDRESS` set.
 
 **A/B swap logic:** New firmware always goes to the *opposite* partition of the currently-active App. The old partition is never erased until the new firmware is fully verified and committed, ensuring an unbrickable update.
 
@@ -182,7 +185,7 @@ Key design features:
 ### Middleware ecosystem
 
 - **`sw_timer`** — Software timers with priority levels. Single-shot, N-repeat, or infinite. Backbone of all periodic work.
-- **`fsm`** — Flat state machine with guard-matrix transition validation. Used by `service/boot/boot_fsm` and this project's `service/led`; the shared `srv_signal` (`../public_layer/service/srv_signal.c`) is the newer FSM-based LED/buzzer/GPIO output module evolved from `led`. Not included in `public.h` (include manually).
+- **`fsm`** — Flat state machine with guard-matrix transition validation. Used by the shared `../public_layer/service/boot/boot_fsm` and `../public_layer/service/srv_signal` (the FSM-based LED/buzzer/GPIO output module that `led_task` uses to drive the running LED). Not included in `public.h` (include manually).
 - **`event`** — ISR-safe 32-bit event flags for main-loop polling.
 - **`daemon`** — Task watchdog with online/offline callbacks and debounce.
 - **`kfifo`** — Lock-free power-of-2 ring buffer. Single-producer/single-consumer safe from ISR. Used for all DMA buffering.
@@ -240,7 +243,7 @@ Follow **`MODULE_CODING_GUIDE.md`** for all new code. Key rules:
 
 ## CubeMX code regeneration
 
-Re-generating from the `.ioc` file **overwrites** `Core/` and `cmake/stm32cubemx/`. Code inside `/* USER CODE BEGIN ... */` / `/* USER CODE END ... */` guards in `Core/Src/main.c` is preserved; everything outside is lost. Only add code between the guards in CubeMX-managed files. User directories (`tasks/`, `device_drivers/`, `m_middlewares/`, `service/`) are unaffected.
+Re-generating from the `.ioc` file **overwrites** `Core/` and `cmake/stm32cubemx/`. Code inside `/* USER CODE BEGIN ... */` / `/* USER CODE END ... */` guards in `Core/Src/main.c` is preserved; everything outside is lost. Only add code between the guards in CubeMX-managed files. User directories (`tasks/`, `device_drivers/`) and the shared `../public_layer/` are unaffected.
 
 ## Hardware
 

@@ -106,3 +106,14 @@ uint32_t millis(void)
 {
     return HAL_GetTick();
 }
+
+/**
+ * @brief 系统软复位
+ *
+ * 与 public_layer boot_task.c 的 drv_system_reset() 调用契约一致
+ * （升级 REBOOT / 失败回滚时复位到目标固件）。
+ */
+void drv_system_reset(void)
+{
+    NVIC_SystemReset();
+}

@@ -13,4 +13,6 @@ uint32_t micros(void);
 
 uint32_t millis(void);
 
+void drv_system_reset(void);
+
 #endif /* __DRV_SYSTICK_H */

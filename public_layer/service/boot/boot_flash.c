@@ -31,6 +31,30 @@
 #define BOOT_FLASH_LOG_D(...) ((void)0)
 #endif
 
+/* Private constants ---------------------------------------------------------*/
+
+/** 分区上界校验宏：单分区仅 BOOT_PARTITION_A，双分区为 BOOT_PARTITION_B */
+#ifdef BOOT_SINGLE_PARTITION
+#define BOOT_PARTITION_MAX (BOOT_PARTITION_A)
+#else
+#define BOOT_PARTITION_MAX (BOOT_PARTITION_B)
+#endif
+
+/** Metadata 区相对基址偏移（跳过 Boot + App 槽位区域） */
+#ifdef BOOT_SINGLE_PARTITION
+#define BOOT_META_OFFSET (BOOT_FLASH_BOOT_SIZE + BOOT_FLASH_APP_SIZE)
+#else
+#define BOOT_META_OFFSET (BOOT_FLASH_BOOT_SIZE + BOOT_FLASH_APP_SIZE * 2U)
+#endif
+
+/** Metadata 扇区大小（板级可覆写）。
+ * 默认取 hal_flash 擦除粒度（均匀页芯片，如 G4 单双 bank 为 4K/2K）；
+ * F407 扇区非均匀（16K/64K/128K），Metadata 区位于 128KB 扇区，需 E1_Master
+ * 经编译定义 BOOT_META_SECTOR_SIZE=RING_STORAGE_SECTOR_128K 覆写。 */
+#ifndef BOOT_META_SECTOR_SIZE
+#define BOOT_META_SECTOR_SIZE (hal_flash_get_caps()->erase_size)
+#endif
+
 /* Private function prototypes -----------------------------------------------*/
 static inline uint32_t boot_flash_base(void)
 {
@@ -47,9 +71,14 @@ static inline uint32_t boot_flash_abs_addr(boot_partition_t partition, uint32_t 
 uint32_t boot_flash_partition_addr(boot_partition_t partition)
 {
     const uint32_t base = boot_flash_base();
+#ifdef BOOT_SINGLE_PARTITION
+    (void)partition;
+    return base + BOOT_FLASH_BOOT_SIZE;
+#else
     return (partition == BOOT_PARTITION_A)
         ? (base + BOOT_FLASH_BOOT_SIZE)
         : (base + BOOT_FLASH_BOOT_SIZE + BOOT_FLASH_APP_SIZE);
+#endif
 }
 
 boot_flash_error_t boot_flash_init(boot_flash_context_t* ctx)
@@ -87,12 +116,11 @@ boot_flash_error_t boot_flash_init(boot_flash_context_t* ctx)
     {
         const ring_storage_config_t cfg = {
             .port              = ring_storage_port_hal(),
-            .start_addr        = hal_flash_get_caps()->addr
-                                 + BOOT_FLASH_BOOT_SIZE + BOOT_FLASH_APP_SIZE * 2U,
+            .start_addr        = hal_flash_get_caps()->addr + BOOT_META_OFFSET,
             .area_size         = BOOT_FLASH_META_SIZE,
-            /* F407 扇区非均匀（16K/64K/128K），Metadata 区位于 128KB 扇区，
-             * 不可用 caps.erase_size（默认 16KB），显式固定为 128KB。 */
-            .sector_size       = RING_STORAGE_SECTOR_128K,
+            /* 扇区大小板级可覆写（BOOT_META_SECTOR_SIZE）：G4 等均匀页芯片默认取
+             * caps.erase_size；F407 非均匀扇区（16K/64K/128K）由 E1_Master 覆写为 128KB。 */
+            .sector_size       = BOOT_META_SECTOR_SIZE,
             .write_gran        = (ring_storage_write_gran_t)hal_flash_get_caps()->write_gran,
             .frame_buffer      = ctx->meta_frame_buf,
             .frame_buffer_size = sizeof(ctx->meta_frame_buf),
@@ -144,7 +172,7 @@ boot_flash_error_t boot_flash_erase_partition(boot_flash_context_t* ctx,
     if (!ctx || !ctx->initialized) {
         return BOOT_FLASH_ERROR_UNINITIALIZED;
     }
-    if (partition > BOOT_PARTITION_B) {
+    if (partition > BOOT_PARTITION_MAX) {
         return BOOT_FLASH_ERROR_INVALID_PARAM;
     }
 
@@ -168,7 +196,7 @@ boot_flash_error_t boot_flash_write_block(boot_flash_context_t* ctx,
     if (!ctx || !ctx->initialized) {
         return BOOT_FLASH_ERROR_UNINITIALIZED;
     }
-    if (!data || len == 0U || partition > BOOT_PARTITION_B) {
+    if (!data || len == 0U || partition > BOOT_PARTITION_MAX) {
         return BOOT_FLASH_ERROR_INVALID_PARAM;
     }
     if ((offset + len) > BOOT_FLASH_APP_SIZE) {
@@ -196,7 +224,7 @@ boot_flash_error_t boot_flash_verify_block(boot_flash_context_t* ctx,
     if (!ctx || !ctx->initialized) {
         return BOOT_FLASH_ERROR_UNINITIALIZED;
     }
-    if (!data || len == 0U || partition > BOOT_PARTITION_B) {
+    if (!data || len == 0U || partition > BOOT_PARTITION_MAX) {
         return BOOT_FLASH_ERROR_INVALID_PARAM;
     }
 
@@ -283,7 +311,7 @@ boot_flash_error_t boot_flash_compute_checksum(boot_flash_context_t* ctx,
     if (!ctx || !ctx->initialized) {
         return BOOT_FLASH_ERROR_UNINITIALIZED;
     }
-    if (!checksum || partition > BOOT_PARTITION_B
+    if (!checksum || partition > BOOT_PARTITION_MAX
         || size > BOOT_FLASH_APP_SIZE) {
         return BOOT_FLASH_ERROR_INVALID_PARAM;
     }
@@ -309,13 +337,14 @@ boot_flash_error_t boot_flash_compute_checksum(boot_flash_context_t* ctx,
     return BOOT_FLASH_OK;
 }
 
+#ifndef BOOT_SINGLE_PARTITION
 boot_flash_error_t boot_flash_promote_to_a(boot_flash_context_t* ctx,
     boot_partition_t src, uint32_t size)
 {
     if (!ctx || !ctx->initialized) {
         return BOOT_FLASH_ERROR_UNINITIALIZED;
     }
-    if (src > BOOT_PARTITION_B || size == 0U || size > BOOT_FLASH_APP_SIZE) {
+    if (src > BOOT_PARTITION_MAX || size == 0U || size > BOOT_FLASH_APP_SIZE) {
         return BOOT_FLASH_ERROR_INVALID_PARAM;
     }
     if (src == BOOT_PARTITION_A) {
@@ -352,5 +381,6 @@ boot_flash_error_t boot_flash_promote_to_a(boot_flash_context_t* ctx,
         (src == BOOT_PARTITION_A) ? 'A' : 'B', (unsigned long)size);
     return BOOT_FLASH_OK;
 }
+#endif /* !BOOT_SINGLE_PARTITION */
 
 /* Private functions ---------------------------------------------------------*/

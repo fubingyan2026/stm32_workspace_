@@ -51,18 +51,26 @@ target_compile_definitions(m_middlewares PRIVATE
     PRINTF_DISABLE_SUPPORT_EXPONENTIAL
 )
 
-aux_source_directory(${CMAKE_SOURCE_DIR}/service SERVICE)
-aux_source_directory(${CMAKE_SOURCE_DIR}/service/boot SRV_BOOT)
+# Boot 服务/任务已上移 public_layer 共享（本工程不再维护本地副本）。
+# 板级分区参数经下方 target_compile_definitions 覆写为 G474 布局。
+set(PUBLIC_BOOT_SRCS
+    ${CMAKE_SOURCE_DIR}/../public_layer/service/boot/boot_transport.c
+    ${CMAKE_SOURCE_DIR}/../public_layer/service/boot/boot_fsm.c
+    ${CMAKE_SOURCE_DIR}/../public_layer/service/boot/boot_flash.c
+    ${CMAKE_SOURCE_DIR}/../public_layer/task/boot_task.c
+    ${CMAKE_SOURCE_DIR}/../public_layer/task/log_task.c
+    # 信号/输出控制模块（led_task 用其驱动运行 LED 灯效）
+    ${CMAKE_SOURCE_DIR}/../public_layer/service/srv_signal.c
+)
 
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     ${DEV_DRV}
     ${DEV_DRV_HAL_FLASH}
-    ${SERVICE}
 
     ${TASKS}
-    ${SRV_BOOT}
+    ${PUBLIC_BOOT_SRCS}
 
 )
 
@@ -70,19 +78,34 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
     tasks
-    tasks/boot_task
-
     service
-    service/boot
-
     device_drivers
     ../public_layer/device_drivers/hal_flash
+    ../public_layer/service
+    ../public_layer/service/boot
+    ../public_layer/task
 )
 
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined symbols
     HAL_FLASH_CHIP_STM32G4
+    # G474 板级分区布局（覆写 public_layer boot_flash.h 的 F407 默认值）
+    BOOT_FLASH_BOOT_SIZE=0x10000U
+    BOOT_FLASH_APP_SIZE=0xC000U
+    BOOT_FLASH_META_SIZE=0x4000U
+    # G474 硬件兼容 ID 与 App 向量表范围（覆写 public_layer boot_task.c 的 F407 默认值）
+    BOOT_HW_COMPAT_ID=0x0001U
+    BOOT_APP_FLASH_START=0x08010000U
+    BOOT_APP_FLASH_END=0x0801C000U
+    # G474 CAN 升级 ID（覆写 public_layer boot_transport.h 默认 0x701/0x702）
+    BOOT_CAN_ID_HOST_TO_NODE=0x701U
+    BOOT_CAN_ID_NODE_TO_HOST=0x702U
+    # 单分区模式：无 A/B 双槽位，App 仅一个分区（省 Flash，去 promote/分区切换逻辑）
+    BOOT_SINGLE_PARTITION
+    # 注：BOOT_META_SECTOR_SIZE 不在此处覆写——G4 扇区大小取决于运行时 DBANK 位
+    #（单 bank 4K / 双 bank 2K），默认取 hal_flash caps.erase_size 方始终正确；
+    # 该宏仍是 #ifndef 可覆写，如需强制固定值可在此添加。
 )
 
 # Remove wrong libob.a library dependency when using cpp files
