@@ -189,5 +189,5 @@ When the `.ioc` file is modified and code regenerated:
 
 > **Note**: `ring_storage` is wired into this app via `srv_param_store`/`srv_boot_ctrl` (`flash_task_init()` → `hal_flash_init` + partitioned ring_storage). `EasyFlash` is still **not wired** — only its code is compiled. When adding flash persistence, register KVs through `srv_param_store` rather than calling `hal_flash` directly.
 - **lwmem** (`.../Third_Party/lwmem/`) — lightweight dynamic memory allocator (full-featured mode: free/realloc).
-- **SEGGER RTT** (`.../Third_Party/SEGGER_RTT/`) — J-Link real-time transfer, used for debug output in [log_task.c](tasks/log_task.c).
+- **SEGGER RTT** (`.../Third_Party/SEGGER_RTT/`) — J-Link real-time transfer, used for debug output in [public_layer/task/log_task.c](../public_layer/task/log_task.c).
 - **ring_storage** (`.../Third_Party/ring_storage/`) — flash ring storage on top of `hal_flash` (see `ring_storage_port.c` in `public_layer/device_drivers/hal_flash/`).

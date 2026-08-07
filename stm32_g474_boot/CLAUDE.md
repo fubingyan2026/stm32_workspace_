@@ -48,33 +48,31 @@ The flash driver (`drv_stm32g4_flash`) auto-detects single-bank (4 KB pages) vs.
 | `Drivers/` | **Vendor** (ST) | HAL + CMSIS. Do not modify. |
 | `cmake/stm32cubemx/` | CubeMX **generated** | CMake config for HAL sources. Regenerated with CubeMX. |
 | `tasks/` | **User** | Application glue layer. `app_main` lives here; each task owns `sw_timer` instances and wires drivers to services. |
-| `device_drivers/` | **User** | Hardware abstraction layer (CAN, UART, Flash, LED, systick). Direct HAL usage lives here. |
-| `service/` | **User** | Domain logic layer (`boot/` FSM + flash + transport, `led` FSM). No HAL calls — receives callbacks for hardware access. |
-| `m_middlewares/` | **User** | Reusable frameworks (`sw_timer`, `fsm`, `event`, `daemon`, `msg_fifo`, `kfifo`, `clist`, `log`, `protocol_packer`/`parser`, `key_base`) and algorithms (PID, gimbal PID, MIT control, filters, math, PLL, CRC8/CRC16/CRC32). |
+| `device_drivers/` | **User** | Hardware abstraction layer (CAN, log UART, systick). Direct HAL usage lives here. Flash HAL is **shared** — see `../public_layer/device_drivers/hal_flash`. |
+| `service/` | **User** | Domain logic layer (`boot/` FSM + flash + transport, `led` FSM). No HAL calls — receives callbacks for hardware access. **Warning:** `service/boot/` here is a *local copy* of the boot stack — see "Two copies of the boot stack". |
+| `../public_layer/` | **User (shared)** | Cross-project shared code. This project compiles `device_drivers/hal_flash/` and `m_middlewares/` from here; it also holds shared `service/boot/`, `service/srv_signal.{c,h}`, and `task/boot_task.{c,h}` that this project does **not** compile. |
 | `m_middlewares/public.h` | **User** | Central include umbrella under `extern "C"` — application code includes only this to get all middleware headers. |
 | `updata_tool/` | **User** | Host-side Python/PySide6 flashing tool that drives the bootloader over CAN (via CANable USB-CAN adapter). |
 | `stm32_g474_boot.ioc` | CubeMX **config** | Source of truth for pin mux, clocks, and peripheral assignment. |
-| `.kilo/` | **AI-generated** | Planning directory managed by Claude Code. Do not commit or modify manually. |
 
 ## Multi-project workspace
 
-This project is part of a larger workspace at `stm32_workspace_/` with sibling projects:
+This project is part of a larger workspace at `stm32_workspace_/`. **The git repository root is `stm32_workspace_/` — one single repo spans all projects plus `public_layer/`** (there is no per-project `.git`). Commits can and do span multiple projects, and `git status` run inside this project also reports sibling-project changes.
 
 | Directory | Description |
 |---|---|
 | `stm32_g474_boot` | **This project** — G474 bootloader |
-| `stm32h7_ctrl` | H7 controller firmware (uses the same `hal_flash` abstraction, same middleware) |
 | `E1_Hand_G474` | G474 dexterous hand firmware |
-| `E1_Master_Power_Manage` | Power management firmware |
-| `public_layer/` | **Shared middleware** (`m_middlewares/`) — single source of truth used by all projects |
+| `E1_Master_Power_Manage` | Power management firmware. Its boot stack is the **shared** `public_layer` copy (see "Two copies of the boot stack") |
+| `public_layer/` | **Shared cross-project code** — `m_middlewares/`, `device_drivers/hal_flash/`, `service/boot/`, `service/srv_signal.{c,h}`, `task/boot_task.{c,h}` |
 
 ### Shared middleware pattern
 
-The middleware lives at `../public_layer/m_middlewares/` (not locally). The CMake build maps it via:
-```cmake
-add_subdirectory(../public_layer/m_middlewares m_middlewares)
-```
-This creates a junction reference — the static library `m_middlewares` is built once per project. Modifications to `public_layer/m_middlewares/` affect all projects. Do not duplicate middleware code locally.
+Shared code lives in `../public_layer/` (not locally). This project's `CMakeLists.txt` consumes it two ways:
+- `m_middlewares/` as a static library via `add_subdirectory(../public_layer/m_middlewares m_middlewares)` — built once per project.
+- `device_drivers/hal_flash/` via an explicit `aux_source_directory(../public_layer/device_drivers/hal_flash ...)`.
+
+Modifications to `public_layer/m_middlewares/` and `public_layer/device_drivers/hal_flash/` affect all projects. **Do not duplicate these locally.** The one intentional exception is the boot stack — see the warning in "Two copies of the boot stack".
 
 ## Architecture
 
@@ -115,6 +113,12 @@ Tasks are thin — they own timers and stitch layers together. Services contain 
 
 This project implements a **dual A/B partition** firmware upgrade system over CAN/CAN FD. The protocol is fully specified in [`boot_protocol_spec.md`](boot_protocol_spec.md). The CAN FD DLC padding fix is documented in [`can_fd_dlc_padding_fix.md`](can_fd_dlc_padding_fix.md).
 
+> **⚠ Two copies of the boot stack — this project builds the LOCAL one.** The upgrade stack exists in two places that have diverged:
+> - **This project's build** compiles `service/boot/*.c` + `tasks/boot_task.c` (the original; App jump still commented out).
+> - `../public_layer/service/boot/` + `../public_layer/task/boot_task.c` are the **promoted** copy (commit `5814429`, forked from `E1_Master_Power_Manage`), with extra rollback logic (reboot-count, fallback partition) and an **enabled** App jump. `E1_Master_Power_Manage`'s CMake compiles these; **this project does not**.
+>
+> Editing one copy has no effect on the other. Change boot behavior for this board in `service/boot/` + `tasks/boot_task.c` here. To unify, migrate this project's CMake to the `public_layer` copies (mirror `E1_Master_Power_Manage/CMakeLists.txt`).
+
 **Protocol basics:**
 - CAN IDs `0x701` (Host→Node) and `0x702` (Node→Host) — Host ID configurable in the GUI, Node ID = Host ID + 1
 - 2-byte header (Command + Sequence) per frame
@@ -142,31 +146,32 @@ This project implements a **dual A/B partition** firmware upgrade system over CA
 **CAN Bus-Off auto recovery:** The boot task polls `drv_can_is_bus_off()` every ~100 ms (via `sw_timer` tick counter). When Bus-Off is detected, `drv_can_recover()` is called to re-initialize the CAN controller, allowing recovery from cable faults without a hardware reset.
 
 **Boot decision (`boot_task_try_boot_app`):**
-1. Read metadata page at `0x0801B000` (computed as `BOOT_FLASH_APP_B_ADDR + BOOT_FLASH_APP_SIZE`)
+1. Read metadata page at `0x0801C000` (start of the `BOOT_FLASH_META_SIZE` ring_storage area, computed as `boot_flash_base() + BOOT_FLASH_BOOT_SIZE + BOOT_FLASH_APP_SIZE * 2`)
 2. If `magic != 0x424F4F54` or `upgrade_flag != 0` or App 32-bit additive checksum mismatch → enter bootloader
-3. Otherwise → jump to App (currently **commented out** — the jump assembly is disabled and the function returns `false`; a real production build should uncomment the `__set_MSP` / function-pointer jump in `boot_task.c:137-141`)
+3. Otherwise → jump to App (currently **commented out** in this project's `tasks/boot_task.c` — the `__set_MSP` / function-pointer jump is disabled and the function returns `false`). The shared `public_layer/task/boot_task.c` implements the same jump **enabled**, plus rollback — use it as the reference for a production build.
 
 **A/B swap logic:** New firmware always goes to the *opposite* partition of the currently-active App. The old partition is never erased until the new firmware is fully verified and committed, ensuring an unbrickable update.
 
 ### hal_flash abstraction layer
 
-The flash subsystem uses a multi-platform abstraction with compile-time chip selection:
+The flash subsystem uses a multi-platform abstraction with compile-time chip selection. It lives in the **shared layer** at `../public_layer/device_drivers/hal_flash/` and is compiled into this project via `CMakeLists.txt`:
 
 ```
-device_drivers/hal_flash/
+../public_layer/device_drivers/hal_flash/
 ├── hal_flash.h           → Public API (hal_flash_dev, read/write/erase/lock)
 ├── hal_flash_base.h      → Base types (hal_flash_ops_t, lock-depth)
 ├── hal_flash.c           → Singleton dispatch, lock management
 ├── drv_stm32g4_flash.c   → STM32G4 ops (64-bit program, dual-bank auto-detect)
-├── drv_stm32f4_flash.c   → STM32F4 ops
 ├── drv_stm32g4_flash.h   → G4 private types
+├── drv_stm32f4_flash.c   → STM32F4 ops
+├── drv_stm32h7_flash.c   → STM32H7 ops
 └── ring_storage_port.c   → Ring storage flash port (key-value storage on flash)
 ```
 
 Select chip at compile time via `target_compile_definitions`:
 - `HAL_FLASH_CHIP_STM32G4` (this project)
 - `HAL_FLASH_CHIP_STM32F4`
-- `HAL_FLASH_CHIP_STM32H7` (reserved, no driver yet)
+- `HAL_FLASH_CHIP_STM32H7` (driver exists — shared with other projects)
 
 Key design features:
 - **Singleton**: `hal_flash_dev()` returns the single device instance — no `dev` parameter in public API
@@ -177,7 +182,7 @@ Key design features:
 ### Middleware ecosystem
 
 - **`sw_timer`** — Software timers with priority levels. Single-shot, N-repeat, or infinite. Backbone of all periodic work.
-- **`fsm`** — Flat state machine with guard-matrix transition validation. Used by `service/led` and `service/boot/boot_fsm`. Not included in `public.h` (include manually).
+- **`fsm`** — Flat state machine with guard-matrix transition validation. Used by `service/boot/boot_fsm` and this project's `service/led`; the shared `srv_signal` (`../public_layer/service/srv_signal.c`) is the newer FSM-based LED/buzzer/GPIO output module evolved from `led`. Not included in `public.h` (include manually).
 - **`event`** — ISR-safe 32-bit event flags for main-loop polling.
 - **`daemon`** — Task watchdog with online/offline callbacks and debounce.
 - **`kfifo`** — Lock-free power-of-2 ring buffer. Single-producer/single-consumer safe from ISR. Used for all DMA buffering.
@@ -241,7 +246,7 @@ Re-generating from the `.ioc` file **overwrites** `Core/` and `cmake/stm32cubemx
 
 - **MCU**: STM32G474RBTx — Cortex-M4 with FPU, 128 KB Flash (`0x08000000`), 128 KB RAM (`0x20000000`)
 - **Clock**: 160 MHz from HSE + PLL (Voltage Scale 1 + Boost, Flash latency 4)
-- **Linker**: `STM32G474XX_FLASH.ld` — heap 512 B, stack 1024 B, newlib-nano, `--gc-sections`. Maps bootloader's 36 KB flash region.
+- **Linker**: `STM32G474XX_FLASH.ld` — heap 512 B, stack 1024 B, newlib-nano, `--gc-sections`. Maps the bootloader's 64 KB flash region (`LENGTH = 64K`).
 - **Toolchain flags**: `-mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard`
 - **Peripherals**: SPI1, FDCAN1 (PA11/PA12), FDCAN2 (PB12/PB13), USART1 (DMA TX + IDLE-line RX), TIM1, TIM15, GPIO, DMA
 - No tests, no CI, no formatter/linter configured.

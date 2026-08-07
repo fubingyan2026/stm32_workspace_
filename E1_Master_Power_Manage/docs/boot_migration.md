@@ -170,9 +170,10 @@ cmake --preset Release && ninja -C build/Release
 
 ## 5. 已知说明 / 后续
 
-- **代码位置**：Boot 升级栈（`boot_transport`/`boot_fsm`/`boot_flash`）与 `boot_task` 已从 E1 的
-  `service/boot/`、`tasks/` **迁移到共享层** `../public_layer/service/boot/` 与 `../public_layer/task/`
-  （跨工程复用；依赖 E1 的 `drv_can`/`drv_systick`/`log_task` 接口，其他工程接入时需提供同名接口）。
+- **代码位置**：Boot 升级栈（`boot_transport`/`boot_fsm`/`boot_flash`）、`boot_task` 与 `log_task`
+  已从 E1 的 `service/boot/`、`tasks/` **迁移到共享层** `../public_layer/service/boot/`、
+  `../public_layer/task/`（`log_task` 亦上移，供 boot_task 的 `log_task_flush()` 调用，保持共享层自洽）。
+  跨工程复用依赖 E1 的 `drv_can`/`drv_systick`/`drv_log_uart` 接口，其他工程接入时需提供同名接口。
   上文迁移步骤中的旧路径为**历史记录**，当前以 public_layer 为准。
 - **联调修复 ① A/B 切换判定**：`boot_task_init` 曾用 `upgrade_flag==0` 判「有无有效 App」，导致 0x003 触发
   （upgrade_flag=1）时永远写 A。改为以 **`fw_size>0`** 判定（[boot_task.c](../public_layer/task/boot_task.c)）。

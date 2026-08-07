@@ -12,12 +12,10 @@
 /* Includes ------------------------------------------------------------------*/
 #include "led_task.h"
 
-#include "drv_pwm.h"
 #include "drv_systick.h"
 #include "led.h"
 #include "log.h"
 #include "sw_timer.h"
-#include "tim.h"
 
 /* Private constants ---------------------------------------------------------*/
 
@@ -57,15 +55,7 @@ void led_task_start_blink(uint16_t count, uint16_t cycle_ms)
 
 void led_task_init(void)
 {
-    /* 初始化 PWM 输出 — TIM2_CH1 (PA0) */
-    if (drv_pwm_init(DRV_PWM_CH_1, &htim2, TIM_CHANNEL_1) != DRV_PWM_OK) {
-        LOG_E("led_task", "PWM 初始化失败");
-        return;
-    }
-    if (drv_pwm_start(DRV_PWM_CH_1) != DRV_PWM_OK) {
-        LOG_E("led_task", "PWM 启动失败");
-        return;
-    }
+    /* 初始化 led 输出 — TIM2_CH1 (PA0) */
 
     led_init(millis);
 
@@ -92,7 +82,7 @@ void led_task_init(void)
 static void led_task_write_pin(uint16_t value)
 {
     s_breathe_value = LED_BREATH_MAX_DUTY_DEFAULT - value;
-    drv_pwm_set_duty(DRV_PWM_CH_1, value);
+
 }
 
 static void led_task_on_state_change(led_handle_t* instance,

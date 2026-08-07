@@ -72,8 +72,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${SERVICE}
     ${APP}
     ${TASKS}
-    # 共享信号服务（public_layer/service，App 的 LED/蜂鸣器使用）
+    # 共享服务/任务（public_layer，App 的 LED/蜂鸣器/日志使用）
     ${CMAKE_SOURCE_DIR}/../public_layer/service/srv_signal.c
+    ${CMAKE_SOURCE_DIR}/../public_layer/task/log_task.c
 )
 
 # Add include paths
@@ -85,6 +86,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     applications
     ../public_layer/device_drivers/hal_flash
     ../public_layer/service
+    ../public_layer/task
 )
 
 # Add project symbols (macros)
@@ -131,8 +133,8 @@ set(BOOT_SOURCES
     ${CMAKE_SOURCE_DIR}/../public_layer/service/boot/boot_flash.c
     ${CMAKE_SOURCE_DIR}/../public_layer/task/boot_task.c
     ${CMAKE_SOURCE_DIR}/../public_layer/service/srv_signal.c
+    ${CMAKE_SOURCE_DIR}/../public_layer/task/log_task.c
     ${CMAKE_SOURCE_DIR}/tasks/app_main.c
-    ${CMAKE_SOURCE_DIR}/tasks/log_task.c
     ${CMAKE_SOURCE_DIR}/tasks/led_task.c
     ${CMAKE_SOURCE_DIR}/device_drivers/drv_systick.c
     ${CMAKE_SOURCE_DIR}/device_drivers/drv_log_uart.c
