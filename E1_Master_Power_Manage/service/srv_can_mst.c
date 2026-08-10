@@ -25,7 +25,7 @@
 #define SRV_CAN_MST_LOG_E(...) LOG_E("srv_can_mst", __VA_ARGS__)
 #define SRV_CAN_MST_LOG_W(...) LOG_W("srv_can_mst", __VA_ARGS__)
 #define SRV_CAN_MST_LOG_I(...) LOG_I("srv_can_mst", __VA_ARGS__)
-#define SRV_CAN_MST_LOG_D(...) ((void)0) // LOG_D("srv_can_mst", __VA_ARGS__)
+#define SRV_CAN_MST_LOG_D(...) LOG_D("srv_can_mst", __VA_ARGS__)
 #else
 #define SRV_CAN_MST_LOG_E(...) ((void)0)
 #define SRV_CAN_MST_LOG_W(...) ((void)0)

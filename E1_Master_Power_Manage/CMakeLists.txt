@@ -163,9 +163,26 @@ target_compile_definitions(${E1_BOOT_TARGET} PRIVATE
     HAL_FLASH_CHIP_STM32F4
     PRINTF_DISABLE_SUPPORT_FLOAT
     PRINTF_DISABLE_SUPPORT_EXPONENTIAL
-    # F407 非均匀扇区，Metadata 区位于 128KB 扇区；覆写共享 boot_flash.c 的默认扇区大小
+    # ===== F407 板级 boot 配置（显式声明，覆写/明确 public_layer 共享 boot 栈的默认值，
+    #        与 App 侧 srv_boot_ctrl 分区表保持一致，见 docs/boot_upgrade.md）=====
+    # F407 1MB 非均匀扇区布局：
+    #   BOOT 0x08000000 128K(S0-4) / AppA 0x08020000 128K(S5) / AppB 0x08040000 128K(S6) /
+    #   Metadata 0x08060000 256K(S7-8) / APP参数 0x080A0000 256K(S9-10)
+    BOOT_FLASH_BOOT_SIZE=0x20000U
+    BOOT_FLASH_APP_SIZE=0x20000U
+    BOOT_FLASH_META_SIZE=0x40000U
+    # F407 硬件兼容 ID 与 App 向量表范围（覆写 public_layer boot_task.c 默认值）
+    BOOT_HW_COMPAT_ID=0x0002U
+    BOOT_APP_FLASH_START=0x08020000U
+    BOOT_APP_FLASH_END=0x08040000U
+    # F407 CAN 升级 ID（与 boot_transport.h 默认 0x701/0x702 一致，显式声明）
+    BOOT_CAN_ID_HOST_TO_NODE=0x701U
+    BOOT_CAN_ID_NODE_TO_HOST=0x702U
+    # Metadata 区位于 F407 128KB 大扇区；覆写共享 boot_flash.c 的运行时扇区大小
     BOOT_META_SECTOR_SIZE=RING_STORAGE_SECTOR_128K
-    BOOT_SINGLE_PARTITION
+    # 注意：不定义 BOOT_SINGLE_PARTITION —— F407 为 A/B 双分区模式，
+    #   Metadata 偏移 = BOOT + 2*APP = 0x08060000，与 App 侧 srv_boot_ctrl 的
+    #   SRV_BOOT_CTRL_START_ADDR 一致；定义单分区会使 Boot/App 元数据区域错位。
 )
 
 # Boot 链接脚本与 map（Boot 区 0x08000000）

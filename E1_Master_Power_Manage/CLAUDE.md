@@ -14,7 +14,9 @@ This project is **one member of a multi-project workspace**, and the git reposit
 stm32_workspace_/                  ← git root (commits span all projects)
 ├── E1_Master_Power_Manage/        ← THIS project (STM32F407 master power board)
 ├── E1_Hand_G474/                  ← sibling project (STM32G474 hand controller)
-├── stm32_g474_boot/               ← sibling bootloader project
+├── stm32_g474_boot/               ← sibling bootloader project (STM32G474; 升级栈已上移 public_layer 共享)
+├── stm32_g0b1_boot/               ← sibling bootloader project (STM32G0B1 从电源板 CAN 升级，单分区)
+├── e1_dual_battery_hot_swappable/ ← sibling project (STM32G474 双电池热插拔控制器)
 └── public_layer/                  ← SHARED common layer (recently consolidated here)
     ├── m_middlewares/             ← platform-independent middleware (static lib target `m_middlewares`)
     └── device_drivers/hal_flash/  ← multi-chip flash drivers (F4/G4/H7) + ring_storage_port
@@ -48,12 +50,14 @@ build.bat                   # Windows (CMD) — defaults to Debug
 - **Dual-image build**: one `ninja` invocation produces **two** firmware images —
   `E1_Master_Power_Manage.*` (App, linked at `0x08020000`, the upgradeable power firmware) and
   `E1_Boot.*` (Boot, linked at `0x08000000`, startup-decision + CAN upgrade receiver).
-  Flash partition layout and the upgrade flow are documented in [docs/boot_upgrade.md](docs/boot_upgrade.md).
+  Flash partition layout and the upgrade flow are documented in [docs/boot_upgrade.md](docs/boot_upgrade.md) (migration record: [docs/boot_migration.md](docs/boot_migration.md); formal frame/timeout spec: [docs/upgrade_protocol.md](docs/upgrade_protocol.md)).
+- **Host upgrade tool**: `updata_tool/` is the PC-side CAN 固件升级上位机 — entry `flash_gui.py` (project root), backed by `canable_sdk` (CANable USB-CAN adapter) / `cangui` / `flash_tool` + `libusb-1.0.dll`. Package a standalone exe with `python -m PyInstaller updata_tool/UpdataTool.spec --noconfirm --clean --workpath updata_tool/build --distpath updata_tool/dist` → `updata_tool/dist/UpdataTool.exe`.
 - **clangd**: reads `build/Debug/compile_commands.json` (auto-exported by CMake). `.clangd` is hardcoded to `build/Debug` — you **must** configure a Debug build at least once for language server support.
 - **Debugging**: [.vscode/launch.json](.vscode/launch.json) ships two STM32CubeIDE-style GDB launch configs — J-Link and ST-Link (`jlinkgdbtarget` / `stlinkgdbtarget`). Flash + debug the target from VSCode's Run & Debug after a build; the config resolves the `.elf` binary automatically.
 - **Target flags**: `-mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard`
 - **No test infrastructure** exists in this project.
 - **Compile definitions** (root CMakeLists.txt): `HAL_FLASH_CHIP_STM32F4` selects the flash driver chip; `PRINTF_DISABLE_SUPPORT_FLOAT`/`PRINTF_DISABLE_SUPPORT_EXPONENTIAL` disable float formatting in mpaland_printf (F407 has no hardware double-precision).
+- **Boot config macros** (`E1_Boot` target): the shared `public_layer/service/boot/*` upgrade stack is configured per-board via `BOOT_*` compile definitions in the root CMakeLists (mirroring `stm32_g474_boot`): `BOOT_FLASH_BOOT_SIZE/APP_SIZE/META_SIZE` (F407: 128K/128K/256K), `BOOT_HW_COMPAT_ID=0x0002`, `BOOT_APP_FLASH_START/END` (0x08020000–0x08040000), `BOOT_CAN_ID_HOST_TO_NODE/NODE_TO_HOST` (0x701/0x702), `BOOT_META_SECTOR_SIZE=RING_STORAGE_SECTOR_128K`. **Do not define `BOOT_SINGLE_PARTITION`** — F407 is A/B dual-partition (boot metadata at `0x08060000`, matching `srv_boot_ctrl`); single-partition would move it to `0x08040000` and break the Boot↔App metadata handshake.
 
 ## Architecture: 6-Layer Cooperative Multitasking
 
@@ -137,7 +141,7 @@ A single CAN peripheral (CAN1) multiplexes three service layers. The RX callback
 | CAN ID | Direction | Service | Purpose |
 |--------|-----------|---------|---------|
 | `0x001` (len=7) | Host ↔ Board | `srv_can_mst` | Host control commands (RX) + system status reports (TX) |
-| `0x003` (len=1) | Host → Board | `can_task` | Request to enter upgrade mode → `srv_boot_ctrl_request_boot()` (ISR sets flag, main loop applies). Sent by the host tool **only when** no Boot beacon (0x702, IDLE-heartbeat) is detected — see [docs/boot_upgrade.md](docs/boot_upgrade.md) |
+| `0x003` (len=1) | Host → Board | `can_task` | Request to enter upgrade mode → `srv_boot_ctrl_request_boot()` (ISR sets flag, main loop applies). The host tool **sends it directly** to trigger upgrade (harmless if the board is already in Boot — Boot ignores it), then waits for the Boot heartbeat beacon (`0x702`, payload cmd `0x09`, `hw_id` check) to confirm entry — see [docs/boot_upgrade.md](docs/boot_upgrade.md) |
 | `0x002` | Board ↔ Slave | `srv_can_slv` | Slave power board control + ACK handshake (50ms retry) |
 | `0x200` | Battery → Board | `srv_can_dual` | Dual battery core dynamic data (100ms MUX) |
 | `0x201` | Battery → Board | `srv_can_dual` | Battery info frames (capacity, version — request/response) |
@@ -157,6 +161,8 @@ In `can_rx_callback`: `0x003`+len=1 → set `s_enter_boot_requested` flag (consu
 - [docs/protocol_slaver.md](docs/protocol_slaver.md) — 0x002 slave power board protocol
 - [docs/protocol_dual.md](docs/protocol_dual.md) — 0x200/0x201/0x202 dual battery CAN protocol
 - [docs/can_dual_power_c_struct.md](docs/can_dual_power_c_struct.md) — C struct definitions for dual battery
+- [docs/upgrade_protocol.md](docs/upgrade_protocol.md) — 0x701/0x702 CAN 升级协议正式规范 (v2.0: 经典 CAN 8B + Boot 心跳 beacon + A/B 运行槽提升)
+- [docs/boot_migration.md](docs/boot_migration.md) — 从 stm32_g474_boot 移植升级功能的迁移记录与操作手册
 
 ## Hardware Reference
 

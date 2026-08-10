@@ -73,7 +73,7 @@ void log_task_init(void)
         .get_timestamp_cb = millis,
     };
     log_init(&log_cfg);
-    log_set_level(LOG_LEVEL_INFO);
+    log_set_level(LOG_LEVEL_WARN);
 
     /* 注：drv_uart_init() 由 app_main 统一调用，此处不再单独调用 */
     drv_log_uart_init();
