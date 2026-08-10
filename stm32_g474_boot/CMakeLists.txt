@@ -92,12 +92,12 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     HAL_FLASH_CHIP_STM32G4
     # G474 板级分区布局（覆写 public_layer boot_flash.h 的 F407 默认值）
     BOOT_FLASH_BOOT_SIZE=0x10000U
-    BOOT_FLASH_APP_SIZE=0xC000U
-    BOOT_FLASH_META_SIZE=0x4000U
+    BOOT_FLASH_APP_SIZE=0xE000U
+    BOOT_FLASH_META_SIZE=0x2000U
     # G474 硬件兼容 ID 与 App 向量表范围（覆写 public_layer boot_task.c 的 F407 默认值）
     BOOT_HW_COMPAT_ID=0x0001U
     BOOT_APP_FLASH_START=0x08010000U
-    BOOT_APP_FLASH_END=0x0801C000U
+    BOOT_APP_FLASH_END=0x0801E000U
     # G474 CAN 升级 ID（覆写 public_layer boot_transport.h 默认 0x701/0x702）
     BOOT_CAN_ID_HOST_TO_NODE=0x701U
     BOOT_CAN_ID_NODE_TO_HOST=0x702U

@@ -47,9 +47,9 @@
 #define LED_TASK_REFRESH_PERIOD_MS (10U)
 
 /** @brief 各升级状态闪烁半周期 (ms) */
-#define LED_TASK_BLINK_WAIT_CYCLE_MS   (400U)  /**< IDLE：等待升级，慢闪 */
+#define LED_TASK_BLINK_WAIT_CYCLE_MS   (200U)  /**< IDLE：等待升级，慢闪 */
 #define LED_TASK_BLINK_TX_CYCLE_MS     (50U)   /**< START/DATA：传输中，快闪 */
-#define LED_TASK_BLINK_VERIFY_CYCLE_MS (200U)  /**< VERIFY：校验中，中速闪 */
+#define LED_TASK_BLINK_VERIFY_CYCLE_MS (100U)  /**< VERIFY：校验中，中速闪 */
 
 /** @brief srv_signal 0-1023 → GPIO 数字电平阈值（ON=1023 ≥ 阈值 → 点亮） */
 #define LED_TASK_WRITE_THRESHOLD (512U)
