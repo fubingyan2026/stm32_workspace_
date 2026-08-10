@@ -228,13 +228,15 @@ bool boot_task_try_boot_app(void)
 
 /* 恢复外设和时钟到默认状态 */
 {
-#include "usart.h"
+// #include "usart.h"
+// #include "fdcan.h"
     /* 关闭 SysTick */
-    SysTick->CTRL = 0;
-    SysTick->LOAD = 0;
-    SysTick->VAL = 0;
-    HAL_UART_DeInit(&huart1);
-    HAL_RCC_DeInit();
+    // SysTick->CTRL = 0;
+    // SysTick->LOAD = 0;
+    // SysTick->VAL = 0;
+    // HAL_FDCAN_DeInit(&hfdcan1);
+    // HAL_UART_DeInit(&huart1);
+    // HAL_RCC_DeInit();
     HAL_DeInit();
 }
     /* 关闭全局中断，设置 MSP 并跳转（App 启动流程会重设 SCB->VTOR） */
