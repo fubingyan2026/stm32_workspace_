@@ -27,7 +27,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "app_main.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -92,15 +92,11 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
-  MX_ADC1_Init();
   MX_FDCAN2_Init();
   MX_USART1_UART_Init();
-  MX_TIM2_Init();
-  MX_TIM14_Init();
-  MX_TIM3_Init();
-  MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
-
+  /* 进入 Boot 主任务（启动决策 + CAN 升级接收）；其内部为死循环，不会返回 */
+  app_main();
   /* USER CODE END 2 */
 
   /* Infinite loop */
