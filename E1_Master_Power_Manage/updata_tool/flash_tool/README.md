@@ -7,6 +7,22 @@
 - Python 3.9+，`pip install PySide6 pyusb`
 - CANable 设备（本仓库已随附 `canable_sdk` 与 Windows `libusb-1.0.dll`）
 
+## 打包为 exe（Windows）
+需要 `pip install pyinstaller`。在项目根目录运行：
+
+```bash
+# Windows (CMD)
+updata_tool\build_exe.bat
+# 或直接：
+python -m PyInstaller updata_tool/UpdataTool.spec --noconfirm --clean \
+    --workpath updata_tool/build --distpath updata_tool/dist
+```
+
+产物： `updata_tool/dist/UpdataTool.exe`（单文件，约 47 MB，内含 `libusb-1.0.dll`，可直接拷贝分发）。
+打包配置见 [../UpdataTool.spec](../UpdataTool.spec)：入口为项目根目录 `flash_gui.py`，
+`libusb-1.0.dll` 打包到根目录以便 `canable_sdk/__init__.py` 的 `os.add_dll_directory` 命中；
+`cangui` 被排除（本工具不需要通用 CANable GUI）。
+
 ## 运行
 ```bash
 cd updata_tool
