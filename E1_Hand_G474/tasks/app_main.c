@@ -41,10 +41,10 @@ int app_main(void)
     led_task_init();
 
     /* 电机行为控制（10ms FSM + 故障监控） */
-    behavior_task_init();
+    // behavior_task_init();
 
     /* 守护进程监控（9 电机反馈超时看门狗，依赖 behavior_task 已注册电机句柄） */
-    daemon_task_init();
+    // daemon_task_init();
 
     /* 主循环：sw_timer 驱动日志/LED/CAN/FB，motor 全速 poll */
     for (;;) {

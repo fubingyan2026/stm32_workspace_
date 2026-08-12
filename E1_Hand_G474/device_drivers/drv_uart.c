@@ -48,7 +48,7 @@
 #define DRV_UART_RX_BUF_SIZE (20U)
 
 /** @brief TX 最大单次发送量 */
-#define DRV_UART_TX_BUF_SIZE (20U)
+#define DRV_UART_TX_BUF_SIZE (256U)
 
 /** @brief 错误日志聚合窗口 (ms)：窗口内的错误只在首次打印，附累计次数 */
 #define DRV_UART_ERR_LOG_PERIOD_MS (1000U)

@@ -1,7 +1,12 @@
 /**
  * @file    srv_can.h
- * @brief   CAN FD 电机控制协议服务 — 控制帧解析 + 反馈帧打包
+ * @brief   CAN 电机控制协议服务 — 苇熠伺服执行器控制 + 旧 CAN FD 反馈帧打包
  *
+ * 电机控制（测试模式）按 docs/苇熠电机can协议文档.md 组帧：
+ *   经典 CAN 2.0A，1 Mbps，CAN-ID 低 8 位 = 设备地址，帧 ≤ 8B，
+ *   data[0]=指令符，data[1..]=参数（多字节大端）。见 srv_can_test_*()。
+ *
+ * 旧 CAN FD 上位机协议（保留）：
  * 控制帧 (Host→Device, CAN ID 0x100):
  *   [0]      ctrl: 0x01=enable, 0x02=disable
  *   [1-18]   pos_ref[9]  (int16_t LE, Q7)
@@ -80,18 +85,23 @@ void srv_can_send_status(void);
 /* --- 测试模式 --- */
 
 /**
- * @brief 启动电机测试模式（发送一次使能帧 + 启动 1s 周期速度帧）
- * @note  使能帧 ID 0x10 (FF…FC)，速度帧 ID 0x20 (A6 66 0C D0 00 02 90 AC×8)
+ * @brief 启动电机测试模式
+ * @note  苇熠协议：先扫描总线电机 ID（握手 0x00，探测 0x01~0x3F），
+ *        扫描完成后对检测到的电机发送使能 + 速度模式 + 正转速度（经典 CAN 帧）；
+ *        未检测到任何电机时回退到默认地址 SRV_CAN_TEST_DEFAULT_MOTOR_ADDR
  */
 void srv_can_test_start(void);
 
 /**
- * @brief 停止电机测试模式（发送失能帧，停止周期速度帧）
+ * @brief 停止电机测试模式（发速度 0 + 失能，发往所有检测到的电机）
  */
 void srv_can_test_stop(void);
 
 /**
  * @brief 测试模式周期步进（can_task 每 10ms 调用）
+ * @note  阶段 1 扫描总线电机 ID；阶段 2 驱动正转/停留/反转/停留 每阶段
+ *        SRV_CAN_TEST_PHASE_MS 循环，每 1s 主动查询电机报警（0xFF，仅状态变化时打印），
+ *        周期读取供电电压（0x87），24h 后自动停止
  */
 void srv_can_test_step(void);
 

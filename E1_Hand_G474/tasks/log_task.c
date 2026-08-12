@@ -57,7 +57,7 @@ void log_task_init(void)
     /* 注：drv_uart_init() 由 app_main 统一调用，此处不再单独调用 */
 
     /* SEGGER RTT 初始化（无论当前模式，预初始化以便随时切换） */
-    SEGGER_RTT_Init();
+    // SEGGER_RTT_Init();
 
     /* 启动 sw_timer 驱动 TX 发送 */
     const sw_timer_config_t timer_cfg = {
