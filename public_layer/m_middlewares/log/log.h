@@ -112,6 +112,19 @@ typedef struct {
 #define LOG_DEFAULT_ENABLE_COLOR       (true)
 #define LOG_DEFAULT_ENABLE_TIMESTAMP   (true)
 
+/* Exported types ------------------------------------------------------------*/
+
+/**
+ * @brief 日志落盘回调函数类型（Flash 持久化钩子）
+ *
+ * @param level 日志级别
+ * @param line  完整格式化后的日志行（含 ANSI 颜色码及行尾 CRLF）
+ * @param len   日志行长度（字节）
+ * @note  回调在 log_log() 调用上下文中同步执行（可能处于中断上下文），
+ *        必须在返回前复制所需数据；回调内禁止再次调用 log_* 系列函数（防止重入）。
+ */
+typedef void (*log_flash_sink_cb_t)(log_level_t level, const char* line, uint16_t len);
+
 /* Exported macro ------------------------------------------------------------*/
 
 /**
@@ -219,6 +232,15 @@ log_error_t log_set_color_enable(bool enable);
  * @return 操作结果错误码
  */
 log_error_t log_set_timestamp_enable(bool enable);
+
+/**
+ * @brief 注册日志落盘回调（Flash 持久化钩子）
+ * @param cb 回调函数指针（NULL=取消注册）
+ * @return 操作结果错误码
+ * @note  注册后，每次成功格式化输出的日志行都会同步上抛给回调，
+ *        由调用方决定是否持久化（如 WARN/ERROR 落盘）。默认不注册，行为无变化。
+ */
+log_error_t log_set_flash_sink_cb(log_flash_sink_cb_t cb);
 
 /**
  * @brief 日志输出

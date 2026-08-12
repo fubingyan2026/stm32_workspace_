@@ -90,6 +90,9 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined symbols
     HAL_FLASH_CHIP_STM32G4
+    # 标识本工程为 Boot 镜像：public_layer 共享代码（如 log_task.c）据此
+    # 排除仅 App 使用的服务（srv_log_flash 落盘区域在 Boot 分区内，Boot 不参与）
+    E1_BUILD_BOOT
     # G474 板级分区布局（覆写 public_layer boot_flash.h 的 F407 默认值）
     BOOT_FLASH_BOOT_SIZE=0x10000U
     BOOT_FLASH_APP_SIZE=0xE000U

@@ -37,7 +37,7 @@
 /* Private constants ---------------------------------------------------------*/
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
-#define RING_STORAGE_LOG_ENABLE 1
+#define RING_STORAGE_LOG_ENABLE 0
 
 #if RING_STORAGE_LOG_ENABLE
 #define RING_STORAGE_LOG_E(...) LOG_E("ring_storage", __VA_ARGS__)
@@ -905,6 +905,20 @@ ring_storage_error_t ring_storage_load(ring_storage_context_t* ctx)
     return rs_load_frame(ctx, ctx->latest_frame_addr);
 }
 
+ring_storage_error_t ring_storage_load_frame(ring_storage_context_t* ctx,
+    uint32_t frame_addr)
+{
+    if (ctx == NULL || frame_addr == 0) {
+        return RING_STORAGE_ERROR_NULL_PTR;
+    }
+
+    if (!ctx->initialized) {
+        return RING_STORAGE_ERROR_UNINITIALIZED;
+    }
+
+    return rs_load_frame(ctx, frame_addr);
+}
+
 ring_storage_error_t ring_storage_load_version(ring_storage_context_t* ctx,
     uint32_t version)
 {
@@ -969,4 +983,98 @@ ring_storage_error_t ring_storage_load_version(ring_storage_context_t* ctx,
 
     RING_STORAGE_LOG_E("加载：未找到版本 %u", version);
     return RING_STORAGE_ERROR_NO_VALID_FRAME;
+}
+
+uint32_t ring_storage_foreach_frame(ring_storage_context_t* ctx,
+    ring_storage_frame_cb_t cb, void* user_arg)
+{
+    if (ctx == NULL || cb == NULL || !ctx->initialized) {
+        return 0;
+    }
+
+    uint32_t count = 0;
+    const uint32_t sector_num = RS_SECTOR_NUM(ctx);
+    const uint32_t sector_size = ctx->config.sector_size;
+
+    for (uint32_t s = 0; s < sector_num; s++) {
+        uint32_t sec_addr = ctx->config.start_addr + s * sector_size;
+        uint32_t sec_end = sec_addr + sector_size;
+        uint32_t scan_addr = sec_addr;
+
+        while (scan_addr + RS_FRAME_OVERHEAD <= sec_end) {
+            rs_header_t hdr;
+            uint32_t step;
+
+            rs_probe_t probe = rs_probe_header(ctx, scan_addr, sec_end, &hdr, &step);
+            if (probe == RS_PROBE_EMPTY) {
+                break;
+            }
+            if (probe == RS_PROBE_SKIP) {
+                scan_addr += step;
+                continue;
+            }
+
+            /* 帧头有效，校验帧尾 commit_magic（数据 CRC 由调用者按需校验） */
+            rs_footer_t footer;
+            const uint32_t footer_addr = scan_addr
+                + hdr.frame_len - RS_FOOTER_SIZE;
+            ring_storage_error_t err = (ring_storage_error_t)
+                ctx->config.port.read(footer_addr, (uint8_t*)&footer, sizeof(footer));
+
+            if (err != RING_STORAGE_OK || footer.commit_magic != RS_COMMIT_MAGIC) {
+                /* 帧未完成写入，前进 */
+                scan_addr += RS_WRITE_ALIGN(ctx);
+                continue;
+            }
+
+            count++;
+            if (!cb(hdr.version, scan_addr, user_arg)) {
+                return count; /* 调用方提前终止 */
+            }
+
+            /* 前进到下一帧位置（对齐后） */
+            scan_addr += step;
+        }
+    }
+
+    return count;
+}
+
+ring_storage_error_t ring_storage_wipe(ring_storage_context_t* ctx)
+{
+    if (ctx == NULL) {
+        return RING_STORAGE_ERROR_NULL_PTR;
+    }
+    if (!ctx->initialized) {
+        return RING_STORAGE_ERROR_UNINITIALIZED;
+    }
+
+    const uint32_t sector_num = RS_SECTOR_NUM(ctx);
+    const uint32_t sector_size = ctx->config.sector_size;
+
+    ctx->config.port.lock();
+
+    for (uint32_t s = 0; s < sector_num; s++) {
+        uint32_t sec_addr = ctx->config.start_addr + s * sector_size;
+        ring_storage_error_t err = (ring_storage_error_t)
+            ctx->config.port.erase(sec_addr, sector_size);
+        if (err != RING_STORAGE_OK) {
+            RING_STORAGE_LOG_E("擦除扇区 0x%08X 失败", sec_addr);
+            ctx->config.port.unlock();
+            return RING_STORAGE_ERROR_FLASH_ERASE;
+        }
+    }
+
+    ctx->config.port.unlock();
+
+    /* 重置运行时状态：等效于首次使用（下次 save 写入版本 1） */
+    ctx->latest_version = 0;
+    ctx->latest_frame_addr = 0;
+    ctx->active_sector_addr = ctx->config.start_addr;
+    ctx->active_sector_index = 0;
+    ctx->write_offset = 0;
+
+    RING_STORAGE_LOG_I("整区擦除完成：%u 个扇区，共 %lu 字节",
+        (unsigned)sector_num, (unsigned long)(sector_num * sector_size));
+    return RING_STORAGE_OK;
 }

@@ -161,6 +161,18 @@ typedef struct {
 typedef struct ring_storage_context ring_storage_context_t;
 
 /**
+ * @brief 帧遍历回调类型
+ * @param version    帧版本号（单调递增，可作全局时间序）
+ * @param frame_addr 帧在 Flash 中的起始地址
+ * @param user_arg   用户透传参数
+ * @return true 继续遍历，false 提前终止
+ * @note  仅对通过帧头 magic/CRC + 帧尾 commit_magic 校验的完整帧回调。
+ *        数据区 CRC 未在此阶段校验，需要读取内容时请结合 ring_storage_load_version。
+ */
+typedef bool (*ring_storage_frame_cb_t)(uint32_t version, uint32_t frame_addr,
+    void* user_arg);
+
+/**
  * @brief 环形存储上下文结构体
  */
 struct ring_storage_context {
@@ -244,6 +256,18 @@ ring_storage_error_t ring_storage_save(ring_storage_context_t* ctx);
 ring_storage_error_t ring_storage_load(ring_storage_context_t* ctx);
 
 /**
+ * @brief   从 Flash 加载指定地址的帧
+ * @param   ctx        上下文指针
+ * @param   frame_addr 帧的 Flash 起始地址（须由 ring_storage_foreach_frame 提供）
+ * @return  操作结果错误码
+ * @note    完整校验（帧头 CRC + 数据 CRC + commit_magic）后加载到注册的 value 地址。
+ *          不修改 ctx 的活动扇区/写偏移等运行时状态。
+ *          与 foreach_frame 配合可遍历并按需读取任意帧。
+ */
+ring_storage_error_t ring_storage_load_frame(ring_storage_context_t* ctx,
+    uint32_t frame_addr);
+
+/**
  * @brief   从 Flash 加载指定版本的帧
  * @param   ctx     上下文指针
  * @param   version 目标版本号（0 = 加载最新版，同 ring_storage_load）
@@ -254,6 +278,28 @@ ring_storage_error_t ring_storage_load(ring_storage_context_t* ctx);
  */
 ring_storage_error_t ring_storage_load_version(ring_storage_context_t* ctx,
     uint32_t version);
+
+/**
+ * @brief   遍历全部扇区中的所有有效帧
+ * @param   ctx      上下文指针
+ * @param   cb       帧回调（每帧调用一次，返回 false 提前终止）
+ * @param   user_arg 透传给回调的用户参数
+ * @return  已回调的有效帧数量（可能为 0）
+ * @note    按物理扫描顺序回调，不保证版本升序（环形回绕后物理序 ≠ 时间序），
+ *          需要时间序时请收集 version 后自行排序。
+ *          帧数据 CRC 在此处不校验，读到内容时结合 ring_storage_load_version。
+ */
+uint32_t ring_storage_foreach_frame(ring_storage_context_t* ctx,
+    ring_storage_frame_cb_t cb, void* user_arg);
+
+/**
+ * @brief   擦除整个区域并重置运行时状态（等价于清空全部数据）
+ * @param   ctx 上下文指针
+ * @return  操作结果错误码
+ * @note    wipe 后 latest_version 归零，下一次 save 写入版本 1。
+ *          旧帧全部清除，foreach/load 将不再看到任何历史帧。
+ */
+ring_storage_error_t ring_storage_wipe(ring_storage_context_t* ctx);
 
 #ifdef __cplusplus
 }

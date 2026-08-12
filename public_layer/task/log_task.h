@@ -22,8 +22,6 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
-/* Exported functions prototypes ---------------------------------------------*/
-
 /**
  * @brief 初始化日志任务
  * @note  初始化 log 模块 + 启动 sw_timer，输出后端默认为 UART
@@ -31,9 +29,9 @@ extern "C" {
 void log_task_init(void);
 
 /**
- * @brief 排空日志缓冲并等待输出后端发送完成（UART DMA / RTT）
- * @note  跳转 App / 系统复位前调用，确保最后的日志（如"跳转分区 X"、"请求进入 bootloader"）
- *        已真正发出，不被跳转/复位打断。
+ * @brief 切换日志输出后端
+ * @param mode  输出后端
+ * @note  可在初始化后任意时刻调用，实时生效
  */
 void log_task_flush(void);
 

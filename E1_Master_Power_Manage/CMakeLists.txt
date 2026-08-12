@@ -74,6 +74,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${TASKS}
     # 共享服务/任务（public_layer，App 的 LED/蜂鸣器/日志使用）
     ${CMAKE_SOURCE_DIR}/../public_layer/service/srv_signal.c
+    ${CMAKE_SOURCE_DIR}/../public_layer/service/srv_log_flash.c
     ${CMAKE_SOURCE_DIR}/../public_layer/task/log_task.c
 )
 
