@@ -171,7 +171,7 @@ drv_can_error_t drv_can_send(drv_can_channel_t ch, const drv_can_msg_t* msg)
         .TxFrameType          = FDCAN_DATA_FRAME,
         .DataLength           = bytes_to_fdcan_dlc(msg->dlc),
         .ErrorStateIndicator  = FDCAN_ESI_ACTIVE,
-        .BitRateSwitch        = FDCAN_BRS_OFF,
+        .BitRateSwitch        = FDCAN_BRS_ON, /* FD 帧启用位速率切换：仲裁段 1M / 数据段 5M */
         .FDFormat             = msg->is_fd ? FDCAN_FD_CAN : FDCAN_CLASSIC_CAN,
         .TxEventFifoControl   = FDCAN_NO_TX_EVENTS,
         .MessageMarker        = 0,

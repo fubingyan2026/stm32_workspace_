@@ -7,7 +7,7 @@
 | **创建日期** | 2026-07-09 |
 | **最后更新** | 2026-07-10 |
 | **目标 MCU** | STM32G474 (Cortex-M4 FPv4-SP, 512 KB Flash / 128 KB SRAM) |
-| **传输层** | CAN FD (FDCAN1, ISO 11898-1, `FDCAN_FRAME_FD_NO_BRS`) |
+| **传输层** | CAN FD (FDCAN1, ISO 11898-1, `FDCAN_FRAME_FD_BRS`) |
 
 ---
 
@@ -33,7 +33,7 @@
 |------|-----|
 | 控制器 | FDCAN1（`PA11` RX / `PA12` TX） |
 | 帧格式 | 标准帧（11-bit 标识符）+ CAN FD 数据段 |
-| FD 模式 | `FDCAN_FRAME_FD_NO_BRS`（FD 帧，数据段不切换比特率） |
+| FD 模式 | `FDCAN_FRAME_FD_BRS`（位速率切换：仲裁段 1 Mbps / 数据段 5 Mbps，内核时钟 PCLK1=160MHz） |
 | 字节序 | 小端（Intel, LSB first） |
 | 定标 | Q7 / Q15 定点（见 §4.1） |
 

@@ -62,18 +62,19 @@ static void can_timer_cb(void* user_data)
 
     drv_can_poll_status(DRV_CAN_CH_1); /* Bus-Off 恢复 + 错误状态告警 */
     srv_can_process();
+    srv_can_test_step(); /* 测试模式：每秒发送一次速度帧 */
 
     s_fb_tick++;
     s_status_tick++;
 
-    if (s_fb_tick >= (FB_INTERVAL_MS / TASK_PERIOD_MS)) {
-        s_fb_tick = 0;
-        srv_can_send_feedback();
-    }
-    if (s_status_tick >= (STATUS_INTERVAL_MS / TASK_PERIOD_MS)) {
-        s_status_tick = 0;
-        srv_can_send_status();
-    }
+    // if (s_fb_tick >= (FB_INTERVAL_MS / TASK_PERIOD_MS)) {
+    //     s_fb_tick = 0;
+    //     srv_can_send_feedback();
+    // }
+    // if (s_status_tick >= (STATUS_INTERVAL_MS / TASK_PERIOD_MS)) {
+    //     s_status_tick = 0;
+    //     srv_can_send_status();
+    // }
 }
 
 static void can_rx_callback(drv_can_channel_t ch, const drv_can_msg_t* msg)

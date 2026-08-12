@@ -77,6 +77,24 @@ void srv_can_send_feedback(void);
  */
 void srv_can_send_status(void);
 
+/* --- 测试模式 --- */
+
+/**
+ * @brief 启动电机测试模式（发送一次使能帧 + 启动 1s 周期速度帧）
+ * @note  使能帧 ID 0x10 (FF…FC)，速度帧 ID 0x20 (A6 66 0C D0 00 02 90 AC×8)
+ */
+void srv_can_test_start(void);
+
+/**
+ * @brief 停止电机测试模式（发送失能帧，停止周期速度帧）
+ */
+void srv_can_test_stop(void);
+
+/**
+ * @brief 测试模式周期步进（can_task 每 10ms 调用）
+ */
+void srv_can_test_step(void);
+
 #ifdef __cplusplus
 }
 #endif
