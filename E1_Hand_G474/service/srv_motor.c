@@ -52,7 +52,9 @@
 
 /**
  * @brief 各组串口通道配置（可通过编译宏覆盖）
- * 例: cmake -DSRV_MOTOR_GRPA_UART=DRV_UART_CH_2 -DSRV_MOTOR_GRPB_UART=DRV_UART_CH_1 ...
+ * 例: cmake -DSRV_MOTOR_GRPA_UART=DRV_UART_CH_2 -DSRV_MOTOR_GRPB_UART=DRV_UART_CH_3 ...
+ * @note  仅限 CH_2/CH_3 之间切换；CH_1 (USART1) 已被 drv_log_uart 控制台占用，
+ *        不可用作电机通道。
  */
 #define SRV_MOTOR_GRPA_UART DRV_UART_CH_2
 #define SRV_MOTOR_GRPB_UART DRV_UART_CH_3
@@ -104,7 +106,7 @@ typedef struct {
     fsm_t fsm; /**< 分时发送状态机 */
     srv_motor_handle_t* motors[MOTOR_PER_GROUP]; /**< 电机指针数组 */
     uint8_t count; /**< 已注册电机数 */
-    drv_uart_channel_t uart_ch; /**< UART 通道 (DRV_UART_CH_1/CH_2) */
+    drv_uart_channel_t uart_ch; /**< UART 通道 (DRV_UART_CH_2/CH_3) */
     uint8_t poll_cursor; /**< 轮询游标 */
     uint32_t poll_02_cnt; /**< INFO_02_R 计数器 */
     uint32_t cycle_start; /**< 当前广播周期起始时间 (millis) */
@@ -124,8 +126,8 @@ typedef struct {
 /* 模块全局变量 --------------------------------------------------------------*/
 
 /** @brief 两组电机实例 */
-static srv_motor_group_t s_grp_a; /**< 组A — USART1 (DRV_UART_CH_1) */
-static srv_motor_group_t s_grp_b; /**< 组B — USART2 (DRV_UART_CH_2) */
+static srv_motor_group_t s_grp_a; /**< 组A — USART2 (DRV_UART_CH_2) */
+static srv_motor_group_t s_grp_b; /**< 组B — USART3 (DRV_UART_CH_3) */
 
 /** @brief 根据 uart_ch 获取组指针（自动匹配各实例的 uart_ch 配置） */
 static srv_motor_group_t* s_grp_from_ch(drv_uart_channel_t ch)

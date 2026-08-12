@@ -15,11 +15,13 @@
 #include "behavior_task.h"
 #include "can_task.h"
 #include "daemon_task.h"
+#include "drv_log_uart.h"
 #include "drv_systick.h"
 #include "drv_uart.h"
 #include "led_task.h"
 #include "log.h"
 #include "log_task.h"
+#include "srv_log_flash.h"
 #include "srv_motor.h"
 #include "sw_timer.h"
 
@@ -28,11 +30,17 @@ int app_main(void)
     /* 系统节拍（延时/时间戳） */
     delay_init();
 
-    /* UART 驱动公共初始化（USART1/2/3） */
+    /* 电机 UART 驱动（USART2/3；USART1 控制台由 drv_log_uart 接管） */
     drv_uart_init();
+
+    /* USART1 控制台串口驱动（DMA circular + kfifo，日志 TX + 命令 RX） */
+    drv_log_uart_init();
 
     /* 日志输出（UART DMA） */
     log_task_init();
+
+    /* 警告/错误日志 Flash 持久化（依赖 log 模块已初始化） */
+    srv_log_flash_init();
 
     /* CAN 通信 */
     can_task_init();
@@ -48,7 +56,6 @@ int app_main(void)
 
     /* 主循环：sw_timer 驱动日志/LED/CAN/FB，motor 全速 poll */
     for (;;) {
-        drv_uart_rx_restart(DRV_UART_CH_1);
         drv_uart_rx_restart(DRV_UART_CH_2);
         drv_uart_rx_restart(DRV_UART_CH_3);
         sw_timer_tick(millis());

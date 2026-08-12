@@ -104,7 +104,10 @@
 #define USE_HAL_SPI_REGISTER_CALLBACKS        0U
 #define USE_HAL_SRAM_REGISTER_CALLBACKS       0U
 #define USE_HAL_TIM_REGISTER_CALLBACKS        0U
-#define USE_HAL_UART_REGISTER_CALLBACKS       0U
+/* 多 UART 驱动并存（drv_uart 管理 USART2/3 + drv_log_uart 管理 USART1 控制台）：
+   各驱动通过 HAL_UART_RegisterCallback/RegisterRxEventCallback 独立注册 per-instance
+   回调，避免多个驱动同时定义全局 HAL 回调造成符号冲突。 */
+#define USE_HAL_UART_REGISTER_CALLBACKS       1U
 #define USE_HAL_USART_REGISTER_CALLBACKS      0U
 #define USE_HAL_WWDG_REGISTER_CALLBACKS       0U
 

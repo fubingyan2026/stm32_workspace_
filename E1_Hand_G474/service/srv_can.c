@@ -21,7 +21,7 @@
 
 /* 模块日志开关 ----------------------------------------------------------------*/
 
-#define SRV_CAN_LOG_I(...) LOG_I("srv_can", __VA_ARGS__)
+#define SRV_CAN_LOG_I(...) //LOG_I("srv_can", __VA_ARGS__)
 #define SRV_CAN_LOG_W(...) LOG_W("srv_can", __VA_ARGS__)
 #define SRV_CAN_LOG_E(...) LOG_E("srv_can", __VA_ARGS__)
 
@@ -35,9 +35,16 @@
 /* --- 苇熠伺服执行器 CAN 测试参数 --- */
 
 /** @brief 正转/反转转速 (RPM)。速度满量程 6000 RPM，IQ24 归一化 */
-#define SRV_CAN_TEST_SPEED_RPM 600
+#define SRV_CAN_TEST_SPEED_RPM 1600
+/**
+ * @brief 缓启动斜坡时长 (ms)：无论目标转速大小，都在该时长内线性到达目标
+ * @note  应 ≤ 阶段时长/2（停留阶段才能真正停下来）。固定步长方案在目标大、
+ *        命令周期短时无法在阶段内爬满（如 100RPM/s 到 2000RPM 需 20s > 阶段 6s），
+ *        导致电机始终在斜坡中途、没有停留时间。按时间斜坡自适应目标大小。
+ */
+#define SRV_CAN_TEST_RAMP_TIME_MS 3000U
 /** @brief 命令帧发送周期 (ms) */
-#define SRV_CAN_TEST_CMD_PERIOD_MS 1000U
+#define SRV_CAN_TEST_CMD_PERIOD_MS 100U
 /** @brief 报警查询周期 (ms)：电机报警需主动查询（0xFF），1s 一次 */
 #define SRV_CAN_TEST_ALARM_PERIOD_MS 1000U
 /** @brief 报警查询相对控制帧的时间偏移 (ms)：错开与速度/控制帧同时发送，避免多包冲突丢应答 */
@@ -61,7 +68,7 @@
 /** @brief 原始帧环形缓冲深度 */
 #define SRV_CAN_RAW_RX_DEPTH 16U
 /** @brief 每个阶段时长 (ms)：正转/停留/反转/停留 */
-#define SRV_CAN_TEST_PHASE_MS 6000U
+#define SRV_CAN_TEST_PHASE_MS 30000U
 /** @brief 测试总时长 (ms)：24h 后自动停止 */
 #define SRV_CAN_TEST_DURATION_MS 86400000U
 /** @brief 扫描完成后 1s 内补发使能/模式周期 (ms)：首帧可能因 TX FIFO 未就绪被丢弃 */
@@ -196,6 +203,18 @@ static uint32_t s_test_last_retry_ms;
 
 /** @brief 测试起始时间 (millis)，用于 24h 自动停止 */
 static uint32_t s_test_start_ms;
+
+/** @brief 当前实际下发转速 (RPM)，缓启动斜坡插值结果 */
+static int16_t s_test_speed_rpm;
+
+/** @brief 当前斜坡段目标转速 (RPM)：目标变化时重新开始计时 */
+static int16_t s_test_ramp_target_rpm;
+
+/** @brief 当前斜坡段起点转速 (RPM)（目标变化瞬间的下发转速） */
+static int16_t s_test_ramp_from_rpm;
+
+/** @brief 当前斜坡段起始时间 (millis) */
+static uint32_t s_test_ramp_start_ms;
 
 /** @brief 每电机最新报警码（0xFF 应答更新，24 位，ISR 写） */
 static uint32_t s_motor_alarm[SRV_CAN_MAX_MOTORS];
@@ -375,6 +394,10 @@ void srv_can_test_start(void)
 {
     s_test_running = true;
     s_test_start_ms = millis(); /* 24h 自动停止计时起点 */
+    s_test_speed_rpm = 0; /* 缓启动从 0 开始 */
+    s_test_ramp_target_rpm = 0;
+    s_test_ramp_from_rpm = 0;
+    s_test_ramp_start_ms = s_test_start_ms;
 
     /* 阶段 1：扫描总线电机 ID */
     s_scanning = true;
@@ -405,6 +428,10 @@ void srv_can_test_stop(void)
 {
     s_test_running = false;
     s_scanning = false;
+    s_test_speed_rpm = 0;               /* 重置斜坡，下次启动从 0 开始 */
+    s_test_ramp_target_rpm = 0;
+    s_test_ramp_from_rpm = 0;
+    s_test_ramp_start_ms = 0;
     srv_can_test_cmd_speed_all(0);      /* 速度 0 停下 */
     srv_can_test_cmd_enable_all(false); /* 失能 */
     SRV_CAN_LOG_I("测试停止：已向 %u 台电机发送速度 0 + 失能", (unsigned)s_motor_cnt);
@@ -532,16 +559,38 @@ void srv_can_test_step(void)
     }
 
     /* 正转/反转发方向速度帧；停留发速度 0 帧 (IQ24=0)，不失能 */
-    int16_t rpm = 0;
+    int16_t target_rpm = 0;
     if (s_test_phase == SRV_CAN_TEST_PHASE_FORWARD) {
-        rpm = SRV_CAN_TEST_SPEED_RPM;
+        target_rpm = SRV_CAN_TEST_SPEED_RPM;
     } else if (s_test_phase == SRV_CAN_TEST_PHASE_REVERSE) {
-        rpm = -SRV_CAN_TEST_SPEED_RPM;
+        target_rpm = -SRV_CAN_TEST_SPEED_RPM;
     }
 
     if ((now - s_test_last_cmd_ms) >= SRV_CAN_TEST_CMD_PERIOD_MS) {
         s_test_last_cmd_ms = now;
-        srv_can_test_cmd_speed_all(rpm);
+
+        /* 缓启动：按时间线性斜坡，RAMP_TIME_MS 内从当前转速线性到达目标。
+           目标变化（阶段切换）时以当前下发转速为新段起点重新计时，
+           保证正/反转与停留都能真正到达并保持（停留 = 转速 0 保持）。 */
+        if (target_rpm != s_test_ramp_target_rpm) {
+            s_test_ramp_target_rpm = target_rpm;
+            s_test_ramp_from_rpm = s_test_speed_rpm;
+            s_test_ramp_start_ms = now;
+        }
+
+        int16_t send_rpm;
+        const uint32_t elapsed = now - s_test_ramp_start_ms;
+        if (elapsed >= SRV_CAN_TEST_RAMP_TIME_MS) {
+            send_rpm = target_rpm; /* 斜坡完成，保持目标 */
+        } else {
+            const int32_t span = (int32_t)target_rpm - (int32_t)s_test_ramp_from_rpm;
+            const int32_t delta = (int32_t)(((int64_t)span * elapsed)
+                / (int32_t)SRV_CAN_TEST_RAMP_TIME_MS);
+            send_rpm = (int16_t)((int32_t)s_test_ramp_from_rpm + delta);
+        }
+        s_test_speed_rpm = send_rpm;
+
+        srv_can_test_cmd_speed_all(send_rpm);
     }
 }
 
@@ -691,7 +740,8 @@ static void srv_can_test_scan_done(void)
 #if SRV_CAN_TEST_RELEASE_BRAKE
     srv_can_test_cmd_brake_all();      /* 3. 打开抱闸（若支持） */
 #endif
-    srv_can_test_cmd_speed_all(SRV_CAN_TEST_SPEED_RPM); /* 进入正转 */
+    /* 不直接发全速：由 srv_can_test_step 的缓启动斜坡从 0 线性爬升至目标，
+       避免扫描完成瞬间 0→SPEED 阶跃过大报警 */
     srv_can_test_log_phase(s_test_phase);
 }
 
@@ -966,7 +1016,7 @@ static void srv_can_test_log_phase(srv_can_test_phase_t phase)
         break;
     }
 
-    SRV_CAN_LOG_I("阶段切换 -> %s（速度 %+d RPM，时长 %u ms）",
+    SRV_CAN_LOG_I("阶段切换 -> %s（速度 %d RPM，时长 %u ms）",
         name, (int)rpm, (unsigned)SRV_CAN_TEST_PHASE_MS);
 }
 

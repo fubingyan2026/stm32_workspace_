@@ -56,7 +56,7 @@ aux_source_directory(${CMAKE_SOURCE_DIR}/service SERVICE)
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     ${DEV_DRV}
-    ${DEV_HAL_FLASH}
+    ${DEV_DRV_HAL_FLASH}
     ${SERVICE}
     ${TASKS}
 

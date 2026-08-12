@@ -22,19 +22,6 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
-/* Exported types ------------------------------------------------------------*/
-
-/**
- * @brief 日志输出后端
- */
-typedef enum {
-    LOG_OUTPUT_NONE = 0, /**< 关闭输出 */
-    LOG_OUTPUT_UART, /**< USART1 DMA 输出（默认） */
-    LOG_OUTPUT_RTT, /**< SEGGER RTT 输出 */
-} log_task_output_t;
-
-/* Exported functions prototypes ---------------------------------------------*/
-
 /**
  * @brief 初始化日志任务
  * @note  初始化 log 模块 + 启动 sw_timer，输出后端默认为 UART
@@ -46,7 +33,7 @@ void log_task_init(void);
  * @param mode  输出后端
  * @note  可在初始化后任意时刻调用，实时生效
  */
-void log_task_set_output(log_task_output_t mode);
+void log_task_flush(void);
 
 #ifdef __cplusplus
 }

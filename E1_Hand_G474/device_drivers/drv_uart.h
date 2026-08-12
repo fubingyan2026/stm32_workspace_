@@ -32,9 +32,11 @@ extern "C" {
 
 /**
  * @brief UART 通道枚举
+ * @note  DRV_UART_CH_1 (USART1) 已由独立 drv_log_uart 控制台驱动接管，
+ *        本驱动不再初始化/管理该通道（s_inst 中 CH_1 的 huart 置空）。
  */
 typedef enum {
-    DRV_UART_CH_1 = 0, /**< USART1 — PC4(TX) / PC5(RX), 500000 baud（日志串口） */
+    DRV_UART_CH_1 = 0, /**< USART1 — PC4(TX) / PC5(RX), 500000 baud（日志串口，由 drv_log_uart 接管） */
     DRV_UART_CH_2, /**< USART2 — PA2(TX) / PA3(RX), 500000 baud */
     DRV_UART_CH_3, /**< USART3 — PB10(TX) / PB11(RX), 500000 baud */
     DRV_UART_CH_NUM, /**< 通道总数 */
