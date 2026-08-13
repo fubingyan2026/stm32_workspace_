@@ -21,11 +21,18 @@
 #include <string.h>
 
 /* 模块日志开关 ----------------------------------------------------------------*/
+/** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
+#define  SRV_HT_TEMP_LOG_ENABLE 1
 
-#define SRV_HT_TEMP_TEST_LOG_I(...) LOG_I("srv_ht_temp_test", __VA_ARGS__)
+#if SRV_HT_TEMP_LOG_ENABLE
+#define SRV_HT_TEMP_TEST_LOG_I(...) ((void)0)//LOG_I("srv_ht_temp_test", __VA_ARGS__)
 #define SRV_HT_TEMP_TEST_LOG_W(...) LOG_W("srv_ht_temp_test", __VA_ARGS__)
 #define SRV_HT_TEMP_TEST_LOG_E(...) LOG_E("srv_ht_temp_test", __VA_ARGS__)
-
+#else
+#define SRV_HT_TEMP_TEST_LOG_I(...) ((void)0)
+#define SRV_HT_TEMP_TEST_LOG_W(...) ((void)0)
+#define SRV_HT_TEMP_TEST_LOG_E(...) ((void)0)
+#endif
 /* 模块测试开关 ----------------------------------------------------------------*/
 
 /** @brief 电机测试模式：1=上电自动启动（扫描 + 正转/停留/反转/停留 循环）；0=需手动调用 srv_ht_temp_test_start() */
@@ -36,14 +43,14 @@
 /* --- 苇熠伺服执行器 CAN 测试参数 --- */
 
 /** @brief 正转/反转转速 (RPM)。速度满量程 6000 RPM，IQ24 归一化 */
-#define SRV_HT_TEMP_TEST_SPEED_RPM 1000
+#define SRV_HT_TEMP_TEST_SPEED_RPM 500
 /**
  * @brief 缓启动斜坡时长 (ms)：无论目标转速大小，都在该时长内线性到达目标
  * @note  应 ≤ 阶段时长/2（停留阶段才能真正停下来）。固定步长方案在目标大、
  *        命令周期短时无法在阶段内爬满（如 100RPM/s 到 2000RPM 需 20s > 阶段 6s），
  *        导致电机始终在斜坡中途、没有停留时间。按时间斜坡自适应目标大小。
  */
-#define SRV_HT_TEMP_TEST_RAMP_TIME_MS 1000U
+#define SRV_HT_TEMP_TEST_RAMP_TIME_MS 2000U
 /** @brief 命令帧发送周期 (ms) */
 #define SRV_HT_TEMP_TEST_CMD_PERIOD_MS 100U
 /** @brief 报警查询周期 (ms)：电机报警需主动查询（0xFF），1s 一次 */
@@ -70,7 +77,7 @@
 #define SRV_HT_TEMP_TEST_RAW_RX_DEPTH 16U
 /** @brief 每个阶段时长 (ms)：正转/停留/反转/停留 */
 #define SRV_HT_TEMP_TEST_PHASE_MS 6000U
-/** @brief 测试总时长 (ms)：24h 后自动停止 */
+/** @brief 持续在线时长上限 (ms)：电机一直在线累计满 24h 自动停止，掉线期间不计时 */
 #define SRV_HT_TEMP_TEST_DURATION_MS 86400000U
 /** @brief 扫描完成后 1s 内补发使能/模式周期 (ms)：首帧可能因 TX FIFO 未就绪被丢弃 */
 #define SRV_HT_TEMP_TEST_STARTUP_RETRY_MS 100U
@@ -196,6 +203,12 @@ static uint32_t s_last_retry_ms;
 /** @brief 测试起始时间 (millis)，用于 24h 自动停止 */
 static uint32_t s_start_ms;
 
+/** @brief 累计在线时长 (ms)：仅电机持续在线时累加，用于 DURATION 自动停止 */
+static uint32_t s_online_ms;
+
+/** @brief 上次在线时长累计时间点 (millis) */
+static uint32_t s_online_last_ms;
+
 /** @brief 当前实际下发转速 (RPM)，缓启动斜坡插值结果 */
 static int16_t s_speed_rpm;
 
@@ -223,6 +236,9 @@ static uint32_t s_motor_last_seen_ms[SRV_HT_TEMP_TEST_MAX_MOTORS];
 /** @brief 电机无响应告警锁存（收到任何帧后清除，避免重复刷屏） */
 static bool s_motor_nresp_latch[SRV_HT_TEMP_TEST_MAX_MOTORS];
 
+/** @brief 恢复在线事件待打印标志（ISR 置位，主循环清零打印） */
+static bool s_online_evt_pending[SRV_HT_TEMP_TEST_MAX_MOTORS];
+
 #if SRV_HT_TEMP_TEST_VOLTAGE_QUERY_ENABLE
 /** @brief 每电机最新供电电压（0x87 应答更新，×100 单位 V，ISR 写） */
 static uint16_t s_motor_volt[SRV_HT_TEMP_TEST_MAX_MOTORS];
@@ -247,6 +263,7 @@ static uint32_t s_last_alarm_ms;
 /* Private function prototypes -----------------------------------------------*/
 
 static uint32_t srv_ht_temp_test_find_idx(uint8_t addr);
+static bool srv_ht_temp_test_all_online(void);
 static void srv_ht_temp_test_scan_record(uint8_t addr);
 static void srv_ht_temp_test_scan_log_new(void);
 static void srv_ht_temp_test_scan_done(void);
@@ -295,6 +312,8 @@ void srv_ht_temp_test_start(void)
 {
     s_running = true;
     s_start_ms = millis(); /* 24h 自动停止计时起点 */
+    s_online_ms = 0; /* 持续在线时长从 0 累计 */
+    s_online_last_ms = s_start_ms;
     s_speed_rpm = 0; /* 缓启动从 0 开始 */
     s_ramp_target_rpm = 0;
     s_ramp_from_rpm = 0;
@@ -311,6 +330,7 @@ void srv_ht_temp_test_start(void)
     memset(s_alarm_last, 0, sizeof(s_alarm_last));
     memset(s_motor_last_seen_ms, 0, sizeof(s_motor_last_seen_ms));
     memset(s_motor_nresp_latch, 0, sizeof(s_motor_nresp_latch));
+    memset(s_online_evt_pending, 0, sizeof(s_online_evt_pending));
 #if SRV_HT_TEMP_TEST_VOLTAGE_QUERY_ENABLE
     memset(s_motor_volt, 0, sizeof(s_motor_volt));
     memset(s_volt_pending, 0, sizeof(s_volt_pending));
@@ -341,7 +361,7 @@ void srv_ht_temp_test_stop(void)
 /**
  * @brief 测试模式周期步进（由 can_task 每 10ms 调用）
  * @note  阶段 1 扫描总线电机 ID；阶段 2 循环：正转 → 停留(速度 0) → 反转 → 停留(速度 0)，
- *        命令仅发往检测到的电机，可连续运行 24h
+ *        命令仅发往检测到的电机；电机持续在线累计满 DURATION_MS 自动停止
  */
 void srv_ht_temp_test_step(void)
 {
@@ -350,9 +370,17 @@ void srv_ht_temp_test_step(void)
 
     uint32_t now = millis();
 
-    /* 24h 到时自动停止 */
-    if ((now - s_start_ms) >= SRV_HT_TEMP_TEST_DURATION_MS) {
-        SRV_HT_TEMP_TEST_LOG_I("24 小时时长已到，测试自动停止");
+    /* 持续在线计时：仅当所有电机在线时累加（扫描期间/掉线期间不计时），
+       累计满 DURATION_MS（24h 在线时长）自动停止；掉线恢复后继续累计不重置。
+       s_online_last_ms 每步都更新，保证离线/扫描后恢复时时间不跳变。 */
+    if (!s_scanning && srv_ht_temp_test_all_online()) {
+        s_online_ms += (uint32_t)(now - s_online_last_ms);
+    }
+    s_online_last_ms = now;
+
+    if (s_online_ms >= SRV_HT_TEMP_TEST_DURATION_MS) {
+        SRV_HT_TEMP_TEST_LOG_I("电机持续在线累计 %lu ms 已到，测试自动停止",
+            (unsigned long)s_online_ms);
         srv_ht_temp_test_stop();
         return;
     }
@@ -459,6 +487,14 @@ void srv_ht_temp_test_step(void)
         }
     }
 
+    /* 打印恢复在线事件（ISR 置位，主循环消费），与上方掉线日志成对出现 */
+    for (uint32_t i = 0; i < s_motor_cnt; i++) {
+        if (s_online_evt_pending[i]) {
+            s_online_evt_pending[i] = false;
+            SRV_HT_TEMP_TEST_LOG_W("电机 0x%02X 恢复在线", (unsigned)s_motor_ids[i]);
+        }
+    }
+
     /* 正转/反转发方向速度帧；停留发速度 0 帧 (IQ24=0)，不失能 */
     int16_t target_rpm = 0;
     if (s_phase == SRV_HT_TEMP_TEST_PHASE_FORWARD) {
@@ -519,9 +555,13 @@ bool srv_ht_temp_test_on_rx(const drv_can_msg_t* msg)
     if (idx == SRV_HT_TEMP_TEST_MAX_MOTORS)
         return false;
 
-    /* 在线刷新：收到电机地址的任意帧都视为"电机在应答" */
+    /* 在线刷新：收到电机地址的任意帧都视为"电机在应答"。
+       此前处于掉线锁存的电机收到帧即恢复在线，置标志由主循环打印（ISR 不打日志） */
     s_motor_last_seen_ms[idx] = millis();
-    s_motor_nresp_latch[idx] = false;
+    if (s_motor_nresp_latch[idx]) {
+        s_motor_nresp_latch[idx] = false;
+        s_online_evt_pending[idx] = true;
+    }
 
 #if SRV_HT_TEMP_TEST_LOG_RAW_RX_ENABLE
     srv_ht_temp_test_raw_rx_push(msg); /* 调试：记录原始接收帧 */
@@ -566,6 +606,22 @@ static uint32_t srv_ht_temp_test_find_idx(uint8_t addr)
             return i;
     }
     return SRV_HT_TEMP_TEST_MAX_MOTORS;
+}
+
+/**
+ * @brief 所有已检测电机是否在线（无任何电机进入无响应锁存）
+ * @return true=全部在线
+ * @note  DURATION 持续在线计时仅在全部在线时累加；扫描中或 s_motor_cnt==0 视为不在线
+ */
+static bool srv_ht_temp_test_all_online(void)
+{
+    if (s_motor_cnt == 0U)
+        return false;
+    for (uint32_t i = 0; i < s_motor_cnt; i++) {
+        if (s_motor_nresp_latch[i])
+            return false;
+    }
+    return true;
 }
 
 /**

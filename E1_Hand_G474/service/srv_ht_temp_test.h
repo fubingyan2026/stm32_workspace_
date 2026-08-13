@@ -57,7 +57,7 @@ void srv_ht_temp_test_stop(void);
 /**
  * @brief 测试模式周期步进（由 can_task 每 10ms 调用）
  * @note  阶段 1 扫描总线电机 ID；阶段 2 循环：正转 → 停留(速度 0) → 反转 → 停留(速度 0)，
- *        命令仅发往检测到的电机，可连续运行 24h
+ *        命令仅发往检测到的电机；电机持续在线累计满 DURATION_MS 自动停止
  */
 void srv_ht_temp_test_step(void);
 

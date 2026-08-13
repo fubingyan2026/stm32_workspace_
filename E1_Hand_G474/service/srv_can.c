@@ -7,15 +7,25 @@
  *   反馈帧 (Device→Host, CAN ID 0x101, 100ms)：状态 + 角度/速度/Q电流
  *   状态帧 (Device→Host, CAN ID 0x102, 500ms)：状态 + 故障/温度/电压
  *
- * 苇熠伺服执行器测试协议已独立到 srv_ht_temp_test.c/h（经典 CAN 2.0A，1 Mbps，
- * 设备地址寻址）。srv_can_on_rx() 先将测试协议帧路由给 srv_ht_temp_test_on_rx()
- * 消费，返回 true 表示已处理；剩余帧按旧协议解析 0x100。
+ * 苇熠伺服执行器测试协议已独立到 srv_ht_temp_test.c/h 与 srv_ht_torque_test.c/h
+ * （经典 CAN 2.0A，1 Mbps，设备地址寻址），激活哪个模块由 srv_ht_test_mode.h 的
+ * SRV_HT_TEST_MODE_TORQUE 宏决定。srv_can_on_rx() 先将测试协议帧路由给选中的
+ * 测试模块 on_rx，返回 true 表示已处理；剩余帧按旧协议解析 0x100。
  */
 
 #include "srv_can.h"
 
-#include "srv_ht_temp_test.h"
+#include "srv_ht_test_mode.h"
 #include "srv_motor_behavior.h"
+
+/* 苇熠测试模式选择（srv_ht_test_mode.h）：temp=速度模式原测试，torque=位置模式往复耐久测试 */
+#if SRV_HT_TEST_MODE_TORQUE
+#include "srv_ht_torque_test.h"
+#define HT_TEST_ON_RX srv_ht_torque_test_on_rx
+#else
+#include "srv_ht_temp_test.h"
+#define HT_TEST_ON_RX srv_ht_temp_test_on_rx
+#endif
 
 #include <string.h>
 
@@ -38,7 +48,7 @@ void srv_can_init(void)
 }
 
 /**
- * @brief ISR 回调：先路由给测试协议（srv_ht_temp_test），再按旧协议解析 0x100 控制帧
+ * @brief ISR 回调：先路由给测试协议（选中模块 on_rx），再按旧协议解析 0x100 控制帧
  * @note  快速复制数据，置标志位，不打日志
  */
 void srv_can_on_rx(const drv_can_msg_t* msg)
@@ -46,8 +56,8 @@ void srv_can_on_rx(const drv_can_msg_t* msg)
     if (!msg)
         return;
 
-    /* 苇熠测试协议帧（扫描应答/报警/电压/在线心跳）由 srv_ht_temp_test 消费 */
-    if (srv_ht_temp_test_on_rx(msg))
+    /* 苇熠测试协议帧（扫描应答/位置/报警/电压/在线心跳）由选中的测试模块消费 */
+    if (HT_TEST_ON_RX(msg))
         return;
 
     if (msg->id != SRV_CAN_ID_CTRL || msg->dlc < SRV_CAN_CTRL_LEN)

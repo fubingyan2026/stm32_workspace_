@@ -14,12 +14,23 @@
 #include "drv_can.h"
 #include "log.h"
 #include "srv_can.h"
-#include "srv_ht_temp_test.h"
+#include "srv_ht_test_mode.h"
 #include "sw_timer.h"
+
+/* 苇熠测试模式选择（srv_ht_test_mode.h）：temp=速度模式原测试，torque=位置模式往复耐久测试 */
+#if SRV_HT_TEST_MODE_TORQUE
+#include "srv_ht_torque_test.h"
+#define HT_TEST_INIT srv_ht_torque_test_init
+#define HT_TEST_STEP srv_ht_torque_test_step
+#else
+#include "srv_ht_temp_test.h"
+#define HT_TEST_INIT srv_ht_temp_test_init
+#define HT_TEST_STEP srv_ht_temp_test_step
+#endif
 
 /* Private constants ---------------------------------------------------------*/
 
-#define TASK_PERIOD_MS 10U
+#define TASK_PERIOD_MS 5U
 #define FB_INTERVAL_MS 100U
 #define STATUS_INTERVAL_MS 500U
 
@@ -44,7 +55,7 @@ void can_task_init(void)
         return; /* CAN 不可用，不启动周期任务 */
     }
     srv_can_init();
-    srv_ht_temp_test_init(); /* 苇熠伺服执行器测试模式（SRV_HT_TEMP_TEST_AUTO_START=1 时自动启动） */
+    HT_TEST_INIT(); /* 苇熠伺服执行器测试模式（选中模块 AUTO_START=1 时自动启动） */
 
     drv_can_register_rx_callback(DRV_CAN_CH_1, can_rx_callback);
 
@@ -64,7 +75,7 @@ static void can_timer_cb(void* user_data)
 
     drv_can_poll_status(DRV_CAN_CH_1); /* Bus-Off 恢复 + 错误状态告警 */
     srv_can_process();
-    srv_ht_temp_test_step(); /* 苇熠伺服执行器测试模式：扫描 + 正转/停留/反转循环 */
+    HT_TEST_STEP(); /* 苇熠伺服执行器测试模式：扫描 + 循环驱动（模式见 srv_ht_test_mode.h） */
 
     s_fb_tick++;
     s_status_tick++;
