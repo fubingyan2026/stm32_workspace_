@@ -46,12 +46,12 @@
 
 typedef struct {
     drv_can_rx_callback_t rx_callback;
-    bool                  initialized;
-    bool                  bus_off;      /**< 上次轮询的 Bus-Off 状态（边沿检测） */
-    bool                  err_passive;  /**< 上次轮询的 Error-Passive 状态 */
-    uint32_t              tx_fail_cnt;  /**< 日志聚合窗口内发送失败次数 */
-    uint32_t              tx_fail_log;  /**< 上次发送失败日志时间戳 (ms) */
-    uint32_t              diag_log;     /**< 上次诊断日志时间戳 (ms) */
+    bool initialized;
+    bool bus_off; /**< 上次轮询的 Bus-Off 状态（边沿检测） */
+    bool err_passive; /**< 上次轮询的 Error-Passive 状态 */
+    uint32_t tx_fail_cnt; /**< 日志聚合窗口内发送失败次数 */
+    uint32_t tx_fail_log; /**< 上次发送失败日志时间戳 (ms) */
+    uint32_t diag_log; /**< 上次诊断日志时间戳 (ms) */
 } drv_can_ctx_t;
 
 /* Private constants ---------------------------------------------------------*/
@@ -68,8 +68,22 @@ static FDCAN_HandleTypeDef* const s_hfdcan[DRV_CAN_CH_NUM] = {
  * 与实际字节数并非线性对应（如 DLC=9 → 12 字节）。此表做一次查表转换。
  */
 static const uint8_t s_dlc_to_bytes[16] = {
-    0, 1, 2, 3, 4, 5, 6, 7, 8,      /*  0-8 */
-    12, 16, 20, 24, 32, 48, 64,      /* 9-15 */
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8, /*  0-8 */
+    12,
+    16,
+    20,
+    24,
+    32,
+    48,
+    64, /* 9-15 */
 };
 
 /* Private variables ---------------------------------------------------------*/
@@ -103,7 +117,8 @@ drv_can_error_t drv_can_init(void)
                 FDCAN_ACCEPT_IN_RX_FIFO0,
                 FDCAN_ACCEPT_IN_RX_FIFO0,
                 FDCAN_REJECT_REMOTE,
-                FDCAN_REJECT_REMOTE) != HAL_OK) {
+                FDCAN_REJECT_REMOTE)
+            != HAL_OK) {
             CAN_LOG_E("ch%u ConfigGlobalFilter failed (state=%d)",
                 (unsigned)ch + 1U, (int)HAL_FDCAN_GetState(s_hfdcan[ch]));
             return DRV_CAN_ERROR_UNINITIALIZED;
@@ -111,7 +126,8 @@ drv_can_error_t drv_can_init(void)
 
         /* 2. 使能 RX FIFO 0 新消息中断（映射到中断线 0） */
         if (HAL_FDCAN_ActivateNotification(s_hfdcan[ch],
-                FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK) {
+                FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0)
+            != HAL_OK) {
             CAN_LOG_E("ch%u ActivateNotification failed", (unsigned)ch + 1U);
             return DRV_CAN_ERROR_UNINITIALIZED;
         }
@@ -166,15 +182,15 @@ drv_can_error_t drv_can_send(drv_can_channel_t ch, const drv_can_msg_t* msg)
     }
 
     FDCAN_TxHeaderTypeDef tx = {
-        .Identifier           = msg->id,
-        .IdType               = msg->is_extended ? FDCAN_EXTENDED_ID : FDCAN_STANDARD_ID,
-        .TxFrameType          = FDCAN_DATA_FRAME,
-        .DataLength           = bytes_to_fdcan_dlc(msg->dlc),
-        .ErrorStateIndicator  = FDCAN_ESI_ACTIVE,
-        .BitRateSwitch        = FDCAN_BRS_OFF,
-        .FDFormat             = msg->is_fd ? FDCAN_FD_CAN : FDCAN_CLASSIC_CAN,
-        .TxEventFifoControl   = FDCAN_NO_TX_EVENTS,
-        .MessageMarker        = 0,
+        .Identifier = msg->id,
+        .IdType = msg->is_extended ? FDCAN_EXTENDED_ID : FDCAN_STANDARD_ID,
+        .TxFrameType = FDCAN_DATA_FRAME,
+        .DataLength = bytes_to_fdcan_dlc(msg->dlc),
+        .ErrorStateIndicator = FDCAN_ESI_ACTIVE,
+        .BitRateSwitch = msg->is_fd ? FDCAN_BRS_ON : FDCAN_BRS_OFF, /* FD 帧启用位速率切换：仲裁段 1M / 数据段 5M */
+        .FDFormat = msg->is_fd ? FDCAN_FD_CAN : FDCAN_CLASSIC_CAN,
+        .TxEventFifoControl = FDCAN_NO_TX_EVENTS,
+        .MessageMarker = 0,
     };
 
     if (HAL_FDCAN_AddMessageToTxFifoQ(s_hfdcan[ch], &tx, msg->data) != HAL_OK) {
@@ -295,9 +311,9 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef* hfdcan, uint32_t RxFifo0ITs)
         return;
     }
 
-    msg.id          = rx.Identifier;
+    msg.id = rx.Identifier;
     msg.is_extended = (rx.IdType == FDCAN_EXTENDED_ID);
-    msg.is_fd       = (rx.FDFormat == FDCAN_FD_CAN);
+    msg.is_fd = (rx.FDFormat == FDCAN_FD_CAN);
 
     /* FDCAN DataLength 是 DLC 编码值（0-15），查表转换为实际字节数 */
     {

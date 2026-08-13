@@ -48,7 +48,7 @@
 #define DRV_UART_RX_BUF_SIZE (20U)
 
 /** @brief TX 最大单次发送量 */
-#define DRV_UART_TX_BUF_SIZE (20U)
+#define DRV_UART_TX_BUF_SIZE (256U)
 
 /** @brief 错误日志聚合窗口 (ms)：窗口内的错误只在首次打印，附累计次数 */
 #define DRV_UART_ERR_LOG_PERIOD_MS (1000U)
@@ -72,7 +72,8 @@ typedef struct {
 /* Private variables ---------------------------------------------------------*/
 
 static drv_uart_inst_t s_inst[DRV_UART_CH_NUM] = {
-    [DRV_UART_CH_1] = { .huart = &huart1 },
+    /* CH_1 (USART1) 已由独立 drv_log_uart 控制台驱动接管，此处置空跳过 */
+    [DRV_UART_CH_1] = { .huart = NULL },
     [DRV_UART_CH_2] = { .huart = &huart2 },
     [DRV_UART_CH_3] = { .huart = &huart3 },
 };
@@ -91,6 +92,13 @@ static void drv_uart_rx_flush_errors(UART_HandleTypeDef* huart)
         UART_CLEAR_OREF | UART_CLEAR_NEF | UART_CLEAR_FEF | UART_CLEAR_PEF);
     __HAL_UART_SEND_REQ(huart, UART_RXDATA_FLUSH_REQUEST);
 }
+
+/* 注册到 HAL 的 per-instance 回调（USE_HAL_UART_REGISTER_CALLBACKS=1） */
+static void drv_uart_tx_cplt_cb(UART_HandleTypeDef* huart);
+
+static void drv_uart_rx_event_cb(UART_HandleTypeDef* huart, uint16_t size);
+
+static void drv_uart_error_cb(UART_HandleTypeDef* huart);
 
 /**
  * @brief 启动/重启 RX DMA 到当前活动缓冲（ISR 与主循环共用）
@@ -123,6 +131,11 @@ drv_uart_error_t drv_uart_init(void)
     for (uint32_t ch = 0; ch < DRV_UART_CH_NUM; ch++) {
         drv_uart_inst_t* inst = &s_inst[ch];
 
+        /* CH_1 (USART1) 由 drv_log_uart 接管，跳过 */
+        if (inst->huart == NULL) {
+            continue;
+        }
+
         inst->tx_busy = false;
         inst->initialized = false;
         inst->rx_buf_idx = 0;
@@ -138,6 +151,14 @@ drv_uart_error_t drv_uart_init(void)
             err = DRV_UART_ERROR_UNINITIALIZED;
             continue;
         }
+
+        /* 注册 per-instance HAL 回调（USE_HAL_UART_REGISTER_CALLBACKS=1，
+           本驱动只接管 huart2/huart3，USART1 由 drv_log_uart 独占） */
+        HAL_UART_RegisterCallback(inst->huart, HAL_UART_TX_COMPLETE_CB_ID,
+            drv_uart_tx_cplt_cb);
+        HAL_UART_RegisterCallback(inst->huart, HAL_UART_ERROR_CB_ID,
+            drv_uart_error_cb);
+        HAL_UART_RegisterRxEventCallback(inst->huart, drv_uart_rx_event_cb);
 
         inst->initialized = true;
     }
@@ -240,12 +261,12 @@ void drv_uart_register_rx_callback(drv_uart_channel_t ch,
     s_inst[ch].rx_callback = callback;
 }
 
-/* ===== HAL 回调（统一管理所有 UART 实例） ===== */
+/* ===== 注册到 HAL 的 per-instance 回调（USE_HAL_UART_REGISTER_CALLBACKS=1） ===== */
 
 /**
- * @brief UART TX DMA 完成回调 — 清除 tx_busy
+ * @brief UART TX DMA 完成回调（per-instance）— 清除 tx_busy
  */
-void HAL_UART_TxCpltCallback(UART_HandleTypeDef* huart)
+static void drv_uart_tx_cplt_cb(UART_HandleTypeDef* huart)
 {
     for (uint32_t ch = 0; ch < DRV_UART_CH_NUM; ch++) {
         if (s_inst[ch].initialized && s_inst[ch].huart == huart) {
@@ -256,13 +277,13 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef* huart)
 }
 
 /**
- * @brief UART RX 事件回调（IDLE/TC）— ping-pong 切换缓冲后立即重启，再上抛数据
+ * @brief UART RX 事件回调（per-instance，IDLE/TC）— ping-pong 切换缓冲后立即重启，再上抛数据
  * @note  IDLE：总线空闲，本次突发结束，Size = 实际已收字节数（HAL 已结束本次接收）；
  *        TC：缓冲收满（Size = 缓冲大小）。两者都已停止接收，需立即重启。
  *        HT 事件已在启动时关闭中断，此处再按事件类型兜底过滤（HT 时接收仍在进行）。
  *        先重启后上抛：接收停止窗口压缩到微秒级，抑制 ORE。
  */
-void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef* huart, uint16_t Size)
+static void drv_uart_rx_event_cb(UART_HandleTypeDef* huart, uint16_t Size)
 {
     /* HT 事件：接收仍在进行，不处理（正常已关闭 HT 中断，双保险） */
     if (HAL_UARTEx_GetRxEventType(huart) == HAL_UART_RXEVENT_HT) {
@@ -290,13 +311,13 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef* huart, uint16_t Size)
 }
 
 /**
- * @brief UART 错误回调 — 限频打印错误原因，立即重启接收
+ * @brief UART 错误回调（per-instance）— 限频打印错误原因，立即重启接收
  * @note  DMA 接收模式下 HAL 将 ORE/FE/NE 等按阻塞错误处理并中止 RX DMA，
  *        必须立即重启否则接收永久停止；活动缓冲数据可能已被污染，丢弃。
  *        总线异常（如电机被拔）时错误可达数百次/秒，日志按
  *        DRV_UART_ERR_LOG_PERIOD_MS 窗口聚合，打印窗口内累计次数与错误类型并集。
  */
-void HAL_UART_ErrorCallback(UART_HandleTypeDef* huart)
+static void drv_uart_error_cb(UART_HandleTypeDef* huart)
 {
     uint32_t err = HAL_UART_GetError(huart);
 
@@ -339,7 +360,7 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef* huart)
         return;
     }
 
-    /* 未匹配到实例（初始化早期），仅清标志防止错误中断风暴 */
+    /* 未匹配到实例（初始化早期或 USART1 由 drv_log_uart 接管），仅清标志防止错误中断风暴 */
     drv_uart_rx_flush_errors(huart);
 }
 

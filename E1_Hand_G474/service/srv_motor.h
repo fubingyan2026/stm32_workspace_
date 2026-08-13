@@ -196,7 +196,7 @@ typedef struct srv_motor_handle srv_motor_handle_t;
  */
 struct srv_motor_handle {
     uint8_t dev_id; /**< 设备 ID (1-based) */
-    drv_uart_channel_t uart_ch; /**< UART 通道 (DRV_UART_CH_1 / CH_2) */
+    drv_uart_channel_t uart_ch; /**< UART 通道 (DRV_UART_CH_2 / CH_3) */
 
     /* 控制设定 （外部写入，step 读取下发） */
     int16_t pos_ref; /**< Q7 目标角度 */

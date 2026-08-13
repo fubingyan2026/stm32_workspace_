@@ -64,7 +64,17 @@ void MX_FDCAN1_Init(void)
   /* USER CODE END FDCAN1_Init 2 */
 
 }
-
+  // /* 内核时钟 PCLK1 = 160MHz：
+  //  * 仲裁段 160/(8×20) = 1.000 MHz (采样点 80%)
+  //  * 数据段 160/(2×16) = 5.000 MHz (采样点 87.5%) */
+  // hfdcan1.Init.NominalPrescaler = 8;
+  // hfdcan1.Init.NominalSyncJumpWidth = 4;
+  // hfdcan1.Init.NominalTimeSeg1 = 15;
+  // hfdcan1.Init.NominalTimeSeg2 = 4;
+  // hfdcan1.Init.DataPrescaler = 2;
+  // hfdcan1.Init.DataSyncJumpWidth = 2;
+  // hfdcan1.Init.DataTimeSeg1 = 13;
+  // hfdcan1.Init.DataTimeSeg2 = 2;
 void HAL_FDCAN_MspInit(FDCAN_HandleTypeDef* fdcanHandle)
 {
 
