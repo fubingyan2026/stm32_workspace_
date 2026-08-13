@@ -14,6 +14,7 @@
 #include "drv_can.h"
 #include "log.h"
 #include "srv_can.h"
+#include "srv_ht_temp_test.h"
 #include "sw_timer.h"
 
 /* Private constants ---------------------------------------------------------*/
@@ -43,6 +44,7 @@ void can_task_init(void)
         return; /* CAN 不可用，不启动周期任务 */
     }
     srv_can_init();
+    srv_ht_temp_test_init(); /* 苇熠伺服执行器测试模式（SRV_HT_TEMP_TEST_AUTO_START=1 时自动启动） */
 
     drv_can_register_rx_callback(DRV_CAN_CH_1, can_rx_callback);
 
@@ -62,7 +64,7 @@ static void can_timer_cb(void* user_data)
 
     drv_can_poll_status(DRV_CAN_CH_1); /* Bus-Off 恢复 + 错误状态告警 */
     srv_can_process();
-    srv_can_test_step(); /* 测试模式：每秒发送一次速度帧 */
+    srv_ht_temp_test_step(); /* 苇熠伺服执行器测试模式：扫描 + 正转/停留/反转循环 */
 
     s_fb_tick++;
     s_status_tick++;

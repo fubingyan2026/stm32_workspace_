@@ -40,7 +40,7 @@
 static const uint32_t FLASH_PROGRAM_SIZE = 8;
 static const uint64_t FLASH_ERASED_VAL = (~0ULL);
 static const uint32_t FLASH_BASE_ADDR = 0x08000000U;
-static const uint32_t FLASH_TOTAL_SIZE = 512 * 1024U; /* 512 KB */
+static const uint32_t FLASH_TOTAL_SIZE = 128 * 1024U; /*128 KB */
 
 /* Private types -------------------------------------------------------------*/
 
@@ -89,14 +89,18 @@ static hal_flash_err_t g4_init(void)
     hal_flash_dev_t* dev = hal_flash_dev();
 
     if (READ_BIT(FLASH->OPTR, FLASH_OPTR_DBANK) == 0U) {
+        /* 单 Bank：STM32G474 整个 512KB 为 Bank1。
+           此前误设 128KB，导致地址 >0x08020000 的擦除被错误分块，
+           且恰在 0x08020000 处触发 chunk=0 死循环（见 g4_erase 防御）。 */
         g4_priv.page_size = 0x1000U;
-        g4_priv.bank_size = 0x20000U;
+        g4_priv.bank_size = FLASH_TOTAL_SIZE;
         FLASH_LOG_I("Init: single-bank mode, page=%luKB, bank=%luKB",
             (unsigned long)(g4_priv.page_size >> 10),
             (unsigned long)(g4_priv.bank_size >> 10));
     } else {
+        /* 双 Bank：2 × 256KB（此前误设 64KB） */
         g4_priv.page_size = 0x800U;
-        g4_priv.bank_size = 0x10000U;
+        g4_priv.bank_size = FLASH_TOTAL_SIZE / 2U;
         FLASH_LOG_I("Init: dual-bank mode, page=%luKB, bank=%luKB",
             (unsigned long)(g4_priv.page_size >> 10),
             (unsigned long)(g4_priv.bank_size >> 10));
@@ -161,6 +165,17 @@ static hal_flash_err_t g4_erase(uint32_t offset, size_t size)
         if (chunk > remaining) {
             chunk = remaining;
         }
+
+        /* 防御：current_addr 到达（错误的）bank 末尾时 chunk=0，下方
+           while(remaining>0) 永不前进 → 关中断死循环（logclear 曾在此卡死）。
+           几何模型正确时不会触发；触发则报错返回而非冻结系统。 */
+        if (chunk == 0U) {
+            FLASH_LOG_E("Erase: invalid bank geometry, deadlock at addr=0x%08lX",
+                (unsigned long)current_addr);
+            result = HAL_FLASH_ERASE_ERR;
+            goto exit_erase;
+        }
+
         uint32_t chunk_pages = (uint32_t)(chunk / page_size);
         uint32_t page = (current_addr - bank_base) / page_size;
 

@@ -27,7 +27,7 @@
 |----|----|
 | 存储内容 | 仅 WARN（级别 2）及以上，ERROR（级别 1） |
 | 存储单位 | 每条日志 = 1 个 ring_storage 帧 |
-| 区域 | 0x0801A000 ~ 0x08021000，28KB = **7 × 4KB 扇区** |
+| 区域 | 0x08019000 ~ 0x08020000，28KB = **7 × 4KB 扇区** |
 | 最大保留 | **204 条**（写满才回绕擦最旧） |
 | 掉电安全 | 每帧独立 CRC + commit_magic，最多丢"正在写的那一条" |
 
@@ -64,14 +64,14 @@ ring_storage_save() → Flash
 ## Flash 布局
 
 ```
-0x0801A000 ┬ 扇区 0 (4KB)  ─┐
-0x0801B000 ┬ 扇区 1 (4KB)   │ 7 × 4KB
-0x0801C000 ┬ 扇区 2 (4KB)   │ = 28KB
-0x0801D000 ┬ 扇区 3 (4KB)   │ 环形轮转 + 懒擦除
-0x0801E000 ┬ 扇区 4 (4KB)   │
-0x0801F000 ┬ 扇区 5 (4KB)   │
-0x08020000 ┬ 扇区 6 (4KB)  ─┘
-0x08021000 ┘
+0x08019000 ┬ 扇区 0 (4KB)  ─┐
+0x0801A000 ┬ 扇区 1 (4KB)   │ 7 × 4KB
+0x0801B000 ┬ 扇区 2 (4KB)   │ = 28KB
+0x0801C000 ┬ 扇区 3 (4KB)   │ 环形轮转 + 懒擦除
+0x0801D000 ┬ 扇区 4 (4KB)   │
+0x0801E000 ┬ 扇区 5 (4KB)   │
+0x0801F000 ┬ 扇区 6 (4KB)  ─┘
+0x08020000 ┘ (128KB Flash 边界)
 ```
 
 每个扇区内按版本号递增顺序追加帧：
@@ -181,7 +181,7 @@ log_set_flash_sink_cb(srv_log_flash_sink);
 | 宏 | 默认值 | 说明 |
 |----|--------|------|
 | `SRV_LOG_FLASH_ENABLE` | 1 | 总开关 |
-| `SRV_LOG_FLASH_AREA_START` | 0x0801A000 | 区域起点（4KB 对齐） |
+| `SRV_LOG_FLASH_AREA_START` | 0x08019000 | 区域起点（4KB 对齐，终点为 128KB Flash 边界） |
 | `SRV_LOG_FLASH_AREA_SIZE` | 28KB | 区域大小 = 7 × 4KB 扇区 |
 | `SRV_LOG_FLASH_SECTOR_SIZE` | RING_STORAGE_SECTOR_4K | 逻辑扇区（= G4 单 Bank 物理页） |
 | `SRV_LOG_FLASH_LINE_MAX` | 96 | 单条记录文本上限（当前最长 ~95B） |

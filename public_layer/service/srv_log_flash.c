@@ -35,7 +35,7 @@
  *        需同时容纳旧帧 + 新帧）。单条记录帧体积远小于此，仅作编译期兜底。
  */
 _Static_assert(2U * SRV_LOG_FLASH_FRAME_FLASH_SIZE <= SRV_LOG_FLASH_SECTOR_SIZE,
-    "srv_log_flash: 帧过大，无法容纳 2 帧/扇区（ring_storage GC 约束）");
+    "srv_log_flash: 帧过大，无法容纳 2 帧/扇区(ring_storage GC 约束)");
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
 #define SRV_LOG_FLASH_LOG_ENABLE 1

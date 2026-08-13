@@ -46,17 +46,16 @@ extern "C" {
 #endif
 
 /**
- * @brief Flash 存储区域 — 0x0801A000 ~ 0x08021000 (28KB = 7 × 4KB 扇区)
+ * @brief Flash 存储区域 — 0x08019000 ~ 0x08020000 (28KB = 7 × 4KB 扇区)
  *
  * @note 保留容量 ≈ 区域大小 / 帧体积 ≈ 204 条。
  *       4KB 逻辑扇区 = G4 单 Bank 一个物理页，擦除 1:1。
- *       起点 0x0801A000 为 4KB 对齐；前 4KB (0x08019000~0x0801A000) 空闲，
- *       若将起点移到 0x08019000 则区域为 0x08019000~0x0801FFFF，终点正好落在
- *       0x08020000 边界上（当前起点会占用到 0x08021000，仍在 512KB 物理 Flash 内）。
+ *       起点 0x08019000 为 4KB 对齐；终点 0x08020000 恰为 128KB Flash 边界
+ *       （驱动 FLASH_TOTAL_SIZE 按 128KB 配置；若为 512KB 硅片可上移起点扩容）。
  *       代码区由链接脚本限制在前 100KB (0x08000000~0x08018FFF)，无重叠。
  */
 #ifndef SRV_LOG_FLASH_AREA_START
-#define SRV_LOG_FLASH_AREA_START (0x0801A000UL) /**< 28KB 区域起点（4KB 扇区对齐） */
+#define SRV_LOG_FLASH_AREA_START (0x08019000UL) /**< 28KB 区域起点（4KB 扇区对齐，终点恰为 128KB Flash 边界） */
 #endif
 #ifndef SRV_LOG_FLASH_AREA_SIZE
 #define SRV_LOG_FLASH_AREA_SIZE (28 * 1024U) /**< 28KB = 7 × 4KB 扇区 */

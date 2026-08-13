@@ -127,8 +127,10 @@ service/                业务逻辑层（本地 + public_layer/service 共同�
                         全局索引 0-4=A, 5-8=B；电机名 "motorA1".."motorB4"（daemon 注册名单一来源）
   srv_motor_behavior.c/h 电机行为协调 FSM — 单 fsm 管理 9 电机组生命周期
                         （OFFLINE→IDLE→CALIB→RUNNING⇄FAULT，CALIB=上电到位找零；在线判定来自 daemon）
-  srv_can.c/h           CAN 协议服务 — 苇熠伺服执行器测试协议（经典 CAN 2.0A 1Mbps）为主，
-                        旧 CAN FD 上位机协议（0x100/0x101/0x102）保留
+  srv_can.c/h           旧 CAN FD 上位机协议 — 控制帧 (0x100) 解析 + 反馈/状态帧打包 (0x101/0x102)；
+                        srv_can_on_rx 先将测试协议帧路由给 srv_ht_temp_test
+  srv_ht_temp_test.c/h  苇熠(HT) 伺服执行器 CAN 测试协议 — 经典 CAN 2.0A 1Mbps，总线扫描 (0x00 握手) +
+                        使能/速度/报警/电压查询循环；独立于 srv_motor 体系
 tasks/                  应用编排层
   app_main.c/h          主入口：init 顺序 → for(;;) { uart rx restart; sw_timer_tick/task; srv_motor_step(); }
   can_task.c/h          CAN 任务（10ms 周期 sw_timer）— drv_can_poll_status + srv_can_process + 测试步进
@@ -233,8 +235,8 @@ for (;;) {
 ```
 上位机 (CAN, FDCAN1)
     │
-    ├─ 主用（测试模式）：经典 CAN 2.0A @ 1Mbps，苇熠伺服执行器协议
-    │      CAN-ID 低 8 位=设备地址，≤8B，srv_can_test_step() 每 10ms 驱动（扫 ID/使能/正反转/查报警）
+    ├─ 主用（测试模式）：经典 CAN 2.0A @ 1Mbps，苇熠伺服执行器协议（srv_ht_temp_test）
+    │      CAN-ID 低 8 位=设备地址，≤8B，srv_ht_temp_test_step() 每 10ms 驱动（扫 ID/使能/正反转/查报警）
     │
     └─ 旧 CAN FD 上位机协议（保留，can_task 中上报暂注释）：
           0x100 控制帧 (55B) → srv_can_on_rx() → srv_can_process() → srv_motor_behavior_set_setpoint()
@@ -249,7 +251,7 @@ for (;;) {
     USART1 (115200 bps) — 日志 DMA TX + 控制台命令 DMA circular/IDLE RX (drv_log_uart)
 ```
 
-协议细节见 [docs/can_protocol.md](docs/can_protocol.md)（CAN FD 旧协议）、[docs/uart_protocol.md](docs/uart_protocol.md) 和 [docs/motor_control_api.md](docs/motor_control_api.md)。苇熠测试协议组帧定义在 `srv_can.c` 头部注释（其引用的 `docs/苇熠电机can协议文档.md` 当前不在 docs/ 下）。
+协议细节见 [docs/can_protocol.md](docs/can_protocol.md)（CAN FD 旧协议）、[docs/uart_protocol.md](docs/uart_protocol.md) 和 [docs/motor_control_api.md](docs/motor_control_api.md)。苇熠测试协议组帧定义在 `srv_ht_temp_test.c` 头部注释，协议规范见 [docs/苇熠电机can协议文档.md](docs/苇熠电机can协议文档.md)。
 
 ## 编码规范
 
