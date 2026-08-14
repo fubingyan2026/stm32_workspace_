@@ -234,6 +234,16 @@ log_error_t log_set_color_enable(bool enable);
 log_error_t log_set_timestamp_enable(bool enable);
 
 /**
+ * @brief 暂停/恢复格式化日志（LOG_* 与 hexdump）的 TX 输出
+ * @param hold true=暂停（仅 log_write 仍可输出），false=恢复
+ * @return 操作结果错误码
+ * @note  用于 Flash 日志 dump 期间屏蔽实时日志、避免与历史记录混排。
+ *        暂停仅屏蔽 TX 队列写入；若已注册落盘钩子，WARN/ERROR 仍会持久化不丢失。
+ *        log_write() / log_tx_*() 不受影响。
+ */
+log_error_t log_hold_output(bool hold);
+
+/**
  * @brief 注册日志落盘回调（Flash 持久化钩子）
  * @param cb 回调函数指针（NULL=取消注册）
  * @return 操作结果错误码
@@ -275,6 +285,12 @@ log_error_t log_write(const uint8_t* data, uint32_t len);
  * @return 缓冲区中的数据长度，未初始化返回0
  */
 uint32_t log_tx_len(void);
+
+/**
+ * @brief 获取输出缓冲区剩余可写空间
+ * @return 可写入的字节数，未初始化返回0
+ */
+uint32_t log_tx_avail(void);
 
 /**
  * @brief 从输出缓冲区取出数据

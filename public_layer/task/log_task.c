@@ -238,6 +238,11 @@ static void log_timer_cb(void* user_data)
             break;
         }
     }
+
+#if !defined(E1_BUILD_BOOT)
+    /* ── Flash 日志流式 dump 驱动（背压：TX 排空后继续输出剩余记录） ── */
+    srv_log_flash_dump_step();
+#endif
 }
 
 /**

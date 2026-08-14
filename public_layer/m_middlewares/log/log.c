@@ -60,6 +60,9 @@ static kfifo_t s_tx_fifo;
 /** @brief 当前日志级别 */
 static uint8_t s_current_level = LOG_DEFAULT_LEVEL;
 
+/** @brief TX 输出暂停标志（dump 期间屏蔽实时日志） */
+static bool s_output_held = false;
+
 /** @brief 初始化标志 */
 static bool s_initialized = false;
 
@@ -217,6 +220,22 @@ log_error_t log_set_timestamp_enable(bool enable)
 }
 
 /**
+ * @brief 暂停/恢复格式化日志（LOG_* 与 hexdump）的 TX 输出
+ * @param hold true=暂停（仅 log_write 仍可输出），false=恢复
+ * @return 操作结果错误码
+ */
+log_error_t log_hold_output(bool hold)
+{
+    if (!s_initialized) {
+        return LOG_ERROR_UNINITIALIZED;
+    }
+
+    s_output_held = hold;
+
+    return LOG_OK;
+}
+
+/**
  * @brief 注册日志落盘回调（Flash 持久化钩子）
  * @param cb 回调函数指针（NULL=取消注册）
  * @return 操作结果错误码
@@ -282,6 +301,11 @@ log_error_t log_hexdump(const char* tag, const uint8_t* data, uint32_t len)
     }
 
     if (len == 0) {
+        return LOG_OK;
+    }
+
+    /* TX 暂停期间丢弃实时十六进制转储（不触发落盘钩子，属实时诊断输出） */
+    if (s_output_held) {
         return LOG_OK;
     }
 
@@ -362,6 +386,19 @@ uint32_t log_tx_len(void)
     }
 
     return kfifo_len(&s_tx_fifo);
+}
+
+/**
+ * @brief 获取输出缓冲区剩余可写空间
+ * @return 可写入的字节数，未初始化返回0
+ */
+uint32_t log_tx_avail(void)
+{
+    if (!s_initialized) {
+        return 0;
+    }
+
+    return kfifo_avail(&s_tx_fifo);
 }
 
 /**
@@ -458,9 +495,13 @@ static log_error_t log_format_output(log_level_t level, const char* tag,
 
     offset += snprintf_(buf + offset, buf_size - offset, "\r\n");
 
-    kfifo_put(&s_tx_fifo, (const uint8_t*)buf, offset);
+    /* TX 暂停期间（如 Flash 日志 dump）屏蔽实时日志输出；落盘钩子不受影响 */
+    if (!s_output_held) {
+        kfifo_put(&s_tx_fifo, (const uint8_t*)buf, offset);
+    }
 
-    /* 落盘钩子：将格式化后的日志行同步上抛给已注册的 Flash 持久化回调 */
+    /* 落盘钩子：将格式化后的日志行同步上抛给已注册的 Flash 持久化回调，
+       暂停 TX 期间 WARN/ERROR 仍持久化不丢失 */
     if (s_flash_sink_cb != NULL) {
         s_flash_sink_cb(level, buf, offset);
     }

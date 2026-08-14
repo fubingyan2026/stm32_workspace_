@@ -121,6 +121,29 @@ extern "C" {
 #endif
 
 /**
+ * @brief dump 单条记录最大输出字节（颜色码 5 + 文本 LINE_MAX + 复位码 4）
+ * @note  文本长度最大 SRV_LOG_FLASH_LINE_MAX（96），颜色码/复位码为固定 ANSI 序列。
+ */
+#define SRV_LOG_FLASH_DUMP_RECORD_OUT_MAX (5U + SRV_LOG_FLASH_LINE_MAX + 4U)
+
+/**
+ * @brief 流式 dump 背压水位：log TX 剩余空间低于该值暂停读取，等排空后下个周期续传
+ * @note  须大于 SRV_LOG_FLASH_DUMP_RECORD_OUT_MAX（单条输出），保证单条完整写入；
+ *        默认 128B > 105B，留 23B 余量抵消 ISR 并发写 TX 的抖动。
+ */
+#ifndef SRV_LOG_FLASH_DUMP_WATERMARK
+#define SRV_LOG_FLASH_DUMP_WATERMARK (128U)
+#endif
+
+/**
+ * @brief 流式 dump 停滞超时：输出通道长时间无法排空（如 LOG_OUTPUT_NONE、UART 停发）时中止 dump
+ * @note  正常 UART/RTT 输出下 TX 持续排空不会触发；仅防卡死。
+ */
+#ifndef SRV_LOG_FLASH_DUMP_STALL_MS
+#define SRV_LOG_FLASH_DUMP_STALL_MS (2000U)
+#endif
+
+/**
  * @brief 存储布局版本（仅作固件版本标记；实际布局以"记录体积"为准）
  *
  * @note  V6：从"整帧快照（40 条/帧）"改为"每条日志一帧"，保留 204 条。
@@ -174,6 +197,14 @@ void srv_log_flash_step(void);
  *        旧布局帧 / 数据 CRC 损坏帧自动跳过。
  */
 void srv_log_flash_dump(void);
+
+/**
+ * @brief 流式 dump 步进（由 log_task 的 sw_timer 周期调用，背压续传）
+ * @note  dump 启动后每次调用按背压水位输出部分记录：log TX 剩余空间不足
+ *        一条记录时等待下个周期（排空续传），输出通道停滞超过 STALL_MS 时
+ *        打印中止提示并结束，避免卡死。
+ */
+void srv_log_flash_dump_step(void);
 
 /**
  * @brief 清空已存储的日志（整区擦除 + 丢弃待落盘队列）

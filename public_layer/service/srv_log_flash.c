@@ -95,6 +95,15 @@ static bool s_initialized = false;
 static srv_log_flash_frame_t s_dump_frames[SRV_LOG_FLASH_MAX_FRAMES];
 static uint32_t s_dump_count = 0;
 
+/** @brief 流式 dump 进行中标志 */
+static bool s_dump_active = false;
+
+/** @brief 流式 dump 当前输出索引（指向 s_dump_frames） */
+static uint32_t s_dump_index = 0;
+
+/** @brief 流式 dump 最近一次成功输出时间戳 (millis)，用于停滞检测 */
+static uint32_t s_dump_last_write_ms = 0;
+
 /* Private function prototypes -----------------------------------------------*/
 
 /**
@@ -243,7 +252,7 @@ void srv_log_flash_step(void)
 }
 
 /**
- * @brief 打印 Flash 中存储的日志（经 log 输出通道发往控制台）
+ * @brief 启动 Flash 日志流式 dump（收集+排序+打印头，逐条输出交给 dump_step 背压续传）
  */
 void srv_log_flash_dump(void)
 {
@@ -260,6 +269,14 @@ void srv_log_flash_dump(void)
     /* 按版本升序排序（版本单调递增 = 时间顺序，处理 32 位回绕） */
     srv_log_flash_sort_frames(s_dump_frames, s_dump_count);
 
+    if (s_dump_count == 0) {
+        SRV_LOG_FLASH_LOG_STR("(无记录)\r\n");
+        return;
+    }
+
+    /* 屏蔽实时日志，保证 dump 输出连续；dump_step 完成/中止或 clear 时恢复 */
+    (void)log_hold_output(true);
+
     char header[64];
     int n = snprintf_(header, sizeof(header),
         "===== Flash 日志 (WARN/ERROR) %lu/%lu 条 =====\r\n",
@@ -268,30 +285,76 @@ void srv_log_flash_dump(void)
         log_write((const uint8_t*)header, (uint32_t)n);
     }
 
-    if (s_dump_count == 0) {
-        SRV_LOG_FLASH_LOG_STR("(无记录)\r\n");
+    /* 初始化流式输出状态：由 dump_step 按背压逐条续传 */
+    s_dump_index = 0;
+    s_dump_active = true;
+    s_dump_last_write_ms = millis();
+#endif /* SRV_LOG_FLASH_ENABLE */
+}
+
+/**
+ * @brief 流式 dump 步进（由 log_task 的 sw_timer 周期调用，背压续传）
+ * @note  仅在 dump 启动后生效。每次调用在 log TX 缓冲空间充足时批量输出记录，
+ *        不足则等待下一 tick；输出通道停滞超过 STALL_MS 时中止，防止卡死。
+ */
+void srv_log_flash_dump_step(void)
+{
+#if SRV_LOG_FLASH_ENABLE
+    if (!s_initialized || !s_dump_active) {
         return;
     }
 
-    for (uint32_t i = 0; i < s_dump_count; i++) {
+    const uint32_t now = millis();
+
+    /* 停滞保护：输出通道（如 LOG_OUTPUT_NONE）长时间无法排空时中止 */
+    if ((uint32_t)(now - s_dump_last_write_ms) > SRV_LOG_FLASH_DUMP_STALL_MS) {
+        SRV_LOG_FLASH_LOG_STR("===== 结束（输出超时中止） =====\r\n");
+        s_dump_active = false;
+        (void)log_hold_output(false); /* 恢复实时日志 */
+        return;
+    }
+
+    /* 背压：log TX 剩余空间不足一条记录时等待，下个周期排空后继续 */
+    while (s_dump_index < s_dump_count
+        && log_tx_avail() >= SRV_LOG_FLASH_DUMP_WATERMARK) {
         /* 重置为无效态：旧布局帧 value 长度不匹配不会被加载，靠 len==0 区分 */
         memset(&s_record, 0, sizeof(s_record));
 
-        if (ring_storage_load_frame(&s_rs, s_dump_frames[i].frame_addr)
+        if (ring_storage_load_frame(&s_rs, s_dump_frames[s_dump_index].frame_addr)
             != RING_STORAGE_OK) {
-            continue; /* 数据 CRC 损坏帧，跳过 */
+            s_dump_index++; /* 数据 CRC 损坏帧，跳过 */
+            continue;
         }
 
         if (s_record.len > 0 && s_record.len <= SRV_LOG_FLASH_LINE_MAX) {
-            /* 存储时剥离了 ANSI 颜色，dump 时按级别恢复（ERROR=红, WARN=黄） */
+            /* 单条记录组装后单次写入，避免与 ISR 日志并发写 TX 时被拆断 */
+            char out[SRV_LOG_FLASH_DUMP_RECORD_OUT_MAX];
+            uint16_t o = 0;
+
             const char* color = srv_log_flash_level_color((log_level_t)s_record.level);
-            log_write((const uint8_t*)color, (uint32_t)strlen(color));
-            log_write((const uint8_t*)s_record.text, s_record.len);
-            log_write((const uint8_t*)LOG_COLOR_RESET, (uint32_t)strlen(LOG_COLOR_RESET));
+            const uint16_t clen = (uint16_t)strlen(color);
+            (void)memcpy(out + o, color, clen);
+            o += clen;
+
+            (void)memcpy(out + o, s_record.text, s_record.len);
+            o += s_record.len;
+
+            const uint16_t rlen = (uint16_t)strlen(LOG_COLOR_RESET);
+            (void)memcpy(out + o, LOG_COLOR_RESET, rlen);
+            o += rlen;
+
+            log_write((const uint8_t*)out, o);
         }
+
+        s_dump_index++;
+        s_dump_last_write_ms = now;
     }
 
-    SRV_LOG_FLASH_LOG_STR("===== 结束 =====\r\n");
+    if (s_dump_index >= s_dump_count) {
+        SRV_LOG_FLASH_LOG_STR("===== 结束 =====\r\n");
+        s_dump_active = false;
+        (void)log_hold_output(false); /* 恢复实时日志 */
+    }
 #endif /* SRV_LOG_FLASH_ENABLE */
 }
 
@@ -304,6 +367,10 @@ void srv_log_flash_clear(void)
     if (!s_initialized) {
         return;
     }
+
+    /* 中止进行中的流式 dump（避免 dump_step 读取已擦除区域）并恢复实时日志 */
+    s_dump_active = false;
+    (void)log_hold_output(false);
 
     /* 丢弃待落盘队列中的记录 */
     kfifo_reset(&s_pending);

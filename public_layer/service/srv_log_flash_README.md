@@ -57,6 +57,24 @@ srv_log_flash_step()                       ← log_task 的 10ms sw_timer，主�
 ring_storage_save() → Flash
 ```
 
+**读取路径（流式 dump，背压续传，杜绝 TX 缓冲溢出丢帧）**：
+
+```
+log 命令 → srv_log_flash_dump()     一次性：收集全部帧 → 按版本排序 → 打印头 → 置 dump 进行中
+每个 10ms tick：
+  log_timer_cb TX 块（!tx_busy 时取 ≤1024B 发 UART，排空 4KB log TX 缓冲）
+              → srv_log_flash_dump_step()
+                    log_tx_avail() ≥ WATERMARK(128B) 时逐条输出（单条组装后一次 log_write）
+                    空间不足 → 等下一 tick（排空续传）
+                    停滞 > STALL_MS(2000ms)（如 LOG_OUTPUT_NONE）→ 打印"超时中止"并结束
+全部输出后打印 "===== 结束 =====" 并复位 dump 状态
+```
+
+**dump 期间屏蔽实时日志**：`log_hold_output(true)` 在 dump 启动时（打印头之前）置位，
+`LOG_*`/`hexdump` 的 TX 写入被暂停，保证 dump 输出为连续干净的历史块，无实时日志混排；
+实时 WARN/ERROR 仍经落盘钩子持久化（不丢失）。`log_write()`（dump 自身通道）不受影响。
+dump 正常完成 / 超时中止 / `logclear` 时恢复实时日志。
+
 **核心约束**：sink 可能 ISR 上下文（见 log.c `log_format_output` 注释），因此 sink 内**禁止任何 Flash 操作**（毫秒级擦写不能进中断），只做 RAM 入队；所有 Flash 写都收敛在主循环 step。
 
 ---
@@ -152,8 +170,9 @@ ring_storage_save() → Flash
 |------|--------|------|
 | `srv_log_flash_init()` | app_main（log_task_init 之后） | hal_flash + ring_storage 初始化，注册单条记录 KV，注册 log 落盘回调 |
 | `srv_log_flash_step()` | log_task 的 sw_timer（10ms） | 队列有记录且到限流间隔时落盘一条 |
-| `srv_log_flash_dump()` | log_task 命令 `log` | 遍历全部有效帧 → 按版本排序 → 输出 |
-| `srv_log_flash_clear()` | log_task 命令 `logclear` | 整区擦除 + 丢弃待落盘队列 |
+| `srv_log_flash_dump()` | log_task 命令 `log` | 一次性收集全部帧 → 按版本排序 → 打印头 → 启动流式输出 |
+| `srv_log_flash_dump_step()` | log_task 的 sw_timer（10ms） | 背压续传：TX 空间充足时逐条输出，停滞超时中止 |
+| `srv_log_flash_clear()` | log_task 命令 `logclear` | 整区擦除 + 丢弃待落盘队列 + 中止进行中的 dump |
 
 接线方式（log 模块提供落盘钩子，本服务注册回调）：
 
@@ -187,6 +206,9 @@ log_set_flash_sink_cb(srv_log_flash_sink);
 | `SRV_LOG_FLASH_LINE_MAX` | 96 | 单条记录文本上限（当前最长 ~95B） |
 | `SRV_LOG_FLASH_PENDING_BUFFER_SIZE` | 1024 | 待落盘队列缓冲（2 的幂） |
 | `SRV_LOG_FLASH_FLUSH_MIN_MS` | 200 | 两次落盘最小间隔 |
+| `SRV_LOG_FLASH_DUMP_RECORD_OUT_MAX` | 105 | dump 单条记录最大输出字节（颜色码+文本+复位码） |
+| `SRV_LOG_FLASH_DUMP_WATERMARK` | 128 | 流式 dump 背压水位：TX 剩余空间低于该值暂停读取 |
+| `SRV_LOG_FLASH_DUMP_STALL_MS` | 2000 | 流式 dump 停滞超时：输出通道无法排空时中止 |
 | `SRV_LOG_FLASH_VERSION` | 6 | 布局版本标记 |
 
 `SRV_LOG_FLASH_FRAME_FLASH_SIZE` / `MAX_FRAMES` / `MAX_RECORDS` 均为**编译期自动核算**，改上面任一宏会跟着重算，无需手动维护。
