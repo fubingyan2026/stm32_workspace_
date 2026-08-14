@@ -65,7 +65,7 @@ const int32_t SRV_HT_TORQUE_TEST_POS_LIMIT_IQ = ((SRV_HT_TORQUE_TEST_POS_LIMIT_D
 #define SRV_HT_TORQUE_TEST_REACH_IQ \
     ((int32_t)(((int64_t)SRV_HT_TORQUE_TEST_REACH_DEG << 24) / 360))
 /** @brief 位置反馈轮询周期 (ms)：0x06 读取当前电机位置，用于端点反向判定 */
-#define SRV_HT_TORQUE_TEST_POS_POLL_PERIOD_MS 10U
+#define SRV_HT_TORQUE_TEST_POS_POLL_PERIOD_MS 20U
 
 /* --- 速度模式参数（速度模式 0x02 连续旋转，固件手动斜坡平滑加减速） --- */
 
@@ -76,7 +76,7 @@ const int32_t SRV_HT_TORQUE_TEST_POS_LIMIT_IQ = ((SRV_HT_TORQUE_TEST_POS_LIMIT_D
 /** @brief 速度帧重发周期 (ms)：斜坡期间按该周期重发速度（巡航期速度已锁存） */
 #define SRV_HT_TORQUE_TEST_CMD_PERIOD_MS 100U
 /** @brief 报警查询周期 (ms)：电机报警需主动查询（0xFF），1s 一次 */
-#define SRV_HT_TORQUE_TEST_ALARM_PERIOD_MS 100U
+#define SRV_HT_TORQUE_TEST_ALARM_PERIOD_MS 1000U
 /** @brief 报警查询相对位置轮询的时间偏移 (ms)：错开查询与位置帧，避免多包冲突丢应答 */
 #define SRV_HT_TORQUE_TEST_ALARM_OFFSET_MS (SRV_HT_TORQUE_TEST_ALARM_PERIOD_MS / 2U)
 /** @brief 电机无响应判定周期 (ms)：超过该时长未收到电机任何帧视为掉线/断电。
@@ -91,7 +91,7 @@ const int32_t SRV_HT_TORQUE_TEST_POS_LIMIT_IQ = ((SRV_HT_TORQUE_TEST_POS_LIMIT_D
 /** @brief 扫描完成后 1s 内补发使能/速度模式周期 (ms)：首帧可能因 TX FIFO 未就绪被丢弃 */
 #define SRV_HT_TORQUE_TEST_STARTUP_RETRY_MS 100U
 /** @brief 1=周期读取供电电压（0x87）；0=关闭。实测 0x87 仅返回 [0x87][状态]（写命令应答），不含电压数据 */
-#define SRV_HT_TORQUE_TEST_VOLTAGE_QUERY_ENABLE 1
+#define SRV_HT_TORQUE_TEST_VOLTAGE_QUERY_ENABLE 0
 #if SRV_HT_TORQUE_TEST_VOLTAGE_QUERY_ENABLE
 /** @brief 供电电压读取周期 (ms)：0x87 读取（×100，单位 V，仅使能时刷新） */
 #define SRV_HT_TORQUE_TEST_VOLTAGE_PERIOD_MS 3000U

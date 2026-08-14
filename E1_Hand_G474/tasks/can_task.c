@@ -15,9 +15,12 @@
 #include "log.h"
 #include "srv_can.h"
 #include "srv_ht_test_mode.h"
+#include "srv_pa430_torque_test.h"
 #include "sw_timer.h"
 
-/* 苇熠测试模式选择（srv_ht_test_mode.h）：temp=速度模式原测试，torque=位置模式往复耐久测试 */
+/* CAN1（FDCAN1）：苇熠(HT) 伺服执行器测试，按 srv_ht_test_mode.h 选择 temp/torque；
+ * CAN2（FDCAN2）：PA430 (Motorevo) MIT 测试由 SRV_PA430_TORQUE_TEST_ENABLE 独立控制，
+ * 两条总线并行运行，互不干扰 */
 #if SRV_HT_TEST_MODE_TORQUE
 #include "srv_ht_torque_test.h"
 #define HT_TEST_INIT srv_ht_torque_test_init
@@ -55,9 +58,15 @@ void can_task_init(void)
         return; /* CAN 不可用，不启动周期任务 */
     }
     srv_can_init();
-    HT_TEST_INIT(); /* 苇熠伺服执行器测试模式（选中模块 AUTO_START=1 时自动启动） */
+    HT_TEST_INIT(); /* CAN1：苇熠伺服执行器测试（模式见 srv_ht_test_mode.h，AUTO_START=1 自动启动） */
+#if SRV_PA430_TORQUE_TEST_ENABLE
+    srv_pa430_torque_test_init(); /* CAN2：PA430 MIT 测试（AUTO_START=1 自动启动） */
+#endif
 
     drv_can_register_rx_callback(DRV_CAN_CH_1, can_rx_callback);
+#if SRV_PA430_TORQUE_TEST_ENABLE
+    drv_can_register_rx_callback(DRV_CAN_CH_2, can_rx_callback);
+#endif
 
     const sw_timer_config_t cfg = {
         .priority = SW_TIMER_PRIO_NORMAL,
@@ -73,9 +82,15 @@ static void can_timer_cb(void* user_data)
 {
     (void)user_data;
 
-    drv_can_poll_status(DRV_CAN_CH_1); /* Bus-Off 恢复 + 错误状态告警 */
+    drv_can_poll_status(DRV_CAN_CH_1); /* Bus-Off 恢复 + 错误状态告警（苇熠测试总线） */
+#if SRV_PA430_TORQUE_TEST_ENABLE
+    drv_can_poll_status(DRV_CAN_CH_2); /* Bus-Off 恢复 + 错误状态告警（PA430 伺服总线） */
+#endif
     srv_can_process();
-    HT_TEST_STEP(); /* 苇熠伺服执行器测试模式：扫描 + 循环驱动（模式见 srv_ht_test_mode.h） */
+    HT_TEST_STEP(); /* CAN1：苇熠伺服执行器测试：扫描 + 循环驱动 */
+#if SRV_PA430_TORQUE_TEST_ENABLE
+    srv_pa430_torque_test_step(); /* CAN2：PA430 MIT 来回运动测试 */
+#endif
 
     s_fb_tick++;
     s_status_tick++;
@@ -92,6 +107,13 @@ static void can_timer_cb(void* user_data)
 
 static void can_rx_callback(drv_can_channel_t ch, const drv_can_msg_t* msg)
 {
-    (void)ch;
-    srv_can_on_rx(msg);
+    /* 按通道分发：CAN1 = 苇熠测试 + 旧 0x100 协议；CAN2 = PA430 反馈帧 */
+    if (ch == DRV_CAN_CH_1) {
+        srv_can_on_rx(msg);
+    }
+#if SRV_PA430_TORQUE_TEST_ENABLE
+    else if (ch == DRV_CAN_CH_2) {
+        srv_pa430_torque_test_on_rx(msg);
+    }
+#endif
 }

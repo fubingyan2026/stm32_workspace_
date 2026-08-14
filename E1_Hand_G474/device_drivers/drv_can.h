@@ -6,7 +6,8 @@
  * @brief   CAN 设备驱动（STM32G474 FDCAN，支持经典 CAN 和 CAN FD）
  * @attention
  *
- * CubeMX 配置 FDCAN1 (PA11 RX / PA12 TX)。支持经典 CAN 和 CAN FD 帧格式。
+ * CubeMX 配置 FDCAN1 (PA11 RX / PA12 TX) 与 FDCAN2 (PB12 RX / PB13 TX)。
+ * 支持经典 CAN 和 CAN FD 帧格式。
  * drv_can_msg_t.dlc 始终为实际字节数（0-64），driver 内部自动与 FDCAN DLC 编码互转。
  */
 
@@ -28,6 +29,7 @@ extern "C" {
  */
 typedef enum {
     DRV_CAN_CH_1 = 0, /**< FDCAN1 — PA11(RX) / PA12(TX) */
+    DRV_CAN_CH_2,     /**< FDCAN2 — PB12(RX) / PB13(TX) */
     DRV_CAN_CH_NUM,   /**< 通道总数 */
 } drv_can_channel_t;
 

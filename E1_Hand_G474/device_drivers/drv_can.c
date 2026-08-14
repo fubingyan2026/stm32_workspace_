@@ -6,7 +6,8 @@
  * @brief   CAN 设备驱动（STM32G474 FDCAN，经典 CAN + CAN FD）
  * @attention
  *
- * CubeMX 配置 FDCAN1 (PA11 RX / PA12 TX)，FDCAN_FRAME_FD_NO_BRS 模式。
+ * CubeMX 配置 FDCAN1 (PA11 RX / PA12 TX) 与 FDCAN2 (PB12 RX / PB13 TX)，
+ * FDCAN_FRAME_FD_NO_BRS 模式。
  * 句柄表内置在模块中，drv_can_init() 无需传参。
  * drv_can_msg_t.dlc 始终为实际字节数，driver 内部与 FDCAN DLC 编码互转。
  */
@@ -37,6 +38,30 @@
 #define CAN_LOG_D(...) ((void)0)
 #endif
 
+/* 模块调试开关 ----------------------------------------------------------------*/
+
+/** @brief FDCAN2 内部环回自测：置 1 时 FDCAN2 改为内部环回模式（自收自发，绕过外部
+ *        收发器），用于隔离「固件/时钟/位时序」与「外部收发器硬件」——若环回能收发
+ *        完整帧，则 100% 证明固件正确，问题在外部收发器。正常使用置 0。 */
+#define DRV_CAN_LOOPBACK_TEST 0
+
+/** @brief FDCAN 发送延迟补偿偏移量 TDCO（mtq 单位，1 mtq = 1/160MHz = 6.25ns）。
+ *        控制器自动测量环路延迟（PSR.TDCV），TDCO 仅附加采样点余量；
+ *        5M 数据段仍 bit 错误时在 0~16 之间调节 */
+#define DRV_CAN_TDC_OFFSET 12U
+
+/** @brief 发送延迟补偿滤波窗口长度 TDCF（mtq 单位），的范围是 0~127（单位 mtq）过滤接收位中的显性毛刺 */
+#define DRV_CAN_TDC_FILTER 16U
+
+/** @brief 数据段位时序覆盖（对齐 Motorevo 电机 docs/Motorevo电机CAN协议文档.md §1.3）：
+ *        电机数据段 Seg1=25/Seg2=8（采样 76.47%，Seg2=47ns）。CAN FD 数据段规则
+ *        「发送方 Seg2 ≥ 接收方 Seg2」：CubeMX 默认 Seg2=3tq(37.5ns) < 电机 47ns，
+ *        导致本机发 5M 数据对方收不到。此处 Seg1=11/Seg2=4 → 采样 75%、Seg2=50ns ≥ 47ns，
+ *        位速率仍 5M（2×(1+11+4)=32tq=200ns）。 */
+#define DRV_CAN_DATA_TSEG1 11U
+#define DRV_CAN_DATA_TSEG2 4U
+#define DRV_CAN_DATA_SJW 2U
+
 /* Private constants -----------------------------------------------------------*/
 
 /** @brief 发送失败日志聚合窗口 (ms) */
@@ -56,9 +81,10 @@ typedef struct {
 
 /* Private constants ---------------------------------------------------------*/
 
-/** @brief 通道 → HAL 句柄映射（基于 CubeMX fdcan.c，仅 FDCAN1） */
+/** @brief 通道 → HAL 句柄映射（基于 CubeMX fdcan.c，FDCAN1/FDCAN2） */
 static FDCAN_HandleTypeDef* const s_hfdcan[DRV_CAN_CH_NUM] = {
     [DRV_CAN_CH_1] = &hfdcan1,
+    [DRV_CAN_CH_2] = &hfdcan2,
 };
 
 /**
@@ -105,7 +131,7 @@ static uint32_t bytes_to_fdcan_dlc(uint16_t byte_count);
 
 drv_can_error_t drv_can_init(void)
 {
-    /* 拉低 CAN 收发器 STB 引脚（正常模式，低电平有效） */
+    /* 拉低 FDCAN1 收发器 STB 引脚（正常模式，低电平有效；FDCAN2 收发器无 STB 控制） */
     HAL_GPIO_WritePin(FD_CAN1_STB_PA10_GPIO_Port, FD_CAN1_STB_PA10_Pin, GPIO_PIN_RESET);
 
     for (uint32_t ch = 0; ch < DRV_CAN_CH_NUM; ch++) {
@@ -132,7 +158,36 @@ drv_can_error_t drv_can_init(void)
             return DRV_CAN_ERROR_UNINITIALIZED;
         }
 
-        /* 3. 最后启动外设（进入 BUSY，开始参与总线） */
+        /* 3. 内部环回自测（可选，DRV_CAN_LOOPBACK_TEST=1 时对 FDCAN2 生效）：
+         *    绕过外部收发器自收自发，寄存器配置与 HAL_FDCAN_Init 对
+         *    FDCAN_MODE_INTERNAL_LOOPBACK 的处理完全一致（TEST=1, LBCK=1, MON=1） */
+#if DRV_CAN_LOOPBACK_TEST
+        if (ch == DRV_CAN_CH_2) {
+            CLEAR_BIT(s_hfdcan[ch]->Instance->CCCR, (FDCAN_CCCR_TEST | FDCAN_CCCR_MON | FDCAN_CCCR_ASM));
+            CLEAR_BIT(s_hfdcan[ch]->Instance->TEST, FDCAN_TEST_LBCK);
+            SET_BIT(s_hfdcan[ch]->Instance->CCCR, FDCAN_CCCR_TEST);
+            SET_BIT(s_hfdcan[ch]->Instance->TEST, FDCAN_TEST_LBCK);
+            SET_BIT(s_hfdcan[ch]->Instance->CCCR, FDCAN_CCCR_MON);
+        }
+#endif
+
+        /* 4. 发送延迟补偿（TDC）：FD 数据段位时间短（5M = 200ns），与收发器环路延迟
+         *    （TXD→总线→RXD，约 100~250ns）相当，无 TDC 时位监测采样读到上一比特导致
+         *    bit 错误、帧中止（经典 CAN 1M 不受影响）。控制器自动测量环路延迟（PSR.TDCV），
+         *    TDCO 仅附加余量；要求 State==READY（Init 后、Start 前） */
+        (void)HAL_FDCAN_ConfigTxDelayCompensation(s_hfdcan[ch], DRV_CAN_TDC_OFFSET, DRV_CAN_TDC_FILTER);
+        (void)HAL_FDCAN_EnableTxDelayCompensation(s_hfdcan[ch]);
+
+        /* 5. 数据段位时序覆盖（INIT 态可写 DBTP）：对齐 Motorevo 电机 §1.3，满足
+         *    「发送方 Seg2 ≥ 接收方 Seg2」；否则本机 5M 数据段对方收不到（收却正常）。
+         *    MODIFY_REG 只改 Seg1/Seg2/SJW，保留 DBRP 与 TDC 位；寄存器值 = (Seg-1) */
+        MODIFY_REG(s_hfdcan[ch]->Instance->DBTP,
+            FDCAN_DBTP_DTSEG1 | FDCAN_DBTP_DTSEG2 | FDCAN_DBTP_DSJW,
+            ((DRV_CAN_DATA_TSEG1 - 1U) << FDCAN_DBTP_DTSEG1_Pos)
+                | ((DRV_CAN_DATA_TSEG2 - 1U) << FDCAN_DBTP_DTSEG2_Pos)
+                | ((DRV_CAN_DATA_SJW - 1U) << FDCAN_DBTP_DSJW_Pos));
+
+        /* 6. 最后启动外设（进入 BUSY，开始参与总线） */
         if (HAL_FDCAN_Start(s_hfdcan[ch]) != HAL_OK) {
             CAN_LOG_E("ch%u FDCAN Start failed", (unsigned)ch + 1U);
             return DRV_CAN_ERROR_UNINITIALIZED;
@@ -155,7 +210,7 @@ void drv_can_deinit_all(void)
         memset(&s_ctx[ch], 0, sizeof(s_ctx[ch]));
     }
 
-    /* 拉高 CAN 收发器 STB 引脚（待机模式） */
+    /* 拉高 FDCAN1 收发器 STB 引脚（待机模式；FDCAN2 收发器无 STB 控制） */
     HAL_GPIO_WritePin(FD_CAN1_STB_PA10_GPIO_Port, FD_CAN1_STB_PA10_Pin, GPIO_PIN_SET);
 }
 
@@ -187,7 +242,7 @@ drv_can_error_t drv_can_send(drv_can_channel_t ch, const drv_can_msg_t* msg)
         .TxFrameType = FDCAN_DATA_FRAME,
         .DataLength = bytes_to_fdcan_dlc(msg->dlc),
         .ErrorStateIndicator = FDCAN_ESI_ACTIVE,
-        .BitRateSwitch = msg->is_fd ? FDCAN_BRS_ON : FDCAN_BRS_OFF, /* FD 帧启用位速率切换：仲裁段 1M / 数据段 5M */
+        .BitRateSwitch = FDCAN_BRS_OFF,// msg->is_fd ? FDCAN_BRS_ON : FDCAN_BRS_OFF, /* FD 帧启用位速率切换：仲裁段 1M / 数据段 5M */
         .FDFormat = msg->is_fd ? FDCAN_FD_CAN : FDCAN_CLASSIC_CAN,
         .TxEventFifoControl = FDCAN_NO_TX_EVENTS,
         .MessageMarker = 0,
@@ -226,12 +281,22 @@ void drv_can_poll_status(drv_can_channel_t ch)
 
     drv_can_ctx_t* ctx = &s_ctx[ch];
 
-    /* Bus-Off：打日志 + 清 CCCR.INIT 触发硬件恢复序列（129×11 个隐性位后重新入网） */
+    /* Bus-Off：打日志 + 清 CCCR.INIT 触发硬件恢复序列（129×11 个隐性位后重新入网）。
+     * 注意：必须每轮读 PSR 并在此分支每轮清 INIT——进 bus-off 后 TEC 冻结不再变化，
+     * 若按 TEC 变化门控读 PSR 会错过 BO 边沿、恢复序列永不触发（节点卡死、TX FIFO 积满）。
+     * lec 判读：3=ACK 错误（帧已发出但无节点应答，查接线/终端/检测器挂接）；
+     * 5=bit0（总线无法驱动显性，收发器未驱动/开路/未供电）；4=bit1（短路或 CANH/CANL 接反） */
     if (psr.BusOff) {
         if (!ctx->bus_off) {
             ctx->bus_off = true;
-            CAN_LOG_E("ch%u BUS-OFF! check bitrate/sample-point/termination, recovering...",
-                (unsigned)ch + 1U);
+            FDCAN_ErrorCountersTypeDef ec = { 0 };
+            (void)HAL_FDCAN_GetErrorCounters(s_hfdcan[ch], &ec);
+            CAN_LOG_E("ch%u BUS-OFF! act=0x%02lX lec=%lu tec=%lu rec=%lu recovering...",
+                (unsigned)ch + 1U,
+                (unsigned long)psr.Activity,
+                (unsigned long)psr.LastErrorCode,
+                (unsigned long)ec.TxErrorCnt,
+                (unsigned long)ec.RxErrorCnt);
         }
         CLEAR_BIT(s_hfdcan[ch]->Instance->CCCR, FDCAN_CCCR_INIT);
     } else if (ctx->bus_off) {
@@ -239,14 +304,22 @@ void drv_can_poll_status(drv_can_channel_t ch)
         CAN_LOG_I("ch%u bus recovered", (unsigned)ch + 1U);
     }
 
-    /* Error-Passive 边沿：无 ACK / 位错误累积的早期信号 */
+    /* Error-Passive 边沿：无 ACK / 位错误累积的早期信号，附错误码辅助定位 */
     if (psr.ErrorPassive != ctx->err_passive) {
         ctx->err_passive = psr.ErrorPassive;
         if (psr.ErrorPassive) {
-            CAN_LOG_W("ch%u ERROR-PASSIVE (tx err accumulating, no ACK?)",
-                (unsigned)ch + 1U);
+            FDCAN_ErrorCountersTypeDef ec = { 0 };
+            (void)HAL_FDCAN_GetErrorCounters(s_hfdcan[ch], &ec);
+            CAN_LOG_W("ch%u ERROR-PASSIVE act=0x%02lX lec=%lu tec=%lu rec=%lu%s%s",
+                (unsigned)ch + 1U,
+                (unsigned long)psr.Activity,
+                (unsigned long)psr.LastErrorCode,
+                (unsigned long)ec.TxErrorCnt,
+                (unsigned long)ec.RxErrorCnt,
+                psr.ErrorPassive ? " EP" : "",
+                psr.BusOff ? " BUSOFF" : "");
         } else {
-            CAN_LOG_I("ch%u back to error-active", (unsigned)ch + 1U);
+            CAN_LOG_W("ch%u back to error-active", (unsigned)ch + 1U);
         }
     }
 

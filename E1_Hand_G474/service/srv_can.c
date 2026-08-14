@@ -11,6 +11,7 @@
  * （经典 CAN 2.0A，1 Mbps，设备地址寻址），激活哪个模块由 srv_ht_test_mode.h 的
  * SRV_HT_TEST_MODE_TORQUE 宏决定。srv_can_on_rx() 先将测试协议帧路由给选中的
  * 测试模块 on_rx，返回 true 表示已处理；剩余帧按旧协议解析 0x100。
+ * PA430(Motorevo) 测试走 FDCAN2 独立总线，帧由 can_task 按 CH_2 直接分发。
  */
 
 #include "srv_can.h"
@@ -18,7 +19,8 @@
 #include "srv_ht_test_mode.h"
 #include "srv_motor_behavior.h"
 
-/* 苇熠测试模式选择（srv_ht_test_mode.h）：temp=速度模式原测试，torque=位置模式往复耐久测试 */
+/* 测试帧路由：CAN1 的苇熠测试帧按 srv_ht_test_mode.h 选择 temp/torque；
+ * PA430 (Motorevo) 反馈帧由 can_task 按 CH_2 直接分发，不经本模块 */
 #if SRV_HT_TEST_MODE_TORQUE
 #include "srv_ht_torque_test.h"
 #define HT_TEST_ON_RX srv_ht_torque_test_on_rx
