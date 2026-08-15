@@ -30,7 +30,7 @@ Core/           CubeMX 生成代码——只在 USER CODE 块内修改
 - `behavior_task_init()` 与 `daemon_task_init()` **当前在 app_main 中被注释**；启用顺序必须 behavior → daemon（daemon 依赖电机句柄已注册）。
 - 电机 UART：USART2/3 @ 500000 bps；组 A = USART2（5 电机，ID 1-5），组 B = USART3（4 电机，ID 1-4）。
 - **USART1（PC4/PC5, 115200）= 控制台，由 `drv_log_uart` 独占**（日志 TX DMA + RX DMA circular/IDLE → kfifo）；其热路径/回调禁止打印日志。主循环每轮须 `drv_uart_rx_restart` 重新武装 IDLE 接收。
-- CAN（FDCAN1, PA11/PA12）：当前主用苇熠(HT) 伺服执行器测试协议（经典 CAN 2.0A @ 1Mbps）。测试模块由 `service/srv_ht_test_mode.h` 的 `SRV_HT_TEST_MODE_TORQUE` 宏选择（1=torque 位置往复，0=temp 速度模式），两模块源文件始终编译、同一时刻只激活一个。旧 CAN FD 上位机协议（0x100/0x101/0x102）保留在 `srv_can`。
+- CAN（FDCAN1, PA11/PA12）：经典 CAN 2.0A @ 1Mbps。测试模块由 `service/srv_motor_test_select.h` 的 `SRV_MOTOR_TEST_SELECT` 宏三选一（`SRV_MOTOR_TEST_HT_TORQUE`=苇熠位置往复、`SRV_MOTOR_TEST_HT_TEMP`=苇熠速度模式、`SRV_MOTOR_TEST_TONGZHI`=良志ODrive位置往复），各模块源文件始终编译、同一时刻只激活一个。旧 CAN FD 上位机协议（0x100/0x101/0x102）保留在 `srv_can`。
 
 ## 编码规范
 - 风格：WebKit（4 空格缩进，函数 Allman 大括号，控制语句 K&R）+ MISRA C:2012；完整规范见同级 `../stm32_g474_boot/MODULE_CODING_GUIDE.md`。

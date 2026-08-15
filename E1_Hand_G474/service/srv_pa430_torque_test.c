@@ -7,8 +7,9 @@
  * 本模块走 FDCAN2（DRV_CAN_CH_2，PB12 RX / PB13 TX）独立总线。
  *
  * MIT 公式：T_out = Kp×(θ_ref−θ) + Kd×(V_ref−V) + T_ref。本模块令 θ_ref 在
- * +CAN_COM_MAX 与 CAN_COM_MIN（默认 ±12.5 rad）两端点间交替，Kp/Kd 提供刚度
- * 阻尼，V_ref/T_ref 恒为 0；每 CTRL_PERIOD_MS 重发广播控制帧（MIT 需持续下发
+ * ±SRV_PA430_ANGLE_AMP_RAD（默认 ±2.5 rad）两端点间交替，Kp/Kd/V_ref 均按
+ * docs/Motorevo电机CAN协议文档.md §3.1 缩放换算为 raw（物理单位宏可调），
+ * V_ref/T_ref 默认恒为 0；每 CTRL_PERIOD_MS 重发广播控制帧（MIT 需持续下发
  * 以保持刚度）。到位反向采用位置反馈闭环：各电机以自身 ID（1~8）周期回复
  * DLC 8 反馈帧（θ 16bit，与 θ_ref 同标度），主循环 |θ_raw − 目标| ≤ 到达阈值
  * 判定到位；所有配置电机均到位后 θ_ref 翻转到另一端。
@@ -16,6 +17,10 @@
  * 启动流程：对配置电机发广播使能（0x10, byte7=0xFC）；可选（SRV_PA430_CONFIGURE_MODE）
  * 经 0x600+ID 单机帧写 Control Mode=2（MIT）并保存到 Flash。累计在线满
  * DURATION_MS（30 天）自动停止并失能。
+ *
+ * 运行中自愈：在线但反馈使能位（Bit0）=0 的电机（断电重上电/保护下使能后）由主循环
+ * 每 ENABLE_RETRY_MS 重发使能，直到反馈 Bit0=1 确认（有活动错误位时跳过）；
+ * 电机恢复在线时把 θ_ref 重同步到当前反馈位置，再重启往复运动。
  *
  * RX 侧：反馈帧（CAN-ID = 电机 ID 1~8, DLC 8）由 can_task 按 CH_2 分发到
  * srv_pa430_torque_test_on_rx() 解析记录（ISR 上下文，不打日志），主循环消费
@@ -71,23 +76,29 @@
 /** @brief 实际参与测试的电机数（1~8，须与总线一致） */
 #define SRV_PA430_MOTOR_COUNT 1U
 
-/* --- MIT 控制参数（docs/Motorevo电机CAN协议文档.md §3.1/§8） --- */
+/* --- MIT 控制参数（docs/Motorevo电机CAN协议文档.md §3.1；物理单位可调） --- */
 
-/** @brief 正端点 θ_ref 原始值（16bit：0xFFFF ↔ +CAN_COM_MAX，默认 +12.5 rad） */
-#define SRV_PA430_RAW_POS 0xFFFFU
-/** @brief 负端点 θ_ref 原始值（16bit：0x0000 ↔ CAN_COM_MIN，默认 −12.5 rad） */
-#define SRV_PA430_RAW_NEG 0x0000U
-/** @brief 中点 θ_ref 原始值（16bit：0x8000 ↔ θ=0，用于停止回中） */
-#define SRV_PA430_RAW_MID 0x8000U
-/** @brief 到位判定阈值（16bit 原始单位：|θ−目标| ≤ 该值视为到位，约全量程/256） */
-#define SRV_PA430_ARRIVE_THRESHOLD 0x0100U
-/** @brief MIT 刚度 Kp（12bit 原始值：0x000↔0，0xFFF↔250 Nm/rad；默认≈50） */
-#define SRV_PA430_KP_RAW 0x0333U
-/** @brief MIT 阻尼 Kd（12bit 原始值：0x000↔0，0xFFF↔50 Nm/(rad/s)；默认≈2） */
-#define SRV_PA430_KD_RAW 0x0066U
-/** @brief 目标速度 V_ref 原始值（12bit：0x800 ↔ 0 rad/s，本模块恒为 0） */
-#define SRV_PA430_VEL_RAW_0 0x0800U
-/** @brief 前馈扭矩 T_ref 原始值（12bit：0x800 ↔ 0 Nm，本模块恒为 0） */
+/* ===== 用户可调参数（物理单位；内部自动换算 raw） ===== */
+/** @brief 反转角度半幅（rad），行程为 ±AMP（默认 ±2.5 rad） */
+#define SRV_PA430_ANGLE_AMP_RAD (3.0f)
+/** @brief V_ref 目标速度（rad/s），通常 0 */
+#define SRV_PA430_VEL_REF_RADPS (0.0f)
+/** @brief MIT 刚度 Kp（Nm/rad，0~250） */
+#define SRV_PA430_KP_NMPR (12.5f)
+/** @brief MIT 阻尼 Kd（Nm/(rad/s)，0~50） */
+#define SRV_PA430_KD_NMPRPDS (13.75f)
+/** @brief 到位判定阈值（rad） */
+#define SRV_PA430_ARRIVE_THRESHOLD_RAD (0.2f)
+
+/* ===== 协议缩放常量（docs/Motorevo电机CAN协议文档.md §3.1，勿改） ===== */
+#define SRV_PA430_THETA_MIN_RAD (-12.5f)
+#define SRV_PA430_THETA_MAX_RAD (12.5f)
+#define SRV_PA430_VEL_MIN_RADPS (-10.0f)
+#define SRV_PA430_VEL_MAX_RADPS (10.0f)
+#define SRV_PA430_KP_MAX_NMPR (250.0f)
+#define SRV_PA430_KD_MAX_NMPRPDS (50.0f)
+
+/** @brief 前馈扭矩 T_ref 原始值（12bit：0x800 ↔ 0 Nm，本模块恒为 0，不参与换算） */
 #define SRV_PA430_TQ_RAW_0 0x0800U
 
 /* --- 周期 --- */
@@ -99,6 +110,10 @@
 #define SRV_PA430_CTRL_PERIOD_IDLE_MS 100U
 /** @brief 电机无反馈判定周期 (ms)：超过该时长未收到电机反馈帧视为掉线/断电 */
 #define SRV_PA430_NORESP_PERIOD_MS 2000U
+/** @brief 使能重试周期：恢复在线后每间隔重发一次使能，直到反馈 Bit0 确认 */
+#define SRV_PA430_ENABLE_RETRY_MS 200U
+/** @brief 使能确认超时：连续重试仍未确认时打印一次告警（继续重试） */
+#define SRV_PA430_ENABLE_TIMEOUT_MS 2000U
 /**
  * @brief 耐久运行时长 (ms)：电机持续在线累计满 30 天自动停止并失能；
  *        30 天 = 2592000000 ms（uint32 范围内）；置 0 禁用自动停止
@@ -126,6 +141,11 @@ typedef struct {
     uint16_t mask; /**< 错误码位 */
     const char* name; /**< 含义 */
 } srv_pa430_torque_test_err_desc_t;
+
+/** @brief 反馈帧错误字段使能指示位（Bit0）：1=已使能，非错误 */
+#define SRV_PA430_ERR_ENABLE_BIT 0x0001U
+/** @brief 错误码有效位掩码（排除使能指示位 Bit0） */
+#define SRV_PA430_ERR_BIT_MASK 0xFFFEU
 
 /** @brief 错误码 → 含义映射表（反馈帧 byte6-7，Bit0 为使能指示位非错误，跳过） */
 static const srv_pa430_torque_test_err_desc_t s_err_map[] = {
@@ -157,6 +177,16 @@ static uint8_t s_dir;
 /** @brief 当前目标 θ_ref 原始值（主循环维护，广播控制帧使用） */
 static uint16_t s_target_raw;
 
+/** @brief 物理参数宏换算出的 raw 值（start() 时由 srv_pa430_torque_test_recalc_raw 计算） */
+static uint16_t s_pos_raw_pos; /* 正端点 */
+static uint16_t s_pos_raw_neg; /* 负端点 */
+static uint16_t s_pos_raw_mid; /* 中点（0 rad） */
+static uint16_t s_vel_ref_raw; /* 配置槽 V_ref */
+static uint16_t s_vel_zero_raw; /* 0 rad/s（未配置槽用） */
+static uint16_t s_kp_raw;
+static uint16_t s_kd_raw;
+static uint16_t s_arrive_thresh_raw;
+
 /** @brief 每电机最新反馈 θ（16bit 原始值，与 θ_ref 同标度，ISR 写主循环读） */
 static uint16_t s_motor_theta_raw[SRV_PA430_MAX_MOTORS];
 
@@ -168,6 +198,21 @@ static bool s_fb_logged[SRV_PA430_MAX_MOTORS];
 
 /** @brief 每电机最新错误码（反馈帧 byte6-7，ISR 写） */
 static uint16_t s_motor_err[SRV_PA430_MAX_MOTORS];
+
+/** @brief 每电机反馈使能位（Bit0：1=已使能，ISR 写） */
+static bool s_motor_enabled[SRV_PA430_MAX_MOTORS];
+
+/** @brief 每电机上次使能位（主循环用于检测使能上升沿打印确认） */
+static bool s_enabled_prev[SRV_PA430_MAX_MOTORS];
+
+/** @brief 上次实际发出使能帧的时间 (millis) */
+static uint32_t s_enable_retry_last_ms;
+
+/** @brief 进入"需使能"状态的起始时间 (millis)，0=不在需使能状态 */
+static uint32_t s_enable_stall_since_ms;
+
+/** @brief 使能超时告警是否已打印（确认使能或离开需使能状态后复位） */
+static bool s_enable_warned;
 
 /** @brief 新错误应答待打印标志（ISR 置位，主循环清零打印） */
 static bool s_err_pending[SRV_PA430_MAX_MOTORS];
@@ -198,7 +243,12 @@ static uint32_t s_online_last_ms;
 static uint8_t srv_pa430_torque_test_find_idx(uint8_t addr);
 static bool srv_pa430_torque_test_all_online(void);
 static bool srv_pa430_torque_test_is_arrived(uint8_t idx);
-static void srv_pa430_torque_test_send_enable(bool enable);
+static bool srv_pa430_torque_test_send_enable(bool enable);
+static uint16_t srv_pa430_theta_to_raw(float theta_rad);
+static uint16_t srv_pa430_vel_to_raw(float vel_radps);
+static uint16_t srv_pa430_gain_to_raw(float val, float max);
+static uint16_t srv_pa430_delta_theta_to_raw(float delta_rad);
+static void srv_pa430_torque_test_recalc_raw(void);
 static void srv_pa430_torque_test_pack_mit(uint8_t* slot, uint16_t pos, uint16_t vel,
     uint16_t kp, uint16_t kd, uint16_t tq);
 static void srv_pa430_torque_test_send_control(void);
@@ -223,7 +273,7 @@ void srv_pa430_torque_test_init(void)
 /**
  * @brief 启动来回运动测试模式
  * @note  对配置电机发广播使能（0x10, byte7=0xFC）→ 持续下发 MIT 控制帧（0x20），
- *        θ_ref 在 +CAN_COM_MAX 与 CAN_COM_MIN 两端点间交替，到位即反向
+ *        θ_ref 在 ±SRV_PA430_ANGLE_AMP_RAD 两端点间交替，到位即反向
  */
 void srv_pa430_torque_test_start(void)
 {
@@ -232,9 +282,12 @@ void srv_pa430_torque_test_start(void)
     s_online_ms = 0; /* 持续在线时长从 0 累计 */
     s_online_last_ms = s_start_ms;
 
-    /* 初始目标：朝 +CAN_COM_MAX 端点 */
+    /* 由物理单位宏换算全部 raw 控制参数 */
+    srv_pa430_torque_test_recalc_raw();
+
+    /* 初始目标：朝 +AMP 端点 */
     s_dir = 1;
-    s_target_raw = SRV_PA430_RAW_POS;
+    s_target_raw = s_pos_raw_pos;
     s_last_ctrl_ms = s_start_ms;
 
     memset(s_motor_theta_raw, 0, sizeof(s_motor_theta_raw));
@@ -244,6 +297,11 @@ void srv_pa430_torque_test_start(void)
     memset(s_err_pending, 0, sizeof(s_err_pending));
     memset(s_motor_nresp_latch, 0, sizeof(s_motor_nresp_latch));
     memset(s_online_evt_pending, 0, sizeof(s_online_evt_pending));
+    memset(s_motor_enabled, 0, sizeof(s_motor_enabled));
+    memset(s_enabled_prev, 0, sizeof(s_enabled_prev));
+    s_enable_retry_last_ms = s_start_ms;
+    s_enable_stall_since_ms = 0;
+    s_enable_warned = false;
     for (uint8_t i = 0; i < SRV_PA430_MAX_MOTORS; i++) {
         s_motor_last_seen_ms[i] = s_start_ms; /* 掉线检测起点 */
     }
@@ -251,11 +309,11 @@ void srv_pa430_torque_test_start(void)
 #if SRV_PA430_CONFIGURE_MODE
     srv_pa430_torque_test_configure_mode(); /* 写 Control Mode=2 (MIT) 并保存 */
 #endif
-    srv_pa430_torque_test_send_enable(true); /* 广播使能全部配置电机 */
+    (void)srv_pa430_torque_test_send_enable(true); /* 广播使能全部配置电机 */
 
     SRV_PA430_TORQUE_TEST_LOG_I("PA430 来回运动启动：%u 台电机，θ_ref 0x%04X ↔ 0x%04X（Kp 0x%03X Kd 0x%03X）",
-        (unsigned)SRV_PA430_MOTOR_COUNT, (unsigned)SRV_PA430_RAW_NEG,
-        (unsigned)SRV_PA430_RAW_POS, (unsigned)SRV_PA430_KP_RAW, (unsigned)SRV_PA430_KD_RAW);
+        (unsigned)SRV_PA430_MOTOR_COUNT, (unsigned)s_pos_raw_neg,
+        (unsigned)s_pos_raw_pos, (unsigned)s_kp_raw, (unsigned)s_kd_raw);
 }
 
 /**
@@ -265,16 +323,18 @@ void srv_pa430_torque_test_start(void)
 void srv_pa430_torque_test_stop(void)
 {
     s_running = false;
-    s_target_raw = SRV_PA430_RAW_MID; /* 目标回中（θ=0），尽力下发一帧后失能 */
+    s_target_raw = s_pos_raw_mid; /* 目标回中（θ=0），尽力下发一帧后失能 */
     srv_pa430_torque_test_send_control();
-    srv_pa430_torque_test_send_enable(false);
+    (void)srv_pa430_torque_test_send_enable(false);
     SRV_PA430_TORQUE_TEST_LOG_I("PA430 来回运动停止：已回中并失能");
 }
 
 /**
  * @brief 来回运动测试模式周期步进（由 can_task 每 TASK_PERIOD_MS 调用）
  * @note  周期重发广播 MIT 控制帧；消费反馈帧到位标志，所有配置电机到位后
- *        θ_ref 翻转到另一端；打印错误码变化、掉线告警与恢复在线重新使能；
+ *        θ_ref 翻转到另一端；打印错误码变化、掉线告警；在线但未使能的电机
+ *        周期重发使能直到反馈 Bit0 确认（断电重上电/保护恢复自动重新使能）；
+ *        电机恢复在线时把 θ_ref 重同步到当前位置再重启往复；
  *        累计在线满 DURATION_MS（30 天，置 0 禁用）自动停止
  */
 void srv_pa430_torque_test_step(void)
@@ -335,10 +395,10 @@ void srv_pa430_torque_test_step(void)
     if (all_arrived) {
         if (s_dir == 1U) {
             s_dir = 0;
-            s_target_raw = SRV_PA430_RAW_NEG;
+            s_target_raw = s_pos_raw_neg;
         } else {
             s_dir = 1;
-            s_target_raw = SRV_PA430_RAW_POS;
+            s_target_raw = s_pos_raw_pos;
         }
         SRV_PA430_TORQUE_TEST_LOG_I("全部电机到位，θ_ref 翻转为 0x%04X",
             (unsigned)s_target_raw);
@@ -375,17 +435,58 @@ void srv_pa430_torque_test_step(void)
         }
     }
 
-    /* 恢复在线：重新广播使能（控制帧由上方周期逻辑继续下发） */
-    bool reenable = false;
+    /* 恢复在线：把运动目标重同步到电机当前位置，避免旧目标/旧反馈造成不翻转；
+       实际使能仍交给下方"保持使能"重试循环 */
     for (uint8_t i = 0; i < SRV_PA430_MOTOR_COUNT; i++) {
         if (s_online_evt_pending[i]) {
             s_online_evt_pending[i] = false;
-            reenable = true;
+            uint16_t theta = s_motor_theta_raw[i];
+            /* 钳位到测试端点 [NEG, POS]，防止反馈异常值作为目标 */
+            if (theta < s_pos_raw_neg) {
+                theta = s_pos_raw_neg;
+            } else if (theta > s_pos_raw_pos) {
+                theta = s_pos_raw_pos;
+            }
+            s_target_raw = theta; /* 目标 = 当前位置 → 下一 tick 到位即翻转，从当前位置重启往复 */
+            s_dir = 1;
+            SRV_PA430_TORQUE_TEST_LOG_W("电机 ID=%u 恢复在线，θ=0x%04X，目标重同步 0x%04X",
+                (unsigned)s_motor_ids[i], (unsigned)s_motor_theta_raw[i], (unsigned)s_target_raw);
         }
     }
-    if (reenable) {
-        srv_pa430_torque_test_send_enable(true);
-        SRV_PA430_TORQUE_TEST_LOG_W("电机恢复在线，已重新广播使能");
+
+    /* 保持使能：在线且无活动错误但反馈使能位=0 的电机，周期重发使能直到确认。
+       有错误位（保护中）时跳过，避免反复顶撞故障；故障消除后自动重新使能 */
+    bool need_enable = false;
+    for (uint8_t i = 0; i < SRV_PA430_MOTOR_COUNT; i++) {
+        if (s_motor_have_fb[i] && (s_motor_err[i] == 0U) && !s_motor_enabled[i]) {
+            need_enable = true;
+            break;
+        }
+    }
+    if (need_enable) {
+        if (s_enable_stall_since_ms == 0U) {
+            s_enable_stall_since_ms = now;
+            s_enable_warned = false;
+        } else if (!s_enable_warned
+            && (now - s_enable_stall_since_ms) >= SRV_PA430_ENABLE_TIMEOUT_MS) {
+            s_enable_warned = true;
+            SRV_PA430_TORQUE_TEST_LOG_W("电机使能未确认已超时，继续周期重试");
+        }
+        if ((now - s_enable_retry_last_ms) >= SRV_PA430_ENABLE_RETRY_MS) {
+            if (srv_pa430_torque_test_send_enable(true)) {
+                s_enable_retry_last_ms = now;
+            }
+        }
+    } else {
+        s_enable_stall_since_ms = 0U; /* 已全部使能或不在线，复位 */
+    }
+
+    /* 使能确认日志（反馈 Bit0 0→1 上升沿，每电机一次） */
+    for (uint8_t i = 0; i < SRV_PA430_MOTOR_COUNT; i++) {
+        if (s_motor_enabled[i] && !s_enabled_prev[i]) {
+            SRV_PA430_TORQUE_TEST_LOG_I("电机 ID=%u 已确认使能", (unsigned)s_motor_ids[i]);
+        }
+        s_enabled_prev[i] = s_motor_enabled[i];
     }
 }
 
@@ -421,8 +522,10 @@ bool srv_pa430_torque_test_on_rx(const drv_can_msg_t* msg)
     s_motor_theta_raw[idx] = (uint16_t)(((uint16_t)msg->data[0] << 8) | msg->data[1]);
     s_motor_have_fb[idx] = true;
 
-    /* 错误码：data[6..7] = 16bit 大端，仅变化时置标志（ISR 不打日志） */
-    const uint16_t err = (uint16_t)(((uint16_t)msg->data[6] << 8) | msg->data[7]);
+    /* 错误码：data[6..7] = 16bit 大端；Bit0 为使能指示位，掩掉后再判定错误（ISR 不打日志） */
+    const uint16_t raw = (uint16_t)(((uint16_t)msg->data[6] << 8) | msg->data[7]);
+    const uint16_t err = raw & SRV_PA430_ERR_BIT_MASK;
+    s_motor_enabled[idx] = (raw & SRV_PA430_ERR_ENABLE_BIT) != 0U; /* 使能确认依据 */
     if (err != s_motor_err[idx]) {
         s_motor_err[idx] = err;
         s_err_pending[idx] = true;
@@ -475,19 +578,103 @@ static bool srv_pa430_torque_test_is_arrived(uint8_t idx)
     } else {
         diff = (uint32_t)(s_target_raw - theta);
     }
-    return diff <= (uint32_t)SRV_PA430_ARRIVE_THRESHOLD;
+    return diff <= (uint32_t)s_arrive_thresh_raw;
+}
+
+/**
+ * @brief 位置（rad）→ 16bit raw（0x0000↔THETA_MIN，0xFFFF↔THETA_MAX）
+ * @param theta_rad 目标角度（rad）
+ * @return raw 值（钳位 0~0xFFFF）
+ */
+static uint16_t srv_pa430_theta_to_raw(float theta_rad)
+{
+    const float span = SRV_PA430_THETA_MAX_RAD - SRV_PA430_THETA_MIN_RAD;
+    float raw = (theta_rad - SRV_PA430_THETA_MIN_RAD) / span * 65535.0f + 0.5f;
+    if (raw < 0.0f) {
+        raw = 0.0f;
+    } else if (raw > 65535.0f) {
+        raw = 65535.0f;
+    }
+    return (uint16_t)raw;
+}
+
+/**
+ * @brief 速度（rad/s）→ 12bit raw（0x000↔VEL_MIN，0xFFF↔VEL_MAX）
+ * @param vel_radps 目标速度（rad/s）
+ * @return raw 值（钳位 0~0xFFF）
+ */
+static uint16_t srv_pa430_vel_to_raw(float vel_radps)
+{
+    const float span = SRV_PA430_VEL_MAX_RADPS - SRV_PA430_VEL_MIN_RADPS;
+    float raw = (vel_radps - SRV_PA430_VEL_MIN_RADPS) / span * 4095.0f + 0.5f;
+    if (raw < 0.0f) {
+        raw = 0.0f;
+    } else if (raw > 4095.0f) {
+        raw = 4095.0f;
+    }
+    return (uint16_t)raw;
+}
+
+/**
+ * @brief 增益（0~max）→ 12bit raw（0x000↔0，0xFFF↔max）
+ * @param val 目标增益（Kp: Nm/rad；Kd: Nm/(rad/s)）
+ * @param max 对应 CAN COM 满量程（Kp=250，Kd=50）
+ * @return raw 值（钳位 0~0xFFF）
+ */
+static uint16_t srv_pa430_gain_to_raw(float val, float max)
+{
+    float raw = val / max * 4095.0f + 0.5f;
+    if (raw < 0.0f) {
+        raw = 0.0f;
+    } else if (raw > 4095.0f) {
+        raw = 4095.0f;
+    }
+    return (uint16_t)raw;
+}
+
+/**
+ * @brief 角度差（rad）→ raw 差量（与原点无关，仅用于到位阈值）
+ * @param delta_rad 角度差（rad）
+ * @return 对应的 raw 计数
+ */
+static uint16_t srv_pa430_delta_theta_to_raw(float delta_rad)
+{
+    const float span = SRV_PA430_THETA_MAX_RAD - SRV_PA430_THETA_MIN_RAD;
+    float raw = delta_rad / span * 65535.0f + 0.5f;
+    if (raw < 0.0f) {
+        raw = 0.0f;
+    } else if (raw > 65535.0f) {
+        raw = 65535.0f;
+    }
+    return (uint16_t)raw;
+}
+
+/**
+ * @brief 由物理单位宏重算全部 raw 控制参数（start() 时调用）
+ */
+static void srv_pa430_torque_test_recalc_raw(void)
+{
+    s_pos_raw_pos = srv_pa430_theta_to_raw(+SRV_PA430_ANGLE_AMP_RAD);
+    s_pos_raw_neg = srv_pa430_theta_to_raw(-SRV_PA430_ANGLE_AMP_RAD);
+    s_pos_raw_mid = srv_pa430_theta_to_raw(0.0f);
+    s_vel_ref_raw = srv_pa430_vel_to_raw(SRV_PA430_VEL_REF_RADPS);
+    s_vel_zero_raw = srv_pa430_vel_to_raw(0.0f);
+    s_kp_raw = srv_pa430_gain_to_raw(SRV_PA430_KP_NMPR, SRV_PA430_KP_MAX_NMPR);
+    s_kd_raw = srv_pa430_gain_to_raw(SRV_PA430_KD_NMPRPDS, SRV_PA430_KD_MAX_NMPRPDS);
+    s_arrive_thresh_raw = srv_pa430_delta_theta_to_raw(SRV_PA430_ARRIVE_THRESHOLD_RAD);
 }
 
 /**
  * @brief 发送广播使能/失能帧（0x10；FD 模式 DLC 64，经典测试模式 DLC 8）
  * @param enable true=使能 (byte7=0xFC)，false=失能 (byte7=0xFD)
+ * @return true=帧已入 TX FIFO；false=TX 未就绪未发送（调用方可决定何时重试）
  * @note  FD 模式全槽 byte7 写入命令（未配置槽 0xFF 无命令）；
  *        经典诊断模式只写第一槽命令（DLC 8 仅够一槽）
  */
-static void srv_pa430_torque_test_send_enable(bool enable)
+static bool srv_pa430_torque_test_send_enable(bool enable)
 {
     if (!drv_can_tx_ready(DRV_CAN_CH_2))
-        return;
+        return false;
 
     drv_can_msg_t tx = {
         .id = SRV_PA430_ID_STATUS,
@@ -506,6 +693,7 @@ static void srv_pa430_torque_test_send_enable(bool enable)
     }
 #endif
     drv_can_send(DRV_CAN_CH_2, &tx);
+    return true;
 }
 
 /**
@@ -549,12 +737,12 @@ static void srv_pa430_torque_test_send_control(void)
     memset(tx.data, 0, sizeof(tx.data));
 
     for (uint8_t i = 0; i < SRV_PA430_MAX_MOTORS; i++) {
-        srv_pa430_torque_test_pack_mit(&tx.data[i * 8U], SRV_PA430_RAW_MID,
-            SRV_PA430_VEL_RAW_0, 0U, 0U, SRV_PA430_TQ_RAW_0); /* 未配置槽中性包 */
+        srv_pa430_torque_test_pack_mit(&tx.data[i * 8U], s_pos_raw_mid,
+            s_vel_zero_raw, 0U, 0U, SRV_PA430_TQ_RAW_0); /* 未配置槽中性包 */
     }
     for (uint8_t i = 0; i < SRV_PA430_MOTOR_COUNT; i++) {
         srv_pa430_torque_test_pack_mit(&tx.data[(uint8_t)((s_motor_ids[i] - 1U) * 8U)],
-            s_target_raw, SRV_PA430_VEL_RAW_0, SRV_PA430_KP_RAW, SRV_PA430_KD_RAW,
+            s_target_raw, s_vel_ref_raw, s_kp_raw, s_kd_raw,
             SRV_PA430_TQ_RAW_0);
     }
     drv_can_send(DRV_CAN_CH_2, &tx);

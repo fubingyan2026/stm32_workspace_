@@ -8,25 +8,35 @@
  *   状态帧 (Device→Host, CAN ID 0x102, 500ms)：状态 + 故障/温度/电压
  *
  * 苇熠伺服执行器测试协议已独立到 srv_ht_temp_test.c/h 与 srv_ht_torque_test.c/h
- * （经典 CAN 2.0A，1 Mbps，设备地址寻址），激活哪个模块由 srv_ht_test_mode.h 的
- * SRV_HT_TEST_MODE_TORQUE 宏决定。srv_can_on_rx() 先将测试协议帧路由给选中的
+ * （经典 CAN 2.0A，1 Mbps，设备地址寻址），激活哪个模块由 srv_motor_test_select.h 的
+ * SRV_MOTOR_TEST_SELECT 决定。srv_can_on_rx() 先将测试协议帧路由给选中的
  * 测试模块 on_rx，返回 true 表示已处理；剩余帧按旧协议解析 0x100。
  * PA430(Motorevo) 测试走 FDCAN2 独立总线，帧由 can_task 按 CH_2 直接分发。
  */
 
 #include "srv_can.h"
 
-#include "srv_ht_test_mode.h"
+#include "srv_motor_test_select.h"
 #include "srv_motor_behavior.h"
 
-/* 测试帧路由：CAN1 的苇熠测试帧按 srv_ht_test_mode.h 选择 temp/torque；
+/* 测试帧路由：CAN1 的苇熠测试帧按 srv_motor_test_select.h 选择 temp/torque；
+ * 良志(TONGZHI) 模式下 CAN1 帧由 can_task 直连，srv_can 不参与，占位保证编译；
  * PA430 (Motorevo) 反馈帧由 can_task 按 CH_2 直接分发，不经本模块 */
-#if SRV_HT_TEST_MODE_TORQUE
+#if SRV_MOTOR_TEST_IS_HT_TORQUE
 #include "srv_ht_torque_test.h"
 #define HT_TEST_ON_RX srv_ht_torque_test_on_rx
-#else
+#elif SRV_MOTOR_TEST_IS_HT_TEMP
 #include "srv_ht_temp_test.h"
 #define HT_TEST_ON_RX srv_ht_temp_test_on_rx
+#else
+/* 良志(TONGZHI)：CAN1 帧由 can_task 直连 srv_tongzhi_torque_test_on_rx，
+   srv_can 不参与路由；占位实现仅保证编译 */
+static bool srv_can_ht_rx_placeholder(const drv_can_msg_t* msg)
+{
+    (void)msg;
+    return false;
+}
+#define HT_TEST_ON_RX srv_can_ht_rx_placeholder
 #endif
 
 #include <string.h>

@@ -7,7 +7,7 @@
 - 走**速度模式**（`0x07 02`）下发转速（`0x09`），方向变化时用**固件线性斜坡**平滑加减速——这是消除"一卡一卡"（位置模式下电机对每个目标都执行"加速→匀速→减速→停"，到点即停）的关键。
 - 每 `POS_POLL_PERIOD_MS`(10ms) 用 `0x06` 读回位置，**任一台电机到达端点即翻转全局方向**。
 - 附带报警查询、电压读取、掉线检测、恢复重发、30 天在线自动停止。
-- 激活方式：`srv_ht_test_mode.h` 中 `SRV_HT_TEST_MODE_TORQUE = 1`（`can_task` / `srv_can` 按此宏接线）。
+- 激活方式：`srv_motor_test_select.h` 中 `SRV_MOTOR_TEST_SELECT = SRV_MOTOR_TEST_HT_TORQUE`（`can_task` / `srv_can` 按此宏接线）。
 
 ## 2. 通信协议
 

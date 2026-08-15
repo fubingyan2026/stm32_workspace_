@@ -41,7 +41,7 @@ extern "C" {
  *        1 = 在 FDCAN2（DRV_CAN_CH_2）上并行运行本模块（init/step/on_rx）；
  *        0 = 不运行（CAN2 空闲）。
  * @note  本模块走 FDCAN2 独立总线，与 CAN1 上的苇熠 HT 测试
- *        （srv_ht_test_mode.h 决定 temp/torque）同时运行、互不干扰；
+ *        （srv_motor_test_select.h 决定苇熠/良志三选一）同时运行、互不干扰；
  *        本默认值可在编译命令行用 -DSRV_PA430_TORQUE_TEST_ENABLE=1 覆盖
  */
 #ifndef SRV_PA430_TORQUE_TEST_ENABLE
