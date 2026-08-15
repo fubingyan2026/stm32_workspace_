@@ -80,7 +80,7 @@
 
 /* ===== 用户可调参数（物理单位；内部自动换算 raw） ===== */
 /** @brief 反转角度半幅（rad），行程为 ±AMP（默认 ±2.5 rad） */
-#define SRV_PA430_ANGLE_AMP_RAD (3.0f)
+#define SRV_PA430_ANGLE_AMP_RAD (3.2f)
 /** @brief V_ref 目标速度（rad/s），通常 0 */
 #define SRV_PA430_VEL_REF_RADPS (0.0f)
 /** @brief MIT 刚度 Kp（Nm/rad，0~250） */

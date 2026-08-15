@@ -100,6 +100,10 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # App 向量表重定位到 0x08020000（system_stm32f4xx.c 于 SystemInit 内设置 SCB->VTOR）
     USER_VECT_TAB_ADDRESS
     VECT_TAB_OFFSET=0x00020000U
+    #srv_log_flash参数配置
+    SRV_LOG_FLASH_AREA_START=0x080C0000U
+    SRV_LOG_FLASH_AREA_SIZE=256*1024U
+    SRV_LOG_FLASH_SECTOR_SIZE=RING_STORAGE_SECTOR_128K
 )
 
 # App 链接脚本与 map（App 分区 0x08020000）

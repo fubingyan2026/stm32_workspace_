@@ -2,8 +2,10 @@
 	"folders": [
 		{ "path": ".", "name": "0_Project 根目录" },
 		{ "path": "tasks", "name": "1_Tasks 任务层" },
+		{ "path": "../public_layer/task", "name": "1b_SharedTasks (public_layer)" },
 		{ "path": "applications", "name": "2_Applications 应用层" },
 		{ "path": "service", "name": "3_Services 服务层" },
+		{ "path": "../public_layer/service", "name": "3b_SharedServices (public_layer)" },
 		{ "path": "../public_layer/m_middlewares", "name": "4_Middleware 中间件层" },
 		{ "path": "device_drivers", "name": "5_DeviceDrivers 驱动层" },
 		{ "path": "../public_layer/device_drivers/hal_flash", "name": "5b_SharedDeviceDrivers (public_layer)" },

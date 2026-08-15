@@ -277,7 +277,7 @@ void srv_log_flash_dump(void)
     /* 屏蔽实时日志，保证 dump 输出连续；dump_step 完成/中止或 clear 时恢复 */
     (void)log_hold_output(true);
 
-    char header[64];
+    static char header[64];
     int n = snprintf_(header, sizeof(header),
         "===== Flash 日志 (WARN/ERROR) %lu/%lu 条 =====\r\n",
         (unsigned long)s_dump_count, (unsigned long)SRV_LOG_FLASH_MAX_RECORDS);

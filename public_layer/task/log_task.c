@@ -101,6 +101,10 @@ void log_task_init(void)
      * 经 log 缓冲输出，若先于 log_init 调用会被静默丢弃。 */
     (void)drv_log_uart_init();
 
+#if !defined(E1_BUILD_BOOT)
+    /* ── 日志 Flash 落盘驱动（有新增记录且到限流间隔时写入） ── */
+    // srv_log_flash_init();
+#endif
     /* SEGGER RTT 初始化（无论当前模式，预初始化以便随时切换） */
     SEGGER_RTT_Init();
 
@@ -116,7 +120,7 @@ void log_task_init(void)
 
 void log_task_flush(void)
 {
-    uint8_t buf[LOG_TASK_TX_BUF_SIZE];
+    static uint8_t buf[LOG_TASK_TX_BUF_SIZE];
 
     /* 1) 把 log 缓冲全部搬移到输出后端（UART 非阻塞发送前先等上一段 DMA 空闲） */
     for (uint32_t guard = 0U; guard < 256U; guard++) {
