@@ -53,10 +53,10 @@ void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, MOTOR_POWER_CHG_IN_Pin|MOTOR_POWER_CHG_EN_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOE, HSD1_IN_24V_Pin|HSD1_DIAG_EN_24V_Pin|HSD2_DIAG_EN_24V_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOE, HSD1_IN_24V_Pin|HSD1_DIAG_EN_24V_Pin|HSD2_DIAG_EN_24V_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(MOTOR_POWER_CHG_EN_GPIO_Port, MOTOR_POWER_CHG_EN_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOD, DBR_LSD_EN_Pin|MOTOR_POWER_EN_Pin|AUX_POWER_EN_Pin|HSD2_IN_24V_Pin
@@ -65,13 +65,6 @@ void MX_GPIO_Init(void)
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(P_CAN_STB_GPIO_Port, P_CAN_STB_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pins : MOTOR_POWER_CHG_IN_Pin MOTOR_POWER_CHG_EN_Pin */
-  GPIO_InitStruct.Pin = MOTOR_POWER_CHG_IN_Pin|MOTOR_POWER_CHG_EN_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /*Configure GPIO pins : MOTOR_POWER_CHG_OCP_FLAG_Pin DBR_LSD_OCP_FLAG_Pin E_STOP_ON_Pin */
   GPIO_InitStruct.Pin = MOTOR_POWER_CHG_OCP_FLAG_Pin|DBR_LSD_OCP_FLAG_Pin|E_STOP_ON_Pin;
@@ -93,6 +86,13 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : MOTOR_POWER_CHG_EN_Pin */
+  GPIO_InitStruct.Pin = MOTOR_POWER_CHG_EN_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(MOTOR_POWER_CHG_EN_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : DBR_LSD_EN_Pin MOTOR_POWER_EN_Pin AUX_POWER_EN_Pin HSD2_IN_24V_Pin
                            HSD1_DIAG_EN_12V_Pin HSD1_IN_12V_Pin DC_DC_EN_Pin */

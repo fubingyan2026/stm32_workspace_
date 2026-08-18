@@ -51,13 +51,13 @@ void app_fault_policy_step(uint16_t elapsed_ms)
 {
     (void)elapsed_ms;
 
-    /* 已锁存：保持断电状态，等待操作员显式复位 */
-    if (s_tripped) {
-        return;
-    }
-
     srv_pwr_det_status_t st;
     srv_pwr_det_read(&st);
+
+    /* 已锁存：保持断电状态，等待操作员显式复位 */
+    if (s_tripped && st.estop_on) {
+        return;
+    }
 
     /*
      * 触发条件：
@@ -83,6 +83,11 @@ void app_fault_policy_step(uint16_t elapsed_ms)
             "dbr_ocp=%d chg_ocp=%d hsd_fault=%d",
             (int)st.estop_on, (int)st.motor_power_ok, (int)st.aux_power_ok,
             (int)st.dbr_ocp, (int)st.motor_chg_ocp, (int)st.hsd_fault);
+    }
+    else
+    {
+        app_fault_policy_reset();
+        srv_pwr_ctrl_request_on();
     }
 }
 

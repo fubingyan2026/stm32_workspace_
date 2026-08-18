@@ -32,7 +32,6 @@ typedef enum {
     DRV_POWER_RAIL_MOTOR_EN,     /**< MOTOR_POWER_EN — 电机电源使能 */
     DRV_POWER_RAIL_MOTOR_CHG_EN, /**< MOTOR_POWER_CHG_EN — 电机预充电使能 */
     DRV_POWER_RAIL_DBR_LSD_EN,   /**< DBR_LSD_EN — 动态制动低边驱动使能 */
-    DRV_POWER_RAIL_MOTOR_CHG_IN, /**< MOTOR_POWER_CHG_IN — 电机充电输入控制 */
     DRV_POWER_RAIL_DC_DC_EN,     /**< DC_DC_EN — DC-DC电源转换器使能 */
 
     DRV_POWER_RAIL_NUM,

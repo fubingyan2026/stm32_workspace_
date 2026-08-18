@@ -1,11 +1,12 @@
 /**
  * @file    srv_pwr_ctrl.h
  * @author  maximillian
- * @version V1.0.0
+ * @version V2.0.0
  * @date    2026-07-2
- * @brief   电源控制服务 — FSM 上电时序 + 状态采集
+ * @brief   电源控制服务 — FSM 上电时序（含电机预充电软启动）+ 状态采集
  *
- * 包含完整的 FSM 状态机和电源轨使能逻辑。
+ * 包含电源 FSM 与预充电 FSM 双状态机及电源轨使能逻辑，直接驱动
+ * drv_power / drv_pwm / drv_status / srv_adc（Style B，自包含）。
  * 不管理 sw_timer，由 task 层定期调用 srv_pwr_ctrl_step() 推进状态。
  */
 
@@ -21,13 +22,13 @@ extern "C" {
 
 /* Exported functions prototypes ---------------------------------------------*/
 
-/** @brief 初始化电源控制服务（drv_power + FSM） */
+/** @brief 初始化电源控制服务（drv_power + drv_pwm + 双 FSM） */
 void srv_pwr_ctrl_init(void);
 
 /**
  * @brief 推进 FSM 状态机一步
  * @param elapsed_ms 距离上次调用经过的毫秒数
- * @note  由 task 层 sw_timer 周期调用
+ * @note  由 task 层 sw_timer 周期调用（1ms）
  */
 void srv_pwr_ctrl_step(uint16_t elapsed_ms);
 

@@ -56,7 +56,6 @@ static const drv_power_rail_pin_t s_pins[DRV_POWER_RAIL_NUM] = {
     [DRV_POWER_RAIL_MOTOR_EN]      = { MOTOR_POWER_EN_GPIO_Port,   MOTOR_POWER_EN_Pin,   false, "MOTOR_EN" },
     [DRV_POWER_RAIL_MOTOR_CHG_EN]  = { MOTOR_POWER_CHG_EN_GPIO_Port, MOTOR_POWER_CHG_EN_Pin, false, "MOTOR_CHG" },
     [DRV_POWER_RAIL_DBR_LSD_EN]    = { DBR_LSD_EN_GPIO_Port,      DBR_LSD_EN_Pin,       false, "DBR_LSD" },
-    [DRV_POWER_RAIL_MOTOR_CHG_IN]  = { MOTOR_POWER_CHG_IN_GPIO_Port, MOTOR_POWER_CHG_IN_Pin, false, "MOTOR_CHG_IN" },
     [DRV_POWER_RAIL_DC_DC_EN]      = { DC_DC_EN_GPIO_Port,        DC_DC_EN_Pin,         false, "DC_DC_EN" },
 };
 

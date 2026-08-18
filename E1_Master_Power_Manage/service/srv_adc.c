@@ -19,7 +19,7 @@
 /* 模块日志开关 ----------------------------------------------------------------*/
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
-#define SRV_ADC_LOG_ENABLE 1
+#define SRV_ADC_LOG_ENABLE 0
 
 #if SRV_ADC_LOG_ENABLE
 #define SRV_ADC_LOG_E(...) LOG_E("srv_adc", __VA_ARGS__)
@@ -314,7 +314,11 @@ bool srv_adc_get_latest(srv_adc_data_t* sample)
     if (!sample || !s_initialized) {
         return false;
     }
-    return msg_fifo_pop(&s_fifo, sample);
+
+    static srv_adc_data_t last_sample;
+    msg_fifo_pop(&s_fifo, &last_sample);
+    *sample = last_sample;
+    return true;
 }
 
 uint8_t srv_adc_read_ain(void)
