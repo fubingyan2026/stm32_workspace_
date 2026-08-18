@@ -84,11 +84,11 @@
 /** @brief V_ref 目标速度（rad/s），通常 0 */
 #define SRV_PA430_VEL_REF_RADPS (0.0f)
 /** @brief MIT 刚度 Kp（Nm/rad，0~250） */
-#define SRV_PA430_KP_NMPR (12.5f)
+#define SRV_PA430_KP_NMPR (5.5f)
 /** @brief MIT 阻尼 Kd（Nm/(rad/s)，0~50） */
-#define SRV_PA430_KD_NMPRPDS (13.75f)
+#define SRV_PA430_KD_NMPRPDS (26.75f)
 /** @brief 到位判定阈值（rad） */
-#define SRV_PA430_ARRIVE_THRESHOLD_RAD (0.2f)
+#define SRV_PA430_ARRIVE_THRESHOLD_RAD (0.4f)
 
 /* ===== 协议缩放常量（docs/Motorevo电机CAN协议文档.md §3.1，勿改） ===== */
 #define SRV_PA430_THETA_MIN_RAD (-12.5f)

@@ -29,7 +29,7 @@ typedef enum {
     DRV_POWER_RAIL_HSD1_24V_DIAG,/**< 24V_HSD1_DIAG_EN — 24V HSD1 诊断使能 */
     DRV_POWER_RAIL_HSD2_24V_DIAG,/**< 24V_HSD2_DIAG_EN — 24V HSD2 诊断使能 */
     DRV_POWER_RAIL_AUX_EN,       /**< AUX_POWER_EN — 辅助电源使能 */
-    DRV_POWER_RAIL_MOTOR_EN,     /**< MOTOR_POWER_EN — 电机主电源使能 */
+    DRV_POWER_RAIL_MOTOR_EN,     /**< MOTOR_POWER_EN — 电机电源使能 */
     DRV_POWER_RAIL_MOTOR_CHG_EN, /**< MOTOR_POWER_CHG_EN — 电机预充电使能 */
     DRV_POWER_RAIL_DBR_LSD_EN,   /**< DBR_LSD_EN — 动态制动低边驱动使能 */
     DRV_POWER_RAIL_MOTOR_CHG_IN, /**< MOTOR_POWER_CHG_IN — 电机充电输入控制 */
@@ -44,6 +44,8 @@ void drv_power_init(void);
 void drv_power_deinit(void);
 
 void drv_power_set(drv_power_rail_t rail, bool on);
+
+void drv_power_toggle(drv_power_rail_t rail);
 
 /** @brief 获取电源轨名称字符串 */
 const char* drv_power_rail_name(drv_power_rail_t rail);

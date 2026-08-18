@@ -37,7 +37,7 @@
 typedef struct {
     GPIO_TypeDef* port;
     uint16_t      pin;
-    bool          active_low;
+    bool          active_low; /**< true 表示低电平有效（拉低使能） */
     const char*   name;       /**< 信号名称（调试用） */
 } drv_status_pin_t;
 
@@ -57,7 +57,7 @@ static const drv_status_pin_t s_pins[DRV_STATUS_NUM] = {
     [DRV_STATUS_MOTOR_PGD]       = { MOTOR_POWER_PGD_GPIO_Port,   MOTOR_POWER_PGD_Pin,   false, "MOTOR_PGD" },
     [DRV_STATUS_DBR_OCP_FLAG]    = { DBR_LSD_OCP_FLAG_GPIO_Port,  DBR_LSD_OCP_FLAG_Pin,  false,  "DBR_OCP" },
     [DRV_STATUS_MOTOR_CHG_OCP]   = { MOTOR_POWER_CHG_OCP_FLAG_GPIO_Port, MOTOR_POWER_CHG_OCP_FLAG_Pin, false, "MOTOR_CHG_OCP" },
-    [DRV_STATUS_E_STOP_ON]       = { E_STOP_ON_GPIO_Port,         E_STOP_ON_Pin,         false, "E_STOP_ON" },
+    [DRV_STATUS_E_STOP_ON]       = { E_STOP_ON_GPIO_Port,         E_STOP_ON_Pin,         true, "E_STOP_ON" },
 };
 
 /* Private variables ---------------------------------------------------------*/

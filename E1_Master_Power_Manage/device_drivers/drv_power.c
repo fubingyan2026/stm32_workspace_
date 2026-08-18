@@ -34,6 +34,7 @@
 typedef struct {
     GPIO_TypeDef* port;
     uint16_t      pin;
+    bool          active_low; /**< true 表示低电平有效（拉低使能） */
     const char*   name;
 } drv_power_rail_pin_t;
 
@@ -45,18 +46,18 @@ typedef struct {
  * 引脚宏定义来自 Core/Inc/main.h，每路对应 CubeMX 已配置的 GPIO 输出。
  */
 static const drv_power_rail_pin_t s_pins[DRV_POWER_RAIL_NUM] = {
-    [DRV_POWER_RAIL_HSD1_12V]      = { HSD1_IN_12V_GPIO_Port,      HSD1_IN_12V_Pin,      "12V_HSD1" },
-    [DRV_POWER_RAIL_HSD1_24V]      = { HSD1_IN_24V_GPIO_Port,      HSD1_IN_24V_Pin,      "24V_HSD1" },
-    [DRV_POWER_RAIL_HSD2_24V]      = { HSD2_IN_24V_GPIO_Port,      HSD2_IN_24V_Pin,      "24V_HSD2" },
-    [DRV_POWER_RAIL_HSD1_12V_DIAG] = { HSD1_DIAG_EN_12V_GPIO_Port, HSD1_DIAG_EN_12V_Pin, "12V_HSD1_DIAG" },
-    [DRV_POWER_RAIL_HSD1_24V_DIAG] = { HSD1_DIAG_EN_24V_GPIO_Port, HSD1_DIAG_EN_24V_Pin, "24V_HSD1_DIAG" },
-    [DRV_POWER_RAIL_HSD2_24V_DIAG] = { HSD2_DIAG_EN_24V_GPIO_Port, HSD2_DIAG_EN_24V_Pin, "24V_HSD2_DIAG" },
-    [DRV_POWER_RAIL_AUX_EN]        = { AUX_POWER_EN_GPIO_Port,     AUX_POWER_EN_Pin,     "AUX_EN" },
-    [DRV_POWER_RAIL_MOTOR_EN]      = { MOTOR_POWER_EN_GPIO_Port,   MOTOR_POWER_EN_Pin,   "MOTOR_EN" },
-    [DRV_POWER_RAIL_MOTOR_CHG_EN]  = { MOTOR_POWER_CHG_EN_GPIO_Port, MOTOR_POWER_CHG_EN_Pin, "MOTOR_CHG" },
-    [DRV_POWER_RAIL_DBR_LSD_EN]    = { DBR_LSD_EN_GPIO_Port,      DBR_LSD_EN_Pin,       "DBR_LSD" },
-    [DRV_POWER_RAIL_MOTOR_CHG_IN]  = { MOTOR_POWER_CHG_IN_GPIO_Port, MOTOR_POWER_CHG_IN_Pin, "MOTOR_CHG_IN" },
-    [DRV_POWER_RAIL_DC_DC_EN]      = { DC_DC_EN_GPIO_Port,        DC_DC_EN_Pin,         "DC_DC_EN" },
+    [DRV_POWER_RAIL_HSD1_12V]      = { HSD1_IN_12V_GPIO_Port,      HSD1_IN_12V_Pin,      false, "12V_HSD1" },
+    [DRV_POWER_RAIL_HSD1_24V]      = { HSD1_IN_24V_GPIO_Port,      HSD1_IN_24V_Pin,      false, "24V_HSD1" },
+    [DRV_POWER_RAIL_HSD2_24V]      = { HSD2_IN_24V_GPIO_Port,      HSD2_IN_24V_Pin,      false, "24V_HSD2" },
+    [DRV_POWER_RAIL_HSD1_12V_DIAG] = { HSD1_DIAG_EN_12V_GPIO_Port, HSD1_DIAG_EN_12V_Pin, false, "12V_HSD1_DIAG" },
+    [DRV_POWER_RAIL_HSD1_24V_DIAG] = { HSD1_DIAG_EN_24V_GPIO_Port, HSD1_DIAG_EN_24V_Pin, false, "24V_HSD1_DIAG" },
+    [DRV_POWER_RAIL_HSD2_24V_DIAG] = { HSD2_DIAG_EN_24V_GPIO_Port, HSD2_DIAG_EN_24V_Pin, false, "24V_HSD2_DIAG" },
+    [DRV_POWER_RAIL_AUX_EN]        = { AUX_POWER_EN_GPIO_Port,     AUX_POWER_EN_Pin,     false, "AUX_EN" },
+    [DRV_POWER_RAIL_MOTOR_EN]      = { MOTOR_POWER_EN_GPIO_Port,   MOTOR_POWER_EN_Pin,   false, "MOTOR_EN" },
+    [DRV_POWER_RAIL_MOTOR_CHG_EN]  = { MOTOR_POWER_CHG_EN_GPIO_Port, MOTOR_POWER_CHG_EN_Pin, false, "MOTOR_CHG" },
+    [DRV_POWER_RAIL_DBR_LSD_EN]    = { DBR_LSD_EN_GPIO_Port,      DBR_LSD_EN_Pin,       false, "DBR_LSD" },
+    [DRV_POWER_RAIL_MOTOR_CHG_IN]  = { MOTOR_POWER_CHG_IN_GPIO_Port, MOTOR_POWER_CHG_IN_Pin, false, "MOTOR_CHG_IN" },
+    [DRV_POWER_RAIL_DC_DC_EN]      = { DC_DC_EN_GPIO_Port,        DC_DC_EN_Pin,         false, "DC_DC_EN" },
 };
 
 /* Private variables ---------------------------------------------------------*/
@@ -73,12 +74,13 @@ void drv_power_init(void)
 
     for (uint32_t i = 0; i < DRV_POWER_RAIL_NUM; i++) {
         if (s_pins[i].port && s_pins[i].pin) {
-            HAL_GPIO_WritePin(s_pins[i].port, s_pins[i].pin, GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(s_pins[i].port, s_pins[i].pin,
+                s_pins[i].active_low ? GPIO_PIN_SET : GPIO_PIN_RESET);
         }
     }
 
     s_initialized = true;
-    DRV_POWER_LOG_I("电源轨初始化完成 (%u 路全部拉低)", (unsigned)DRV_POWER_RAIL_NUM);
+    DRV_POWER_LOG_I("电源轨初始化完成 (%u 路全部关闭)", (unsigned)DRV_POWER_RAIL_NUM);
 }
 
 void drv_power_deinit(void)
@@ -89,7 +91,8 @@ void drv_power_deinit(void)
 
     for (uint32_t i = 0; i < DRV_POWER_RAIL_NUM; i++) {
         if (s_pins[i].port && s_pins[i].pin) {
-            HAL_GPIO_WritePin(s_pins[i].port, s_pins[i].pin, GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(s_pins[i].port, s_pins[i].pin,
+                s_pins[i].active_low ? GPIO_PIN_SET : GPIO_PIN_RESET);
         }
     }
 
@@ -105,11 +108,24 @@ void drv_power_set(drv_power_rail_t rail, bool on)
     }
 
     if (s_pins[rail].port && s_pins[rail].pin) {
-        HAL_GPIO_WritePin(s_pins[rail].port, s_pins[rail].pin,
-            on ? GPIO_PIN_SET : GPIO_PIN_RESET);
+        GPIO_PinState level =
+            (on ^ s_pins[rail].active_low) ? GPIO_PIN_SET : GPIO_PIN_RESET;
+        HAL_GPIO_WritePin(s_pins[rail].port, s_pins[rail].pin, level);
     }
 
-    DRV_POWER_LOG_D("电源轨 %s -> %s", drv_power_rail_name(rail), on ? "开启" : "关闭");
+    // DRV_POWER_LOG_D("电源轨 %s -> %s", drv_power_rail_name(rail), on ? "开启" : "关闭");
+}
+
+void drv_power_toggle(drv_power_rail_t rail)
+{
+    if (!s_initialized || rail >= DRV_POWER_RAIL_NUM) {
+        DRV_POWER_LOG_W("电源轨设置被忽略: rail=%u 越界或未初始化", (unsigned)rail);
+        return;
+    }
+
+    if (s_pins[rail].port && s_pins[rail].pin) {
+        HAL_GPIO_TogglePin(s_pins[rail].port, s_pins[rail].pin);
+    }
 }
 
 const char* drv_power_rail_name(drv_power_rail_t rail)

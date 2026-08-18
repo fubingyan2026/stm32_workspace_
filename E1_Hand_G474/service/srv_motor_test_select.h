@@ -49,7 +49,7 @@ typedef enum {
  * @note  命令行覆盖必须使用上面的宏名或整型字面量（枚举名不是预处理器符号，无法用于 #if）
  */
 #ifndef SRV_MOTOR_TEST_SELECT
-#define SRV_MOTOR_TEST_SELECT SRV_MOTOR_TEST_TONGZHI
+#define SRV_MOTOR_TEST_SELECT SRV_MOTOR_TEST_HT_TORQUE
 #endif
 
 /* --- 便捷判定宏（供 #if 使用） --- */

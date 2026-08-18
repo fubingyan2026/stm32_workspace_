@@ -107,7 +107,7 @@ void srv_pwr_det_read(srv_pwr_det_status_t* status)
     const uint32_t now_ms = millis();
     if ((uint32_t)(now_ms - s_pwr_det_log_ts) >= SRV_PWR_DET_LOG_PERIOD_MS) {
         s_pwr_det_log_ts = now_ms;
-        SRV_PWR_DET_LOG_D("电源状态: 12V=%u 24V=%u 工控24V=%u 辅助=%u 电机=%u | HSD故障=%u DBR过流=%u 电充过流=%u 急停=%u",
+        SRV_PWR_DET_LOG_D("电源故障状态(0代表无故障): 12V=%u 24V=%u 工控24V=%u 辅助=%u 电机=%u | HSD故障=%u DBR过流=%u 电充过流=%u 急停=%u",
             (unsigned)status->ext_12v_ok, (unsigned)status->ext_24v_ok,
             (unsigned)status->comp_24v_ok, (unsigned)status->aux_power_ok,
             (unsigned)status->motor_power_ok,

@@ -111,6 +111,18 @@ void srv_pwr_ctrl_step(uint16_t elapsed_ms)
 {
     s_ctx.steady_ms += elapsed_ms;
     fsm_step(&s_fsm);
+
+    // static uint16_t counts=0;
+    // if(++counts>=500/elapsed_ms)
+    // {
+    //     counts=0;
+    //     drv_power_toggle(DRV_POWER_RAIL_MOTOR_EN);
+    // }
+
+    drv_power_set(DRV_POWER_RAIL_DC_DC_EN, true);
+    drv_power_set(DRV_POWER_RAIL_MOTOR_EN, true);
+    // drv_power_set(DRV_POWER_RAIL_MOTOR_CHG_EN, true);
+    // drv_power_set(DRV_POWER_RAIL_AUX_EN, true);
 }
 
 void srv_pwr_ctrl_request_on(void)

@@ -28,6 +28,7 @@
 #include "sample_task.h"
 #include "sw_timer.h"
 #include "ws2812_task.h"
+#include "app_main.h"
 
 /* 模块日志开关 ----------------------------------------------------------------*/
 

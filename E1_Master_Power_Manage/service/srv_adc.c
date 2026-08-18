@@ -19,7 +19,7 @@
 /* 模块日志开关 ----------------------------------------------------------------*/
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
-#define SRV_ADC_LOG_ENABLE 0
+#define SRV_ADC_LOG_ENABLE 1
 
 #if SRV_ADC_LOG_ENABLE
 #define SRV_ADC_LOG_E(...) LOG_E("srv_adc", __VA_ARGS__)
@@ -71,9 +71,6 @@
 #define TS_CAL2_ADDR ((uint16_t*)0x1FFF7A2E) /**< 110°C 校准值 */
 #define TS_CAL1_TEMP (25)
 #define TS_CAL2_TEMP (110)
-
-/* VBAT 分压比 (内部 4x 桥式分压 → 实际电压 = raw * 4) */
-#define VBAT_SCALE (4.0f)
 
 /* NTC 参数 */
 #define NTC_PULLUP_R (10000.0f) /**< 上拉电阻 10kΩ */
@@ -224,13 +221,14 @@ void srv_adc_step(void)
         SRV_ADC_LOG_W("VREFINT 采样值过小 (%u)，VDDA 回退默认 3300mV", (unsigned)vref);
     }
     s.vdda_mv = vdda_mv;
-    float vdda_v = (float)vdda_mv / 1000.0f;
+    float vdda_v = (float)vdda_mv * 0.001f;
 
     /* ── 外部电压 (mV) ── */
-    float raw_to_v = vdda_v / (float)ADC_MAX;
-    s.vin_mv = (uint32_t)(adc_filtered(DRV_ADC_CH_VIN, raw.raw[DRV_ADC_CH_VIN]) * raw_to_v * ADC_SCALE_VIN);
-    s.motor_power_mv = (uint32_t)(adc_filtered(DRV_ADC_CH_MOTOR_POWER, raw.raw[DRV_ADC_CH_MOTOR_POWER]) * raw_to_v * ADC_SCALE_MOTOR_POWER);
-    s.aux_power_mv = (uint32_t)(adc_filtered(DRV_ADC_CH_AUX_POWER, raw.raw[DRV_ADC_CH_AUX_POWER]) * raw_to_v * ADC_SCALE_AUX_POWER);
+    const float raw_to_mv = vdda_mv / (float)ADC_MAX;
+
+    s.vin_mv = (uint32_t)(adc_filtered(DRV_ADC_CH_VIN, raw.raw[DRV_ADC_CH_VIN]) * raw_to_mv * ADC_SCALE_VIN);
+    s.motor_power_mv = (uint32_t)(adc_filtered(DRV_ADC_CH_MOTOR_POWER, raw.raw[DRV_ADC_CH_MOTOR_POWER]) * raw_to_mv * ADC_SCALE_MOTOR_POWER);
+    s.aux_power_mv = (uint32_t)(adc_filtered(DRV_ADC_CH_AUX_POWER, raw.raw[DRV_ADC_CH_AUX_POWER]) * raw_to_mv * ADC_SCALE_AUX_POWER);
 
     /* ── E-STOP 双通道冗余 (12-bit 原始值) ── */
     s.e_stop1_adc1 = (uint16_t)adc_filtered(DRV_ADC_CH_E_STOP1_ADC1, raw.raw[DRV_ADC_CH_E_STOP1_ADC1]);
@@ -243,7 +241,7 @@ void srv_adc_step(void)
     s.e_stop4_adc2 = (uint16_t)adc_filtered(DRV_ADC_CH_E_STOP4_ADC2, raw.raw[DRV_ADC_CH_E_STOP4_ADC2]);
 
     /* ── VBAT 备份电池电压 ── */
-    s.vbat_mv = (uint32_t)(adc_filtered(DRV_ADC_CH_VBAT, raw.raw[DRV_ADC_CH_VBAT]) * raw_to_v * VBAT_SCALE);
+    s.vbat_mv = (uint32_t)(adc_filtered(DRV_ADC_CH_VBAT, raw.raw[DRV_ADC_CH_VBAT]) * raw_to_mv);
 
     /* ── CD4051B 多路选择 A_INx_IO：仅更新本次 DMA 对应的一路 ──
      * 使用未滤波原始值（CD4051B 通道每周期轮转切换输入，PT1 滤波会把三路混叠）。
@@ -271,20 +269,20 @@ void srv_adc_step(void)
     if ((uint32_t)(now_ms - s_tele_log_ts) >= SRV_ADC_TELE_LOG_PERIOD_MS) {
         s_tele_log_ts = now_ms;
 
-        if (s.ntc1_status != SRV_ADC_CALC_OK) {
-            SRV_ADC_LOG_W("NTC1 温度异常: %s (raw=%u)", calc_status_str(s.ntc1_status),
-                (unsigned)raw.raw[DRV_NTC1_ADC]);
-        }
-        if (s.ntc2_status != SRV_ADC_CALC_OK) {
-            SRV_ADC_LOG_W("NTC2 温度异常: %s (raw=%u)", calc_status_str(s.ntc2_status),
-                (unsigned)raw.raw[DRV_NTC2_ADC]);
-        }
-        if (s.mcu_temp_status != SRV_ADC_CALC_OK) {
-            SRV_ADC_LOG_W("MCU 温度校准值无效 (cal1=0x%04X cal2=0x%04X)，温度输出 0",
-                (unsigned)s_ts_cal1, (unsigned)s_ts_cal2);
-        }
+        // if (s.ntc1_status != SRV_ADC_CALC_OK) {
+        //     SRV_ADC_LOG_W("NTC1 温度异常: %s (raw=%u)", calc_status_str(s.ntc1_status),
+        //         (unsigned)raw.raw[DRV_NTC1_ADC]);
+        // }
+        // if (s.ntc2_status != SRV_ADC_CALC_OK) {
+        //     SRV_ADC_LOG_W("NTC2 温度异常: %s (raw=%u)", calc_status_str(s.ntc2_status),
+        //         (unsigned)raw.raw[DRV_NTC2_ADC]);
+        // }
+        // if (s.mcu_temp_status != SRV_ADC_CALC_OK) {
+        //     SRV_ADC_LOG_W("MCU 温度校准值无效 (cal1=0x%04X cal2=0x%04X)，温度输出 0",
+        //         (unsigned)s_ts_cal1, (unsigned)s_ts_cal2);
+        // }
 
-        SRV_ADC_LOG_D("ADC遥测: vdda=%umV vin=%umV motor=%umV aux=%umV vbat=%umV mcuT=%d ntc1=%d ntc2=%d (温度×100) ain1=%u ain2=%u ain3=%u",
+        SRV_ADC_LOG_D("ADC测试:vdda(inter)=%umV,vin=%umV,motor=%umV,aux=%umV,vbat(inter)=%umV,mcuT(inter)=%d,ntc1=%d,ntc2=%d(温度*100),ain1=%u,ain2=%u,ain3=%u",
             (unsigned)s.vdda_mv, (unsigned)s.vin_mv, (unsigned)s.motor_power_mv,
             (unsigned)s.aux_power_mv, (unsigned)s.vbat_mv,
             (int)s.mcu_temp_x100, (int)s.ntc1_temp_x100, (int)s.ntc2_temp_x100,
@@ -292,20 +290,20 @@ void srv_adc_step(void)
 
         /* E-STOP 双通道冗余状态：4 个急停开关 × (ADC1/ADC2 两路原始值)。
          * 偏差 = ADC1 - ADC2；两路偏差过大提示冗余通道失效/线缆异常。 */
-        SRV_ADC_LOG_D("急停冗余采样: S1=%u/%u S2=%u/%u S3=%u/%u S4=%u/%u (ADC1/ADC2) 偏差=%+d/%+d/%+d/%+d",
-            (unsigned)s.e_stop1_adc1, (unsigned)s.e_stop1_adc2,
-            (unsigned)s.e_stop2_adc1, (unsigned)s.e_stop2_adc2,
-            (unsigned)s.e_stop3_adc1, (unsigned)s.e_stop3_adc2,
-            (unsigned)s.e_stop4_adc1, (unsigned)s.e_stop4_adc2,
-            (int)s.e_stop1_adc1 - (int)s.e_stop1_adc2,
-            (int)s.e_stop2_adc1 - (int)s.e_stop2_adc2,
-            (int)s.e_stop3_adc1 - (int)s.e_stop3_adc2,
-            (int)s.e_stop4_adc1 - (int)s.e_stop4_adc2);
+        // SRV_ADC_LOG_D("急停冗余采样: S1=%u/%u S2=%u/%u S3=%u/%u S4=%u/%u (ADC1/ADC2) 偏差=%+d/%+d/%+d/%+d",
+        //     (unsigned)s.e_stop1_adc1, (unsigned)s.e_stop1_adc2,
+        //     (unsigned)s.e_stop2_adc1, (unsigned)s.e_stop2_adc2,
+        //     (unsigned)s.e_stop3_adc1, (unsigned)s.e_stop3_adc2,
+        //     (unsigned)s.e_stop4_adc1, (unsigned)s.e_stop4_adc2,
+        //     (int)s.e_stop1_adc1 - (int)s.e_stop1_adc2,
+        //     (int)s.e_stop2_adc1 - (int)s.e_stop2_adc2,
+        //     (int)s.e_stop3_adc1 - (int)s.e_stop3_adc2,
+        //     (int)s.e_stop4_adc1 - (int)s.e_stop4_adc2);
 
         /* 换算状态观测：VDDA/NTC1/NTC2/MCU 温度计算是否异常 */
-        SRV_ADC_LOG_D("换算状态: vdda=%s ntc1=%s ntc2=%s mcuT=%s",
-            calc_status_str(s.vdda_status), calc_status_str(s.ntc1_status),
-            calc_status_str(s.ntc2_status), calc_status_str(s.mcu_temp_status));
+        // SRV_ADC_LOG_D("换算状态: vdda=%s ntc1=%s ntc2=%s mcuT=%s",
+        //     calc_status_str(s.vdda_status), calc_status_str(s.ntc1_status),
+        //     calc_status_str(s.ntc2_status), calc_status_str(s.mcu_temp_status));
     }
 
     msg_fifo_push(&s_fifo, &s);
