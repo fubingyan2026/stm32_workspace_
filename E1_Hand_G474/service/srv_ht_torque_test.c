@@ -52,7 +52,7 @@
 /* --- 苇熠伺服执行器 CAN 测试参数 --- */
 
 /** @brief 正极限角度 (deg)：电机从初始位置 0 连续旋转到该角度（50 圈 = 18000°，1 转=360°） */
-#define SRV_HT_TORQUE_TEST_POS_LIMIT_DEG (29 * 360)
+#define SRV_HT_TORQUE_TEST_POS_LIMIT_DEG (30 * 360)
 /**
  * @brief 正极限换算为 IQ24 位置值（单位 R）：18000° = 50R = 0x32000000
  * @note  IQ = deg/360 × 2^24（文档 §4.2：位置 IQ24 值即为实际转数，满量程 ±127R）
@@ -70,7 +70,7 @@ const int32_t SRV_HT_TORQUE_TEST_POS_LIMIT_IQ = ((SRV_HT_TORQUE_TEST_POS_LIMIT_D
 /* --- 速度模式参数（速度模式 0x02 连续旋转，固件手动斜坡平滑加减速） --- */
 
 /** @brief 巡航转速 (RPM)：连续旋转的目标转速，正负表示方向 */
-#define SRV_HT_TORQUE_TEST_SPEED_RPM 300
+#define SRV_HT_TORQUE_TEST_SPEED_RPM 100
 /** @brief 斜坡时长 (ms)：速度目标变化时在该时长内线性爬升/下降（平滑加减速、消除卡顿） */
 #define SRV_HT_TORQUE_TEST_RAMP_MS 2000U
 /** @brief 速度帧重发周期 (ms)：斜坡期间按该周期重发速度（巡航期速度已锁存） */
@@ -139,6 +139,10 @@ const int32_t SRV_HT_TORQUE_TEST_POS_LIMIT_IQ = ((SRV_HT_TORQUE_TEST_POS_LIMIT_D
 #define SRV_HT_TORQUE_TEST_CMD_SPEED_READ 0x05U /**< 读取当前速度值：返回 [0x05][4B 大端 IQ24]（5B，×6000） */
 #define SRV_HT_TORQUE_TEST_MODE_SPEED 0x02U /**< 速度模式 */
 #define SRV_HT_TORQUE_TEST_SPEED_FULL_SCALE 6000 /**< 速度满量程 (RPM)：IQ24 = 值/6000 × 2^24（文档 §4.2） */
+#define SRV_HT_TORQUE_TEST_CMD_CUR_LIMIT 0x58U /**< 设置电流限制（写入指令3）：归一化 IQ24，× 满量程电流 */
+/** @brief 电流限制归一化值 (IQ24)：1.0 = 满量程电流（型号相关，如 45A），速度模式扭矩输出上限由此决定。
+ *        出厂默认限制偏小导致扭矩不够时保持 0x01000000（满量程）即拉到最大扭矩；可按需下调 */
+#define SRV_HT_TORQUE_TEST_CUR_LIMIT_IQ 0x01000000U
 /** @brief 使能保持补发周期 (ms)：电机在线但查询到未使能时，按该周期补发使能+速度模式。
  *        修「电机晚于控制板上电、错过启动 1s 补发窗口后永久失能」问题（同良志排查文档 §2.2）。
  *        起始偏移取 11ms（非 20/100ms 整数倍），与位置轮询(0x06)/速度(0x09)/报警(0xFF)
@@ -328,8 +332,8 @@ static uint32_t s_last_alarm_ms;
 /** @brief 上次方向翻转时间 (millis)：用于端点反向超时兜底判定 */
 static uint32_t s_last_flip_ms;
 
-/** @brief 启动补发相位：true=本轮补发使能，false=补发速度模式（交错，避免单 tick 突爆 >3 帧） */
-static bool s_retry_phase;
+/** @brief 启动补发相位：0=本轮补发使能，1=补发速度模式，2=补发电流限制（交错，避免单 tick 突爆 >3 帧） */
+static uint8_t s_retry_phase;
 
 /** @brief 周期状态日志上次打印时间 (millis) */
 static uint32_t s_last_status_ms;
@@ -363,10 +367,12 @@ static void srv_ht_torque_test_rescan_done(uint32_t now);
 static void srv_ht_torque_test_send_handshake(uint8_t addr);
 static void srv_ht_torque_test_send_enable(uint8_t addr, bool enable);
 static void srv_ht_torque_test_set_speed_mode(uint8_t addr);
+static void srv_ht_torque_test_send_cur_limit(uint8_t addr);
 static void srv_ht_torque_test_send_speed(uint8_t addr, int16_t rpm);
 static void srv_ht_torque_test_send_query_position(uint8_t addr);
 static void srv_ht_torque_test_cmd_enable_all(bool enable);
 static void srv_ht_torque_test_cmd_set_mode_all(void);
+static void srv_ht_torque_test_cmd_set_cur_limit_all(void);
 static void srv_ht_torque_test_cmd_speed_all(int16_t rpm);
 static void srv_ht_torque_test_query_position_all(void);
 static void srv_ht_torque_test_send_query_alarm(uint8_t addr);
@@ -414,7 +420,7 @@ void srv_ht_torque_test_start(void)
     s_ramp_from_rpm = 0;
     s_ramp_start_ms = s_start_ms;
     s_last_flip_ms = s_start_ms;
-    s_retry_phase = false;
+    s_retry_phase = 0;
     s_last_status_ms = s_start_ms;
 
     /* 阶段 1：扫描总线电机 ID */
@@ -579,18 +585,24 @@ void srv_ht_torque_test_step(void)
     }
 #endif
 
-    /* 控制开始 1s 内补发使能 + 速度模式（首帧可能被丢弃）。
-     * 交错补发：使能/速度模式按 2×STARTUP_RETRY 周期交替，每 tick 只发 1 帧，
+    /* 控制开始 1s 内补发使能 + 速度模式 + 电流限制（首帧可能被丢弃）。
+     * 交错补发：三个指令按 3×STARTUP_RETRY 周期轮流，每 tick 只发 1 帧，
      * 避免与位置轮询(0x06)/速度(0x09)/报警(0xFF)同 tick 突爆超过 FDCAN TX FIFO
      * 深度 3 导致末尾帧被静默丢弃（同良志排查文档 §2.1） */
     if (((now - s_ctrl_start_ms) < 1000U) && ((now - s_last_retry_ms) >= SRV_HT_TORQUE_TEST_STARTUP_RETRY_MS)) {
         s_last_retry_ms = now;
-        if (s_retry_phase) {
+        switch (s_retry_phase) {
+        case 0:
             srv_ht_torque_test_cmd_enable_all(true);
-        } else {
+            break;
+        case 1:
             srv_ht_torque_test_cmd_set_mode_all();
+            break;
+        default:
+            srv_ht_torque_test_cmd_set_cur_limit_all();
+            break;
         }
-        s_retry_phase = !s_retry_phase;
+        s_retry_phase = (uint8_t)((s_retry_phase + 1U) % 3U);
     }
 
     /* 周期轮询电机当前位置（0x06 读取，用于端点反向判定） */
@@ -746,7 +758,8 @@ void srv_ht_torque_test_step(void)
             s_online_evt_pending[i] = false;
             srv_ht_torque_test_send_enable(s_motor_ids[i], true);
             srv_ht_torque_test_set_speed_mode(s_motor_ids[i]);
-            SRV_HT_TORQUE_TEST_LOG_W("电机 0x%02X 恢复在线，已重新使能/设速度模式",
+            srv_ht_torque_test_send_cur_limit(s_motor_ids[i]);
+            SRV_HT_TORQUE_TEST_LOG_W("电机 0x%02X 恢复在线，已重新使能/设速度模式/电流限制",
                 (unsigned)s_motor_ids[i]);
         }
     }
@@ -950,7 +963,8 @@ static void srv_ht_torque_test_scan_done(void)
 
     srv_ht_torque_test_cmd_enable_all(true); /* 1. 使能 */
     srv_ht_torque_test_cmd_set_mode_all(); /* 2. 速度模式 */
-    /* 3. 速度由斜坡逻辑在 step() 中下发（初始方向 +50R，斜坡从 0 平滑爬升） */
+    srv_ht_torque_test_cmd_set_cur_limit_all(); /* 3. 提高电流限制（扭矩输出上限，速度模式由 0x58 决定） */
+    /* 4. 速度由斜坡逻辑在 step() 中下发（初始方向 +50R，斜坡从 0 平滑爬升） */
     SRV_HT_TORQUE_TEST_LOG_I("开始多圈往复：0 ↔ %d 圈（+%d°），速度模式连续旋转，累计在线 %lu ms（30 天）后停止",
         (int)(SRV_HT_TORQUE_TEST_POS_LIMIT_DEG / 360), (int)SRV_HT_TORQUE_TEST_POS_LIMIT_DEG,
         (unsigned long)SRV_HT_TORQUE_TEST_DURATION_MS);
@@ -975,7 +989,8 @@ static void srv_ht_torque_test_rescan_done(uint32_t now)
         s_enable_log_latch[i] = false;
         srv_ht_torque_test_send_enable(s_motor_ids[i], true);
         srv_ht_torque_test_set_speed_mode(s_motor_ids[i]);
-        SRV_HT_TORQUE_TEST_LOG_W("热插拔：接管电机 0x%02X，已使能+速度模式", (unsigned)s_motor_ids[i]);
+        srv_ht_torque_test_send_cur_limit(s_motor_ids[i]);
+        SRV_HT_TORQUE_TEST_LOG_W("热插拔：接管电机 0x%02X，已使能+速度模式+电流限制", (unsigned)s_motor_ids[i]);
     }
 
     for (uint8_t i = 0; i < s_motor_cnt; i++) {
@@ -1044,6 +1059,31 @@ static void srv_ht_torque_test_set_speed_mode(uint8_t addr)
 }
 
 /**
+ * @brief 发送电流限制设置帧 (0x58 + IQ24, 经典 CAN 5B)
+ * @param addr 电机地址（CAN-ID）
+ * @note  IQ24 = 限制电流 / 满量程电流 × 2^24（归一化，满量程型号相关，如 45A）；
+ *        速度模式扭矩输出上限由此决定，随使能/速度模式一起下发，拉满扭矩
+ */
+static void srv_ht_torque_test_send_cur_limit(uint8_t addr)
+{
+    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+        return;
+
+    drv_can_msg_t tx = {
+        .id = addr,
+        .is_extended = false,
+        .is_fd = false,
+        .dlc = 5,
+    };
+    tx.data[0] = SRV_HT_TORQUE_TEST_CMD_CUR_LIMIT;
+    tx.data[1] = (uint8_t)(SRV_HT_TORQUE_TEST_CUR_LIMIT_IQ >> 24);
+    tx.data[2] = (uint8_t)(SRV_HT_TORQUE_TEST_CUR_LIMIT_IQ >> 16);
+    tx.data[3] = (uint8_t)(SRV_HT_TORQUE_TEST_CUR_LIMIT_IQ >> 8);
+    tx.data[4] = (uint8_t)(SRV_HT_TORQUE_TEST_CUR_LIMIT_IQ);
+    drv_can_send(DRV_CAN_CH_1, &tx);
+}
+
+/**
  * @brief 发送速度设定帧 (0x09 + IQ24, 经典 CAN 5B)
  * @param addr 电机地址（CAN-ID）
  * @param rpm  目标转速 (RPM)，正=正转，负=反转，0=停止（不失能）
@@ -1103,6 +1143,13 @@ static void srv_ht_torque_test_cmd_set_mode_all(void)
 {
     for (uint8_t i = 0; i < s_motor_cnt; i++) {
         srv_ht_torque_test_set_speed_mode(s_motor_ids[i]);
+    }
+}
+
+static void srv_ht_torque_test_cmd_set_cur_limit_all(void)
+{
+    for (uint8_t i = 0; i < s_motor_cnt; i++) {
+        srv_ht_torque_test_send_cur_limit(s_motor_ids[i]);
     }
 }
 

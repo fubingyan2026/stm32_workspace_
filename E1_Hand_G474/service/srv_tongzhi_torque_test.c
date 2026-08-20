@@ -61,13 +61,13 @@
 /** @brief 往复半幅（转）：目标在 ±AMP 两端点间交替 */
 #define SRV_TONGZHI_POS_AMP_TURNS (12.5f)
 /** @brief 到位判定阈值（转）：|编码器位置−目标| ≤ 该值视为到位（随后翻转目标） */
-#define SRV_TONGZHI_ARRIVE_THRESH_TURNS (0.05f)
+#define SRV_TONGZHI_ARRIVE_THRESH_TURNS (0.6f)
 /** @brief 梯形轨迹最大速度（转/s） */
-#define SRV_TONGZHI_TRAJ_VEL_LIMIT_TPS (2.5f)
+#define SRV_TONGZHI_TRAJ_VEL_LIMIT_TPS (1.5f)
 /** @brief 梯形轨迹加速度（转/s²） */
-#define SRV_TONGZHI_TRAJ_ACCEL_TPS2 (4.0f)
+#define SRV_TONGZHI_TRAJ_ACCEL_TPS2 (1.0f)
 /** @brief 梯形轨迹减速度（转/s²） */
-#define SRV_TONGZHI_TRAJ_DECEL_TPS2 (4.0f)
+#define SRV_TONGZHI_TRAJ_DECEL_TPS2 (1.0f)
 
 /* --- 周期 --- */
 
@@ -280,6 +280,7 @@ static void srv_tongzhi_torque_test_err_print(uint8_t node, uint32_t code);
 
 void srv_tongzhi_torque_test_init(void)
 {
+    delay_ms(2000);
 #if SRV_TONGZHI_AUTO_START
     srv_tongzhi_torque_test_start(); /* 测试模式：心跳被动发现 + 往复驱动 */
 #endif

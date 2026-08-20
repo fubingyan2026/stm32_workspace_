@@ -34,19 +34,13 @@ extern "C" {
 
 #include "drv_can.h"
 
-/* 接线开关 ------------------------------------------------------------------*/
-#define SRV_PA430_TORQUE_TEST_ENABLE 1
-/**
- * @brief PA430 (Motorevo) 测试模式使能
- *        1 = 在 FDCAN2（DRV_CAN_CH_2）上并行运行本模块（init/step/on_rx）；
- *        0 = 不运行（CAN2 空闲）。
- * @note  本模块走 FDCAN2 独立总线，与 CAN1 上的苇熠 HT 测试
- *        （srv_motor_test_select.h 决定苇熠/良志三选一）同时运行、互不干扰；
- *        本默认值可在编译命令行用 -DSRV_PA430_TORQUE_TEST_ENABLE=1 覆盖
- */
-#ifndef SRV_PA430_TORQUE_TEST_ENABLE
-#define SRV_PA430_TORQUE_TEST_ENABLE 0
-#endif
+/* 接线选择 ------------------------------------------------------------------*/
+/* CAN2（FDCAN2）测试模块选择统一在 service/srv_motor_test_select.h 的
+ * SRV_MOTOR_TEST_SELECT_CAN2 枚举宏中完成：
+ *   - SRV_MOTOR_TEST_HT_CAN2 = 0 苇熠(HT) 速度模式往复 CAN2 版；
+ *   - SRV_MOTOR_TEST_PA430   = 1 本模块（Motorevo MIT 力位混合来回）。
+ * can_task 按该选择接线 init/step/on_rx；两模块共用 FDCAN2 独立总线，
+ * 同一时刻只激活一个，与 CAN1 上的测试并行运行、互不干扰。 */
 
 /* Exported functions prototypes ---------------------------------------------*/
 

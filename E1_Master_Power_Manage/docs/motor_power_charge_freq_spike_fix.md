@@ -1,23 +1,11 @@
-# 输出「频率切换瞬间 10A 电流尖峰」修复文档
-
-## 目标
-
-将刚完成的 `drv_pwm_set_frequency` 在线改频修复整理为正式文档，新建
-`docs/motor_power_charge_freq_spike_fix.md`，包含：问题背景、根因分析、解决方案
-（改动前后代码）、验证与相关文件。
-
-## 落地文件
-
-`docs/motor_power_charge_freq_spike_fix.md`（内容如下，实施时原样写入）。
-
----
-
 # 电机预充电「频率切换瞬间 10A 电流尖峰」问题修复记录
 
 - **现象等级**：严重（浪涌电流 10A，可能损伤半桥/母线）
 - **涉及模块**：`device_drivers/drv_pwm.c`（`drv_pwm_set_frequency`）
 - **触发条件**：预充电阶段三（RAMP_FREQ 变频 50k→600k）期间每次变频瞬间
 - **修复方式**：PWM 不停机在线改频（去除 `HAL_TIM_PWM_Stop/Init/Start` 重启序列）
+
+---
 
 ## 1. 问题背景
 
@@ -138,11 +126,3 @@ __HAL_TIM_SET_COMPARE(ctx->route->htim, ctx->route->channel, compare);
   做缓变处理，但本次修复后已无停机毛刺，通常不再需要。
 - `TIM_EGR_UG` / `__HAL_TIM_SET_AUTORELOAD` / `__HAL_TIM_SET_COUNTER` 均为 STM32F4 HAL
   标准宏/寄存器，无需额外依赖。
-
----
-
-## 实施清单
-
-1. 新建 `docs/motor_power_charge_freq_spike_fix.md`，写入上述完整内容。
-2. 无需编译（纯文档）。
-3. 完成后确认文件已创建（`docs/` 下）。

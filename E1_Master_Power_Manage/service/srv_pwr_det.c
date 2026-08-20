@@ -33,7 +33,7 @@
 /* Private constants ---------------------------------------------------------*/
 
 /** @brief 状态遥测日志限频窗口 (ms)：10ms 轮询需限频防刷屏 */
-#define SRV_PWR_DET_LOG_PERIOD_MS (500U)
+#define SRV_PWR_DET_LOG_PERIOD_MS (1000U)
 
 /* Private variables ---------------------------------------------------------*/
 

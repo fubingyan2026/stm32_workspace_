@@ -24,8 +24,9 @@
  * 统一决定（HT_TORQUE=苇熠位置往复 / HT_TEMP=苇熠速度 / TONGZHI=良志ODrive 位置往复）。
  *   - 苇熠模式：RX 经 srv_can_on_rx 路由（srv_can 内部再按选择转发给对应 HT 模块）；
  *   - 良志模式：CH_1 全部帧直连 srv_tongzhi_torque_test_on_rx，srv_can 不参与。
- * CAN2（FDCAN2）测试模块选择：苇熠 CAN2 版（srv_ht_can2_torque_test）优先，
- * PA430 (Motorevo) MIT 测试为后备；两者共用 FDCAN2 独立总线，同一时刻只激活一个，
+ * CAN2（FDCAN2）测试模块选择：由 service/srv_motor_test_select.h 的
+ * SRV_MOTOR_TEST_SELECT_CAN2 统一决定（HT_CAN2=苇熠速度模式往复 CAN2 版 /
+ * PA430=Motorevo MIT 力位混合）。两者共用 FDCAN2 独立总线，同一时刻只激活一个，
  * 与 CAN1 上的测试并行运行、互不干扰 */
 #if SRV_MOTOR_TEST_IS_TONGZHI
 #define CAN1_TEST_INIT srv_tongzhi_torque_test_init
@@ -48,14 +49,16 @@
 #error "SRV_MOTOR_TEST_SELECT 值无效"
 #endif
 
-#if SRV_HT_CAN2_TORQUE_TEST_ENABLE
+#if SRV_MOTOR_TEST_IS_HT_CAN2
 #define CAN2_TEST_INIT srv_ht_can2_torque_test_init
 #define CAN2_TEST_STEP srv_ht_can2_torque_test_step
 #define CAN2_TEST_ON_RX srv_ht_can2_torque_test_on_rx
-#elif SRV_PA430_TORQUE_TEST_ENABLE
+#elif SRV_MOTOR_TEST_IS_PA430
 #define CAN2_TEST_INIT srv_pa430_torque_test_init
 #define CAN2_TEST_STEP srv_pa430_torque_test_step
 #define CAN2_TEST_ON_RX srv_pa430_torque_test_on_rx
+#else
+#error "SRV_MOTOR_TEST_SELECT_CAN2 值无效"
 #endif
 
 /* Private constants ---------------------------------------------------------*/

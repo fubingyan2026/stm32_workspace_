@@ -40,6 +40,9 @@ static bool s_tripped; /**< 保护锁存标志 */
 /** @brief 判定关键电源故障（可调策略：哪些条件必须立即断电） */
 static bool fault_policy_critical(const srv_pwr_det_status_t* st);
 
+/** @brief 打印进入关键故障判定的具体原因（仅触发时调用） */
+static void fault_policy_log_reasons(const srv_pwr_det_status_t* st);
+
 /* Exported functions --------------------------------------------------------*/
 
 void app_fault_policy_init(void)
@@ -51,6 +54,7 @@ void app_fault_policy_step(uint16_t elapsed_ms)
 {
     (void)elapsed_ms;
 
+    static bool last_estop_on = 0;
     srv_pwr_det_status_t st;
     srv_pwr_det_read(&st);
 
@@ -78,16 +82,16 @@ void app_fault_policy_step(uint16_t elapsed_ms)
         srv_fan_ctrl_set_duty(0, 100U);
         srv_fan_ctrl_set_duty(1, 100U);
 
-        /* 3. 触发日志（锁存后仅打印一次） */
-        APP_FAULT_POLICY_LOG_E("保护触发并锁存: estop=%d motor_pwr=%d aux_pwr=%d "
-            "dbr_ocp=%d chg_ocp=%d hsd_fault=%d",
-            (int)st.estop_on, (int)st.motor_power_ok, (int)st.aux_power_ok,
-            (int)st.dbr_ocp, (int)st.motor_chg_ocp, (int)st.hsd_fault);
+        /* 3. 打印触发原因明细 */
+        fault_policy_log_reasons(&st);
     }
-    else
-    {
-        app_fault_policy_reset();
-        srv_pwr_ctrl_request_on();
+
+    if (last_estop_on != st.estop_on) {
+        last_estop_on = st.estop_on;
+        if (!st.estop_on) {
+            app_fault_policy_reset();
+            srv_pwr_ctrl_request_on();
+        }
     }
 }
 
@@ -115,4 +119,26 @@ static bool fault_policy_critical(const srv_pwr_det_status_t* st)
         || st->dbr_ocp
         || st->motor_chg_ocp
         || st->hsd_fault;
+}
+
+static void fault_policy_log_reasons(const srv_pwr_det_status_t* st)
+{
+    if (st->estop_on) {
+        APP_FAULT_POLICY_LOG_W("  [原因] E-STOP 急停触发");
+    }
+    if (!st->motor_power_ok) {
+        APP_FAULT_POLICY_LOG_E("  [原因] MOTOR_POWER PGD 丢失 (motor_pwr=0)");
+    }
+    if (!st->aux_power_ok) {
+        APP_FAULT_POLICY_LOG_E("  [原因] AUX_POWER PGD 丢失 (aux_pwr=0)");
+    }
+    if (st->dbr_ocp) {
+        APP_FAULT_POLICY_LOG_E("  [原因] 制动电阻过流 (dbr_ocp=1)");
+    }
+    if (st->motor_chg_ocp) {
+        APP_FAULT_POLICY_LOG_E("  [原因] 电机预充电过流 (chg_ocp=1)");
+    }
+    if (st->hsd_fault) {
+        APP_FAULT_POLICY_LOG_E("  [原因] HSD 高边驱动故障 (hsd_fault=1)");
+    }
 }

@@ -155,15 +155,17 @@ drv_pwm_error_t drv_pwm_set_frequency(drv_pwm_channel_t ch, uint32_t freq_hz)
         arr = total_div / (psc + 1U) - 1U;
     }
 
-    /* 重配置定时器基（常规仅改 ARR，PSC 保持 0），MspInit 幂等；通道 CCR 随后按已存 duty 重算 */
-    HAL_TIM_PWM_Stop(ctx->route->htim, ctx->route->channel);
+    /* 在线改频（不停机）：PSC 恒 0，仅更新 ARR，触发更新事件从新周期起点装载，
+     * 避免 HAL Stop/Init/Start 重启毛刺（频率切换瞬间电流尖峰） */
     ctx->route->htim->Init.Prescaler = psc;
     ctx->route->htim->Init.Period = arr;
-    HAL_TIM_PWM_Init(ctx->route->htim);
+
+    __HAL_TIM_SET_AUTORELOAD(ctx->route->htim, arr);     /* 写 ARR（PSC=0 场景即时生效） */
+    __HAL_TIM_SET_COUNTER(ctx->route->htim, 0);          /* 计数清零，防止新旧周期拼接超长脉冲 */
+    ctx->route->htim->Instance->EGR = TIM_EGR_UG;        /* 更新事件：重装 PSC/ARR 影子、清 UIF */
 
     uint32_t compare = (uint32_t)ctx->duty_permille * (arr + 1U) / 1000U;
     __HAL_TIM_SET_COMPARE(ctx->route->htim, ctx->route->channel, compare);
-    HAL_TIM_PWM_Start(ctx->route->htim, ctx->route->channel);
 
     // DRV_PWM_LOG_I("PWM %s 频率已更改: %uHz (PSC=%u, ARR=%u)",
     //     drv_pwm_channel_name(ch), (unsigned)freq_hz, (unsigned)psc, (unsigned)arr);

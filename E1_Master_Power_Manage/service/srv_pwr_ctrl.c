@@ -75,8 +75,11 @@
 
 /** @brief 冷机判定：预偏置比 < 10%（100‰）→ 走全流程 */
 #define PWR_PRECHARGE_COLD_RATIO_PERMILLE (100U)
+
+/** @brief 初始电压跟随开关：1=按初始 bus/vin 比值跳过前序阶段（预偏置），0=恒冷机全流程 */
+#define PWR_PRECHARGE_PREBIAS_EN (0U)
 /** @brief 提前转稳态优化开关：1=输出≥输入母线 95% 即转稳态，0=固定跑满 500ms */
-#define PWR_PRECHARGE_EARLY_STEADY_EN (1U)
+#define PWR_PRECHARGE_EARLY_STEADY_EN (0U)
 /** @brief 提前转稳态电压比例（95%） */
 #define PWR_PRECHARGE_EARLY_STEADY_PCT (95U)
 
@@ -196,6 +199,8 @@ static fsm_state_t precharge_state_fault(fsm_t* fsm);
 static void precharge_phase_ramp(uint32_t freq_start, uint32_t freq_end,
     uint16_t duty_start, uint16_t duty_end, uint32_t duration_ms);
 
+static const char* precharge_fault_name(precharge_fault_t f);
+
 /* Exported functions --------------------------------------------------------*/
 
 void srv_pwr_ctrl_init(void)
@@ -292,7 +297,8 @@ static fsm_state_t pwr_state_precharge(fsm_t* ctx)
 
     /* 预充电软启动失败：中止上电，等下次 request_on 重试 */
     if (s_precharge.fault != PRECHARGE_FAULT_NONE) {
-        SRV_PWR_CTRL_LOG_E("预充电故障 (code=%d)，中止上电", (int)s_precharge.fault);
+        SRV_PWR_CTRL_LOG_E("预充电故障: %s (code=%d)，中止上电",
+            precharge_fault_name(s_precharge.fault), (int)s_precharge.fault);
         p->power_on_requested = false;
         return PWR_STATE_IDLE;
     }
@@ -304,6 +310,21 @@ static fsm_state_t pwr_state_precharge(fsm_t* ctx)
     }
 
     return PWR_STATE_PRECHARGE;
+}
+
+/**
+ * @brief 预充电故障码 → 中文原因文本
+ */
+static const char* precharge_fault_name(precharge_fault_t f)
+{
+    switch (f) {
+    case PRECHARGE_FAULT_SHORT_CIRCUIT:
+        return "后级短路 (SHORT_CIRCUIT)";
+    case PRECHARGE_FAULT_NO_LOAD:
+        return "未接负载/上电故障 (NO_LOAD)";
+    default:
+        return "未知故障";
+    }
 }
 
 static fsm_state_t pwr_state_motor(fsm_t* ctx)
@@ -348,7 +369,7 @@ static void pwr_entry_cb(fsm_t* ctx, fsm_state_t state)
         drv_power_set(DRV_POWER_RAIL_HSD2_24V, true);
         /* 移交主功率回路后立即关闭预充电半桥（EN 低 + PWM 0%），
          * 防止其持续 90% 开关触发 MOTOR_CHG_OCP 并把母线拉低 */
-        precharge_reset();
+        // precharge_reset();
         break;
     default:
         break;
@@ -569,11 +590,13 @@ static fsm_state_t precharge_state_en_clear(fsm_t* fsm)
  */
 static fsm_state_t precharge_state_prebias(fsm_t* fsm)
 {
+#if PWR_PRECHARGE_PREBIAS_EN
     precharge_ctx_t* c = (precharge_ctx_t*)fsm_user_data(fsm);
 
+    /* 初始电压跟随：按 motor_power_mv/vin 比值自适应冷机/暖机/近满 */
     const uint32_t vin = c->last_vin_mv;
     if (vin == 0U) {
-        /* 母线电压无效：按冷机走全流程（安全兜底） */
+        /* 母线电压无效：按冷机走全流程（安全兜底，避免除零） */
         SRV_PWR_CTRL_LOG_W("预偏置检测: VIN 无效 → 冷机全流程");
         return PRECHARGE_STATE_RAMP_TON;
     }
@@ -592,19 +615,24 @@ static fsm_state_t precharge_state_prebias(fsm_t* fsm)
         return PRECHARGE_STATE_STEADY;
     }
 
-    /* 暖机：切入阶段四，起始 duty = ratio（钳位 100~900‰），按同斜率折算虚拟已走时间 */
+    /* 暖机：切入阶段四，起始 duty = ratio（钳位 100~950‰），按同斜率折算虚拟已走时间 */
     uint32_t duty = ratio_permille;
     if (duty < PWR_PRECHARGE_DUTY_P3_END) {
         duty = PWR_PRECHARGE_DUTY_P3_END;
     } else if (duty > PWR_PRECHARGE_DUTY_P4_END) {
         duty = PWR_PRECHARGE_DUTY_P4_END;
     }
-    /* 冷机斜坡 duty(t) = 100 + 800*t/450 → t = (duty-100)*450/800 */
+    /* 阶段四斜坡 duty(t) = P3_END + (P4_END-P3_END)*t/PHASE4 → t = (duty-P3_END)*PHASE4/(P4_END-P3_END) */
     c->ramp_seed = (duty - PWR_PRECHARGE_DUTY_P3_END) * PWR_PRECHARGE_PHASE4_MS
         / (PWR_PRECHARGE_DUTY_P4_END - PWR_PRECHARGE_DUTY_P3_END);
     SRV_PWR_CTRL_LOG_I("预偏置检测: 暖机 (ratio=%u‰) → 切入阶段四 duty=%u‰",
         (unsigned)ratio_permille, (unsigned)duty);
     return PRECHARGE_STATE_RAMP_DUTY;
+#else
+    /* 不使用初始电压跟随：恒冷机走全流程（完整斜坡时长全部生效） */
+    SRV_PWR_CTRL_LOG_D("预偏置检测: 电压跟随已禁用 → 恒冷机全流程");
+    return PRECHARGE_STATE_RAMP_TON;
+#endif
 }
 
 /**
