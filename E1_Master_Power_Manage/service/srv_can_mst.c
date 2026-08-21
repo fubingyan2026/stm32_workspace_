@@ -178,40 +178,31 @@ void srv_can_mst_task(void)
 
 void srv_can_mst_process_rx(const uint8_t* data, uint8_t len)
 {
-    if (!s_initialized || !data || len < 7)
+    if (!s_initialized || !data || len < 3)
         return;
 
     memset(&s_last_cmd, 0, sizeof(s_last_cmd));
 
     s_last_cmd.feedback_select = data[0];
-    s_last_cmd.rgb_mode = data[1];
-    s_last_cmd.rgb_color = ((uint32_t)data[2] << 16)
-        | ((uint32_t)data[3] << 8)
-        | ((uint32_t)data[4]);
-    s_last_cmd.buzzer_duty = (data[5] <= 100U) ? data[5] : 100U;
+    s_last_cmd.buzzer_duty = (data[1] <= 50U) ? data[1] : 50U;
 
-    /* byte6: 4对 valid+value 控制位 */
-    if (data[6] & (1U << 7))
-        s_last_cmd.hsd1_12v_on = (data[6] >> 6) & 1;
-    if (data[6] & (1U << 5))
-        s_last_cmd.hsd2_12v_on = (data[6] >> 4) & 1;
-    if (data[6] & (1U << 3))
-        s_last_cmd.lsd1_24v_on = (data[6] >> 2) & 1;
-    if (data[6] & (1U << 1))
-        s_last_cmd.lsd2_24v_on = (data[6] >> 0) & 1;
+    /* byte2: 3对 valid+value 控制位 */
+    if (data[2] & (1U << 5))
+        s_last_cmd.hsd1_12v_on = (data[2] >> 4) & 1;
+    if (data[2] & (1U << 3))
+        s_last_cmd.hsd1_24v_on = (data[2] >> 2) & 1;
+    if (data[2] & (1U << 1))
+        s_last_cmd.hsd2_24v_on = (data[2] >> 0) & 1;
 
     s_cmd_pending = true;
 
     /* 主机指令日志（配置变更，I 级） */
-    SRV_CAN_MST_LOG_D("收到主机指令: fb=0x%02X rgb_mode=%u rgb=0x%06lX buzzer=%u hsd1_12v=%d hsd2_12v=%d lsd1_24v=%d lsd2_24v=%d",
+    SRV_CAN_MST_LOG_D("收到主机指令: fb=0x%02X buzzer=%u hsd1_12v=%d hsd1_24v=%d hsd2_24v=%d",
         (unsigned)s_last_cmd.feedback_select,
-        (unsigned)s_last_cmd.rgb_mode,
-        (unsigned long)s_last_cmd.rgb_color,
         (unsigned)s_last_cmd.buzzer_duty,
         (int)s_last_cmd.hsd1_12v_on,
-        (int)s_last_cmd.hsd2_12v_on,
-        (int)s_last_cmd.lsd1_24v_on,
-        (int)s_last_cmd.lsd2_24v_on);
+        (int)s_last_cmd.hsd1_24v_on,
+        (int)s_last_cmd.hsd2_24v_on);
 
     /* 按主机请求立即触发回复 */
     srv_can_mst_request(s_last_cmd.feedback_select);

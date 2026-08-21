@@ -220,17 +220,14 @@ typedef struct {
 } srv_can_mst_config_t;
 
 /**
- * @brief 主机下发的控制指令（从 0x001 RX 帧解析）
+ * @brief 主机下发的控制指令（从 0x001 RX 控制帧解析，3 字节，不含 LED）
  */
 typedef struct {
-    uint8_t feedback_select; /**< 反馈请求位掩码 */
-    uint8_t rgb_mode; /**< RGB 灯效模式 */
-    uint32_t rgb_color; /**< RGB 颜色 (0xRRGGBB) */
-    uint8_t buzzer_duty; /**< 蜂鸣器占空比 0-100 */
-    bool hsd1_12v_on; /**< HSD1 12V 输出 */
-    bool hsd2_12v_on; /**< HSD2 12V 输出 */
-    bool lsd1_24v_on; /**< LSD1 24V 输出 */
-    bool lsd2_24v_on; /**< LSD2 24V 输出 */
+    uint8_t feedback_select; /**< 反馈请求位掩码 (Byte0) */
+    uint8_t buzzer_duty; /**< 蜂鸣器占空比 0-50 (Byte1) */
+    bool hsd1_12v_on; /**< HSD1 12V 输出：1=开, 0=关 (Byte2 bit4，bit5 有效) */
+    bool hsd1_24v_on; /**< HSD1 24V 输出：1=开, 0=关 (Byte2 bit2，bit3 有效) */
+    bool hsd2_24v_on; /**< HSD2 24V 输出：1=开, 0=关 (Byte2 bit0，bit1 有效) */
 } srv_can_mst_cmd_t;
 
 /**

@@ -97,7 +97,7 @@ power_task_init()   → power management (GPIO control + power-up sequencing + f
 
 `can_task_init()` wires `app_status_report_fill` (defined in [app_status_report.c](applications/app_status_report.c)) as the `read_data` callback for `srv_can_mst`, and also calls `srv_pwr_det_init()` — the power-status detection service (PGOOD rails / E-STOP via `drv_status`, A_IN1_IO~3 via the `srv_adc` CD4051B path) has **no dedicated task**; it's read on demand via `srv_pwr_det_read()` (see [app_status_report.c:47](applications/app_status_report.c#L47)). If `power_task_init()` ran first and triggered CAN reporting, the callback wouldn't exist yet.
 
-> **Not yet wired**: the 0x001 control frame's command fields (RGB mode/color, buzzer duty, HSD/LSD outputs) are parsed into `srv_can_mst_cmd_t` but **not consumed** by any module (`power_task_request_on()/emergency_off()` were removed as dead code). Host frames only *report* power status; they don't command power on/off.
+> **Not yet wired**: the 0x001 control frame's command fields (buzzer duty, HSD outputs) are parsed into `srv_can_mst_cmd_t` but **not consumed** by any module (`power_task_request_on()/emergency_off()` were removed as dead code). Host frames only *report* power status; they don't command power on/off.
 
 ### Framework primitives actually used here
 
@@ -140,14 +140,15 @@ A single CAN peripheral (CAN1) multiplexes three service layers. The RX callback
 
 | CAN ID | Direction | Service | Purpose |
 |--------|-----------|---------|---------|
-| `0x001` (len=7) | Host ↔ Board | `srv_can_mst` | Host control commands (RX) + system status reports (TX) |
+| `0x001` (len=3) | Host ↔ Board | `srv_can_mst` | Host control commands (RX) + system status reports (TX) |
+| `0x004` (len=8) | Host → Board | `can_task` | RGB output control (2× LED index + RGB brightness) → `srv_ws2812b_set_pixel` (snapshot in ISR, applied in main loop; stops comet animation) |
 | `0x003` (len=1) | Host → Board | `can_task` | Request to enter upgrade mode → `srv_boot_ctrl_request_boot()` (ISR sets flag, main loop applies). The host tool **sends it directly** to trigger upgrade (harmless if the board is already in Boot — Boot ignores it), then waits for the Boot heartbeat beacon (`0x702`, payload cmd `0x09`, `hw_id` check) to confirm entry — see [docs/boot_upgrade.md](docs/boot_upgrade.md) |
 | `0x002` | Board ↔ Slave | `srv_can_slv` | Slave power board control + ACK handshake (50ms retry) |
 | `0x200` | Battery → Board | `srv_can_dual` | Dual battery core dynamic data (100ms MUX) |
 | `0x201` | Battery → Board | `srv_can_dual` | Battery info frames (capacity, version — request/response) |
 | `0x202` | Battery → Board | `srv_can_dual` | Battery detailed fault frames |
 
-In `can_rx_callback`: `0x003`+len=1 → set `s_enter_boot_requested` flag (consumed by `can_timer_cb` → `srv_boot_ctrl_request_boot`); `0x001`+len=7 → `srv_can_mst_process_rx`; every other ID falls through to `srv_can_slv_process_rx` then `srv_can_dual_process_rx` (each service ignores frames it doesn't own).
+In `can_rx_callback`: `0x003`+len=1 → set `s_enter_boot_requested` flag (consumed by `can_timer_cb` → `srv_boot_ctrl_request_boot`); `0x001`+len=3 → `srv_can_mst_process_rx`; `0x004`+len≥4 → snapshot RGB pending (applied by `can_timer_cb` via `srv_ws2812b_set_pixel`); every other ID falls through to `srv_can_slv_process_rx` then `srv_can_dual_process_rx` (each service ignores frames it doesn't own).
 
 ### TX flow
 

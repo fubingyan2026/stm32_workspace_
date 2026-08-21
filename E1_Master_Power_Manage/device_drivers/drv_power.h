@@ -28,7 +28,7 @@ typedef enum {
     DRV_POWER_RAIL_HSD1_12V_DIAG,/**< 12V_HSD1_DIAG_EN — 12V HSD1 诊断使能 */
     DRV_POWER_RAIL_HSD1_24V_DIAG,/**< 24V_HSD1_DIAG_EN — 24V HSD1 诊断使能 */
     DRV_POWER_RAIL_HSD2_24V_DIAG,/**< 24V_HSD2_DIAG_EN — 24V HSD2 诊断使能 */
-    DRV_POWER_RAIL_AUX_EN,       /**< AUX_POWER_EN — 辅助电源使能 */
+    DRV_POWER_RAIL_AUX_EN,       /**< AUX_POWER_EN — 辅助(副电源控制板)电源使能 */
     DRV_POWER_RAIL_MOTOR_EN,     /**< MOTOR_POWER_EN — 电机电源使能 */
     DRV_POWER_RAIL_MOTOR_CHG_EN, /**< MOTOR_POWER_CHG_EN — 电机预充电使能 */
     DRV_POWER_RAIL_DBR_LSD_EN,   /**< DBR_LSD_EN — 动态制动低边驱动使能 */

@@ -16,6 +16,7 @@
 extern "C" {
 #endif
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /* Exported functions prototypes ---------------------------------------------*/
@@ -31,6 +32,21 @@ int srv_ws2812b_init(void);
  * @param elapsed_ms 距上次调用的毫秒数（动画按时间累计，与 tick 周期无关）
  */
 void srv_ws2812b_step(uint16_t elapsed_ms);
+
+/**
+ * @brief 设置灯带是否自动播放彗星动画
+ * @param on true=自动动画（默认），false=手动模式（CAN RGB 控制后停止动画）
+ */
+void srv_ws2812b_set_auto(bool on);
+
+/**
+ * @brief 设置单个 LED 颜色（0x004 CAN RGB 输出控制帧）
+ * @param index LED 索引：0-31=通道1(RGB1/SPI1), 32-63=通道2(RGB2/SPI3)
+ * @param r,g,b RGB 亮度 (0-255)
+ * @return 0=成功；非 0=索引越界（超过对应通道 LED 数）
+ * @note  首次调用后进入手动模式（停止彗星动画），设置并刷新对应通道
+ */
+int srv_ws2812b_set_pixel(uint8_t index, uint8_t r, uint8_t g, uint8_t b);
 
 #ifdef __cplusplus
 }

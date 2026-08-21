@@ -38,6 +38,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 static uint32_t s_phase_ms; /**< 动画累计相位 (ms) */
+static bool s_auto; /**< 自动动画开关（true=彗星动画，false=手动/CAN 控制） */
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -53,6 +54,8 @@ int srv_ws2812b_init(void)
         return err;
     }
 
+    s_auto = true;
+
     SRV_WS2812B_LOG_I("WS2812B 灯带初始化完成 (通道1=%u, 通道2=%u)",
         (unsigned)drv_ws2812b_get_led_count(DRV_WS2812B_INST_1),
         (unsigned)drv_ws2812b_get_led_count(DRV_WS2812B_INST_2));
@@ -61,6 +64,11 @@ int srv_ws2812b_init(void)
 
 void srv_ws2812b_step(uint16_t elapsed_ms)
 {
+    /* 手动模式（CAN RGB 控制）下停止彗星动画，避免覆盖主机设置的灯 */
+    if (!s_auto) {
+        return;
+    }
+
     s_phase_ms += elapsed_ms;
 
     for (uint8_t inst = 0; inst < DRV_WS2812B_INST_NUM; inst++) {
@@ -90,6 +98,35 @@ void srv_ws2812b_step(uint16_t elapsed_ms)
         }
         drv_ws2812b_update((drv_ws2812b_inst_t)inst);
     }
+}
+
+void srv_ws2812b_set_auto(bool on)
+{
+    s_auto = on;
+}
+
+int srv_ws2812b_set_pixel(uint8_t index, uint8_t r, uint8_t g, uint8_t b)
+{
+    /* 索引 0-31 → 通道1(RGB1/SPI1)，32-63 → 通道2(RGB2/SPI3) */
+    const drv_ws2812b_inst_t inst = (index >= 32U) ? DRV_WS2812B_INST_2 : DRV_WS2812B_INST_1;
+    const uint16_t pos = index & 0x1FU;
+
+    if (pos >= drv_ws2812b_get_led_count(inst)) {
+        SRV_WS2812B_LOG_W("RGB 控制索引越界: idx=%u (通道%u 灯数=%u)",
+            (unsigned)index, (unsigned)inst, (unsigned)drv_ws2812b_get_led_count(inst));
+        return -1;
+    }
+
+    /* 进入手动模式：停止彗星动画，避免覆盖 CAN 控制 */
+    s_auto = false;
+
+    drv_ws2812b_set(inst, pos, r, g, b);
+    drv_ws2812b_update(inst);
+
+    SRV_WS2812B_LOG_D("RGB 控制: idx=%u -> 通道%u pos=%u (#%02X%02X%02X)",
+        (unsigned)index, (unsigned)inst, (unsigned)pos,
+        (unsigned)r, (unsigned)g, (unsigned)b);
+    return 0;
 }
 
 /* Private functions ---------------------------------------------------------*/
