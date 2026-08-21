@@ -6,9 +6,10 @@
  * CAN-ID 低 8 位 = 设备地址，data[0]=指令，data[1..]=参数，多字节大端）。
  *
  * 与 srv_ht_temp_test（速度模式时间相位）的区别：本模块用速度模式（0x07 02）
- * 连续旋转，令电机在 0 与 +POS_LIMIT_DEG（50 圈）之间多圈往复。方向变化时用
+ * 连续旋转，令电机在「初始化位置」±POS_LIMIT_DEG 之间多圈往复（初始化位置即
+ * 各电机启动后首次读回的位置，作为自身 0 点，掉线恢复后重新锁存）。方向变化时用
  * RAMP_MS 线性斜坡平滑加减速（消除卡顿/突变）；每 POS_POLL_PERIOD_MS 用 0x06
- * 读当前位置，到达端点（0 / +50R）即反向。累计在线运行满 30 天自动停止并失能。
+ * 读当前位置，到达端点（中心±POS_LIMIT）即反向。累计在线运行满 30 天自动停止并失能。
  *
  * 启动流程：先扫描总线电机 ID（握手指令 0x00 逐地址探测，0x01~0x3F），
  * 对检测到的电机下发使能/速度模式；未检测到任何电机时回退到
@@ -34,7 +35,7 @@
 #define SRV_HT_TORQUE_TEST_LOG_ENABLE 1
 
 #if SRV_HT_TORQUE_TEST_LOG_ENABLE
-#define SRV_HT_TORQUE_TEST_LOG_I(...) LOG_I("srv_ht_torque_test", __VA_ARGS__)
+#define SRV_HT_TORQUE_TEST_LOG_I(...) //LOG_I("srv_ht_torque_test", __VA_ARGS__)
 #define SRV_HT_TORQUE_TEST_LOG_W(...) LOG_W("torque_test", __VA_ARGS__)
 #define SRV_HT_TORQUE_TEST_LOG_E(...) LOG_E("torque_test", __VA_ARGS__)
 #else
@@ -51,10 +52,10 @@
 
 /* --- 苇熠伺服执行器 CAN 测试参数 --- */
 
-/** @brief 正极限角度 (deg)：电机从初始位置 0 连续旋转到该角度（50 圈 = 18000°，1 转=360°） */
-#define SRV_HT_TORQUE_TEST_POS_LIMIT_DEG (30 * 360)
+/** @brief 往复半幅 (deg)：电机以初始化位置为中心，在 中心±该角度（15 圈 = 5400°，1 转=360°）间摆动 */
+#define SRV_HT_TORQUE_TEST_POS_LIMIT_DEG (6 * 360)
 /**
- * @brief 正极限换算为 IQ24 位置值（单位 R）：18000° = 50R = 0x32000000
+ * @brief 往复半幅换算为 IQ24 位置值（单位 R）：15R = 0x00F00000
  * @note  IQ = deg/360 × 2^24（文档 §4.2：位置 IQ24 值即为实际转数，满量程 ±127R）
  */
 const int32_t SRV_HT_TORQUE_TEST_POS_LIMIT_IQ = ((SRV_HT_TORQUE_TEST_POS_LIMIT_DEG / 360) << 24);
@@ -70,7 +71,7 @@ const int32_t SRV_HT_TORQUE_TEST_POS_LIMIT_IQ = ((SRV_HT_TORQUE_TEST_POS_LIMIT_D
 /* --- 速度模式参数（速度模式 0x02 连续旋转，固件手动斜坡平滑加减速） --- */
 
 /** @brief 巡航转速 (RPM)：连续旋转的目标转速，正负表示方向 */
-#define SRV_HT_TORQUE_TEST_SPEED_RPM 100
+#define SRV_HT_TORQUE_TEST_SPEED_RPM 300
 /** @brief 斜坡时长 (ms)：速度目标变化时在该时长内线性爬升/下降（平滑加减速、消除卡顿） */
 #define SRV_HT_TORQUE_TEST_RAMP_MS 2000U
 /** @brief 速度帧重发周期 (ms)：斜坡期间按该周期重发速度（巡航期速度已锁存） */
@@ -92,7 +93,7 @@ const int32_t SRV_HT_TORQUE_TEST_POS_LIMIT_IQ = ((SRV_HT_TORQUE_TEST_POS_LIMIT_D
 #define SRV_HT_TORQUE_TEST_STARTUP_RETRY_MS 100U
 /** @brief 端点反向超时兜底 (ms)：超过该时长未发生端点反向（位置反馈冻结/0x06 丢帧/到位偏置）
  *        时强制反向，防止电机只往一个方向跑（同良志排查文档 §3.3 到位超时强制翻转）。
- *        单程约 8s（29R@300RPM+斜坡 2s），60s ≈ 7× 留足裕量 */
+ *        单程约 7.5s（9R@100RPM+斜坡 2s），60s ≈ 8× 留足裕量 */
 #define SRV_HT_TORQUE_TEST_FLIP_TIMEOUT_MS 60000U
 /** @brief 周期状态诊断日志 (ms)：打印各电机 位置/方向/转速/报警/在线年龄。
  *        60s 一次避免刷屏；确认耐久运行正常后可置大或关闭 */
@@ -272,6 +273,13 @@ static int32_t s_motor_pos_iq[SRV_HT_TORQUE_TEST_MAX_MOTORS];
 /** @brief 新位置应答待处理标志（ISR 置位，主循环清零后做端点反向判定） */
 static bool s_motor_pos_pending[SRV_HT_TORQUE_TEST_MAX_MOTORS];
 
+/** @brief 每电机往复中心 (IQ24，单位 R)：各电机初始化（首次读到位置）时的位置作为自身 0 点，
+ *        目标在 各自中心 ± POS_LIMIT 两端点间交替（多电机各以自身初始化位置摆动） */
+static int32_t s_center_iq[SRV_HT_TORQUE_TEST_MAX_MOTORS];
+
+/** @brief 每电机往复中心是否已锁存（首个位置应答后锁存；恢复在线后重新锁存） */
+static bool s_center_latched[SRV_HT_TORQUE_TEST_MAX_MOTORS];
+
 /** @brief 每电机最新使能状态（0x2B 应答更新，0=失能，1=使能，ISR 写） */
 static bool s_motor_enabled[SRV_HT_TORQUE_TEST_MAX_MOTORS];
 
@@ -435,6 +443,8 @@ void srv_ht_torque_test_start(void)
     s_last_rescan_ms = s_start_ms;
     memset(s_motor_pos_iq, 0, sizeof(s_motor_pos_iq));
     memset(s_motor_pos_pending, 0, sizeof(s_motor_pos_pending));
+    memset(s_center_iq, 0, sizeof(s_center_iq));
+    memset(s_center_latched, 0, sizeof(s_center_latched));
     memset(s_motor_enabled, 0, sizeof(s_motor_enabled));
     memset(s_motor_enable_known, 0, sizeof(s_motor_enable_known));
     memset(s_motor_mode, 0, sizeof(s_motor_mode));
@@ -478,8 +488,8 @@ void srv_ht_torque_test_stop(void)
 
 /**
  * @brief 往复耐久测试模式周期步进（由 can_task 每 TASK_PERIOD_MS 调用）
- * @note  阶段 1 扫描总线电机 ID；阶段 2 在 0 与 +POS_LIMIT_DEG（50 圈）之间
- *        多圈往复（速度模式连续旋转）：
+ * @note  阶段 1 扫描总线电机 ID；阶段 2 在 初始化位置±POS_LIMIT_DEG 之间
+ *        多圈往复（速度模式连续旋转，各电机以自身初始化位置为中心）：
  *        - 方向变化时用 RAMP_MS 线性斜坡平滑加减速（消除卡顿）；
  *        - 每 POS_POLL_PERIOD_MS 用 0x06 轮询当前位置，到达端点（0 / +50R）即反向；
  *        命令仅发往检测到的电机；电机持续在线累计满 DURATION_MS（30 天）自动停止。
@@ -611,7 +621,20 @@ void srv_ht_torque_test_step(void)
         srv_ht_torque_test_query_position_all();
     }
 
-    /* 端点反向判定：任一台电机到达端点（0 / +50R）即翻转全局方向。
+    /* 锁存往复中心：各电机初始化（首次读到位置）时的位置作为自身 0 点，
+       此后目标在 各自中心±POS_LIMIT 两端点间交替；盲发回退（无位置应答）保持旧行为 */
+    for (uint32_t i = 0; i < s_motor_cnt; i++) {
+        if (!s_center_latched[i] && s_motor_pos_pending[i]) {
+            s_center_iq[i] = s_motor_pos_iq[i];
+            s_center_latched[i] = true;
+            SRV_HT_TORQUE_TEST_LOG_I("已锁存往复中心：电机 0x%02X 初始位置 %ld 为 0 点，区间 [%ld, %ld]",
+                (unsigned)s_motor_ids[i], (long)s_center_iq[i],
+                (long)((int64_t)s_center_iq[i] - (int64_t)SRV_HT_TORQUE_TEST_POS_LIMIT_IQ),
+                (long)((int64_t)s_center_iq[i] + (int64_t)SRV_HT_TORQUE_TEST_POS_LIMIT_IQ));
+        }
+    }
+
+    /* 端点反向判定：任一台电机到达端点（中心−POS_LIMIT / 中心+POS_LIMIT）即翻转全局方向。
      * 同时记录翻转时间，供下方 FLIP_TIMEOUT 兜底判定 */
     bool s_flipped = false;
     for (uint32_t i = 0; i < s_motor_cnt; i++) {
@@ -620,13 +643,16 @@ void srv_ht_torque_test_step(void)
         }
         s_motor_pos_pending[i] = false; /* 先清标志再取值，避免 ISR 并发丢更新 */
 
+        const int64_t center = s_center_latched[i] ? (int64_t)s_center_iq[i] : (int64_t)0;
+        const int64_t hi = center + (int64_t)SRV_HT_TORQUE_TEST_POS_LIMIT_IQ;
+        const int64_t lo = center - (int64_t)SRV_HT_TORQUE_TEST_POS_LIMIT_IQ;
         if (s_dir > 0) {
-            if (s_motor_pos_iq[i] >= SRV_HT_TORQUE_TEST_POS_LIMIT_IQ - SRV_HT_TORQUE_TEST_REACH_IQ) {
+            if ((int64_t)s_motor_pos_iq[i] >= (hi - (int64_t)SRV_HT_TORQUE_TEST_REACH_IQ)) {
                 s_dir = -1;
                 s_flipped = true;
             }
         } else {
-            if (s_motor_pos_iq[i] <= SRV_HT_TORQUE_TEST_REACH_IQ) {
+            if ((int64_t)s_motor_pos_iq[i] <= (lo + (int64_t)SRV_HT_TORQUE_TEST_REACH_IQ)) {
                 s_dir = 1;
                 s_flipped = true;
             }
@@ -735,8 +761,8 @@ void srv_ht_torque_test_step(void)
                 srv_ht_torque_test_send_query_speed(s_motor_ids[i]);
             }
             const int32_t act_rpm = (int32_t)(((int64_t)s_motor_speed_iq[i] * SRV_HT_TORQUE_TEST_SPEED_FULL_SCALE) >> 24);
-            SRV_HT_TORQUE_TEST_LOG_W("状态: 电机 0x%02X pos=%ld dir=%d 下发=%dRPM 使能=%d 模式=%u 实际=%ldRPM 报警=0x%lX 在线年龄=%lu ms",
-                (unsigned)s_motor_ids[i], (long)s_motor_pos_iq[i], (int)s_dir, (int)s_speed_rpm,
+            SRV_HT_TORQUE_TEST_LOG_W("状态: 电机 0x%02X pos=%ld ctr=%ld dir=%d 下发=%dRPM 使能=%d 模式=%u 实际=%ldRPM 报警=0x%lX 在线年龄=%lu ms",
+                (unsigned)s_motor_ids[i], (long)s_motor_pos_iq[i], (long)s_center_iq[i], (int)s_dir, (int)s_speed_rpm,
                 (int)s_motor_enabled[i], (unsigned)s_motor_mode[i], (long)act_rpm,
                 (unsigned long)s_motor_alarm[i], (unsigned long)(now - s_motor_last_seen_ms[i]));
         }
@@ -756,6 +782,7 @@ void srv_ht_torque_test_step(void)
     for (uint32_t i = 0; i < s_motor_cnt; i++) {
         if (s_online_evt_pending[i]) {
             s_online_evt_pending[i] = false;
+            s_center_latched[i] = false; /* 重新以该电机恢复后的当前位置为往复中心 */
             srv_ht_torque_test_send_enable(s_motor_ids[i], true);
             srv_ht_torque_test_set_speed_mode(s_motor_ids[i]);
             srv_ht_torque_test_send_cur_limit(s_motor_ids[i]);
@@ -920,7 +947,7 @@ static void srv_ht_torque_test_scan_log_new(void)
 
 /**
  * @brief 扫描结束：打印结果，对检测到的电机下发使能 + 速度模式，
- *        进入 0 ↔ +POS_LIMIT_DEG 速度模式多圈往复
+ *        进入 初始化位置±POS_LIMIT_DEG 速度模式多圈往复
  */
 static void srv_ht_torque_test_scan_done(void)
 {
@@ -965,7 +992,7 @@ static void srv_ht_torque_test_scan_done(void)
     srv_ht_torque_test_cmd_set_mode_all(); /* 2. 速度模式 */
     srv_ht_torque_test_cmd_set_cur_limit_all(); /* 3. 提高电流限制（扭矩输出上限，速度模式由 0x58 决定） */
     /* 4. 速度由斜坡逻辑在 step() 中下发（初始方向 +50R，斜坡从 0 平滑爬升） */
-    SRV_HT_TORQUE_TEST_LOG_I("开始多圈往复：0 ↔ %d 圈（+%d°），速度模式连续旋转，累计在线 %lu ms（30 天）后停止",
+    SRV_HT_TORQUE_TEST_LOG_I("开始多圈往复：初始化中心 ±%d 圈（±%d°），速度模式连续旋转，累计在线 %lu ms（30 天）后停止",
         (int)(SRV_HT_TORQUE_TEST_POS_LIMIT_DEG / 360), (int)SRV_HT_TORQUE_TEST_POS_LIMIT_DEG,
         (unsigned long)SRV_HT_TORQUE_TEST_DURATION_MS);
 }
@@ -987,6 +1014,7 @@ static void srv_ht_torque_test_rescan_done(uint32_t now)
         s_motor_enable_known[i] = false;
         s_motor_enabled[i] = false;
         s_enable_log_latch[i] = false;
+        s_center_latched[i] = false; /* 新电机：以接管后读回的位置为往复中心 */
         srv_ht_torque_test_send_enable(s_motor_ids[i], true);
         srv_ht_torque_test_set_speed_mode(s_motor_ids[i]);
         srv_ht_torque_test_send_cur_limit(s_motor_ids[i]);

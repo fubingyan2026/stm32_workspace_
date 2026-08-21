@@ -41,6 +41,11 @@
 
 #define STEADY_TIME_MS (50U)
 
+/** @brief MOTOR 移交：母线达到 VIN 该比例后关闭预充电半桥 */
+#define PWR_MOTOR_HANDOVER_PCT (98U)
+/** @brief MOTOR 移交超时兜底 (ms)：母线未抬到阈值也强制关闭预充电 */
+#define PWR_MOTOR_HANDOVER_TIMEOUT_MS (200U)
+
 /* ── 预充电软启动参数（详见 docs/motor_power_charge_step.md） ── */
 /** @brief 阶段一：EN 保持低电平清除 OCP 锁存的时长 (ms) */
 #define PWR_PRECHARGE_EN_CLEAR_MS (20U)
@@ -121,6 +126,9 @@ typedef enum {
 typedef struct {
     bool power_on_requested;
     uint16_t steady_ms;
+    bool precharge_off_done; /**< MOTOR 态是否已完成预充电移交关闭 */
+    bool aux_en;   /**< AUX_POWER_EN 驱动状态（PGD 判定门控） */
+    bool motor_en; /**< MOTOR_POWER_EN 驱动状态（PGD 判定门控） */
 } power_ctrl_ctx_t;
 
 /** @brief 预充电 FSM 上下文（单实例静态） */
@@ -259,6 +267,8 @@ void srv_pwr_ctrl_emergency_off(void)
     if (s_ctx.power_on_requested == true) {
         s_ctx.power_on_requested = false;
         s_ctx.steady_ms = 0;
+        s_ctx.aux_en = false;
+        s_ctx.motor_en = false;
 
         fsm_goto(&s_fsm, PWR_STATE_IDLE);
 
@@ -275,6 +285,16 @@ void srv_pwr_ctrl_emergency_off(void)
 bool srv_pwr_ctrl_is_powered_on(void)
 {
     return fsm_current_state(&s_fsm) == PWR_STATE_DONE;
+}
+
+bool srv_pwr_ctrl_is_aux_enabled(void)
+{
+    return s_ctx.aux_en;
+}
+
+bool srv_pwr_ctrl_is_motor_enabled(void)
+{
+    return s_ctx.motor_en;
 }
 
 /* Private functions ---------------------------------------------------------*/
@@ -330,7 +350,26 @@ static const char* precharge_fault_name(precharge_fault_t f)
 static fsm_state_t pwr_state_motor(fsm_t* ctx)
 {
     power_ctrl_ctx_t* p = (power_ctrl_ctx_t*)fsm_user_data(ctx);
-    return (p->steady_ms >= STEADY_TIME_MS) ? PWR_STATE_DONE : PWR_STATE_MOTOR;
+
+    /* 移交：主回路就绪（母线接近 VIN）后再关闭预充电半桥，避免 MOTOR_POWER_PGD 跌落 */
+    if (!p->precharge_off_done) {
+        const bool handover_ok = (s_precharge.last_vin_mv > 0
+            && s_precharge.last_motor_bus_mv
+                >= s_precharge.last_vin_mv * PWR_MOTOR_HANDOVER_PCT / 100U);
+
+        if (handover_ok || p->steady_ms >= PWR_MOTOR_HANDOVER_TIMEOUT_MS) {
+            SRV_PWR_CTRL_LOG_I("MOTOR 移交: %s 关闭预充电 (bus=%umV, vin=%umV, steady=%ums)",
+                handover_ok ? "电压条件满足" : "超时兜底",
+                (unsigned)s_precharge.last_motor_bus_mv, (unsigned)s_precharge.last_vin_mv,
+                (unsigned)p->steady_ms);
+            precharge_reset();
+            p->precharge_off_done = true;
+        }
+    }
+
+    /* 移交完成且母线稳定后进入 DONE */
+    return (p->precharge_off_done && p->steady_ms >= STEADY_TIME_MS)
+        ? PWR_STATE_DONE : PWR_STATE_MOTOR;
 }
 
 static fsm_state_t pwr_state_done(fsm_t* ctx)
@@ -351,6 +390,7 @@ static void pwr_entry_cb(fsm_t* ctx, fsm_state_t state)
 
     switch (state) {
     case PWR_STATE_AUX:
+        p->aux_en = true;
         drv_power_set(DRV_POWER_RAIL_DC_DC_EN, true);
         drv_power_set(DRV_POWER_RAIL_AUX_EN, true);
         break;
@@ -362,14 +402,13 @@ static void pwr_entry_cb(fsm_t* ctx, fsm_state_t state)
         drv_power_set(DRV_POWER_RAIL_HSD2_24V_DIAG, true);
         break;
     case PWR_STATE_MOTOR:
-
+        p->precharge_off_done = false;
+        p->motor_en = true;
         drv_power_set(DRV_POWER_RAIL_MOTOR_EN, true);
         drv_power_set(DRV_POWER_RAIL_HSD1_12V, true);
         drv_power_set(DRV_POWER_RAIL_HSD1_24V, true);
         drv_power_set(DRV_POWER_RAIL_HSD2_24V, true);
-        /* 移交主功率回路后立即关闭预充电半桥（EN 低 + PWM 0%），
-         * 防止其持续 90% 开关触发 MOTOR_CHG_OCP 并把母线拉低 */
-        // precharge_reset();
+        /* 预充电保持导通，等母线抬到接近 VIN 后再关闭（见 pwr_state_motor） */
         break;
     default:
         break;

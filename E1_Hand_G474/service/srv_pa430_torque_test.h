@@ -13,8 +13,9 @@
  *      携带 θ_ref / V_ref / Kp / Kd / T_ref（12bit/16bit 归一化映射）；
  *   2. 广播帧一帧同时驱动总线上 1~8 台电机（ID 1~8），各电机以自身 ID
  *      回复 DLC 8 反馈帧（θ / V / T / 温度 / 错误码）；
- *   3. 来回运动：θ_ref 在 +CAN_COM_MAX 与 CAN_COM_MIN 两端点间交替，
- *      读反馈帧 θ，|θ−目标| ≤ 阈值 判定到位后反向（位置反馈闭环）。
+ *   3. 来回运动：θ_ref 在 各自运动中心 ±SRV_PA430_ANGLE_AMP_RAD 两端点间交替
+ *      （各电机首次收到反馈时的位置锁存为自身中心），读反馈帧 θ，|θ−目标| ≤ 阈值
+ *      判定到位后反向（位置反馈闭环）。
  *
  * RX 侧：反馈帧（CAN-ID = 电机 ID 1~8, DLC 8）由 can_task 按 CH_2 分发到
  * srv_pa430_torque_test_on_rx() 消费，返回 true 表示已处理。本模块不依赖
@@ -57,7 +58,8 @@ void srv_pa430_torque_test_init(void);
 /**
  * @brief 启动来回运动测试模式
  * @note  对配置电机发广播使能（0x10, byte7=0xFC）→ 持续下发 MIT 控制帧（0x20），
- *        θ_ref 在 +CAN_COM_MAX 与 CAN_COM_MIN 两端点间交替，到位即反向
+ *        θ_ref 在 各自初始化位置±SRV_PA430_ANGLE_AMP_RAD 两端点间交替
+ *        （各电机首次收到反馈时的 θ 为自身 0 点），到位即反向
  */
 void srv_pa430_torque_test_start(void);
 

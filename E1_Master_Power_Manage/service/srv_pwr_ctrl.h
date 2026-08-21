@@ -41,6 +41,18 @@ void srv_pwr_ctrl_emergency_off(void);
 /** @brief 是否已完成上电流程 */
 bool srv_pwr_ctrl_is_powered_on(void);
 
+/**
+ * @brief 辅助电源使能是否已驱动（AUX_POWER_EN 状态）
+ * @note  供故障策略门控 PGD 判定：AUX_EN=0 时 AUX_PGD 低为正常，不应判故障
+ */
+bool srv_pwr_ctrl_is_aux_enabled(void);
+
+/**
+ * @brief 电机电源使能是否已驱动（MOTOR_POWER_EN 状态）
+ * @note  供故障策略门控 PGD 判定：MOTOR_EN=0 时 MOTOR_PGD 低为正常，不应判故障
+ */
+bool srv_pwr_ctrl_is_motor_enabled(void);
+
 #ifdef __cplusplus
 }
 #endif

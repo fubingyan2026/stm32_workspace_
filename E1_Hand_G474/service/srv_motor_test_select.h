@@ -49,9 +49,12 @@ typedef enum {
 
 /* --- 预处理选择值（#if 比较用，值须与枚举一致） --- */
 
+//can1的选项电机
 #define SRV_MOTOR_TEST_HT_TORQUE 0
 #define SRV_MOTOR_TEST_HT_TEMP 1
 #define SRV_MOTOR_TEST_TONGZHI 2
+
+//can2的选项电机
 #define SRV_MOTOR_TEST_HT_CAN2 0
 #define SRV_MOTOR_TEST_PA430 1
 
@@ -62,7 +65,7 @@ typedef enum {
  * @note  命令行覆盖必须使用上面的宏名或整型字面量（枚举名不是预处理器符号，无法用于 #if）
  */
 #ifndef SRV_MOTOR_TEST_SELECT
-#define SRV_MOTOR_TEST_SELECT SRV_MOTOR_TEST_TONGZHI
+#define SRV_MOTOR_TEST_SELECT SRV_MOTOR_TEST_HT_TORQUE
 #endif
 
 /**

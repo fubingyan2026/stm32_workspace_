@@ -65,9 +65,10 @@ void srv_ht_can2_torque_test_stop(void);
 
 /**
  * @brief 往复耐久测试周期步进（由 can_task 每 TASK_PERIOD_MS 调用）
- * @note  阶段 1 扫描总线电机 ID；阶段 2 在 0 与 +POS_LIMIT_DEG（50 圈）之间
- *        多圈往复（速度模式连续旋转），方向变化用 RAMP_MS 斜坡平滑加减速，
- *        每 POS_POLL_PERIOD_MS 用 0x06 读位置、到达端点（0 / +50R）即反向，
+ * @note  阶段 1 扫描总线电机 ID；阶段 2 在 初始化位置±POS_LIMIT_DEG 之间
+ *        多圈往复（速度模式连续旋转，各电机以自身初始化位置为中心），方向变化用
+ *        RAMP_MS 斜坡平滑加减速，每 POS_POLL_PERIOD_MS 用 0x06 读位置、
+ *        到达端点（中心±POS_LIMIT）即反向，
  *        命令仅发往检测到的电机；电机持续在线累计满 DURATION_MS（30 天）自动停止
  */
 void srv_ht_can2_torque_test_step(void);

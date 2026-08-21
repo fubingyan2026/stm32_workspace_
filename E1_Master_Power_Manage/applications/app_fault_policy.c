@@ -113,9 +113,10 @@ void app_fault_policy_reset(void)
 static bool fault_policy_critical(const srv_pwr_det_status_t* st)
 {
     /* 关键电源轨丢失或过流/硬件故障 → 必须立即断电。
-       外部输入轨（ext_12v/24v/comp）仅上报不触发，避免输入瞬断导致误关断。 */
-    return !st->motor_power_ok
-        || !st->aux_power_ok
+       外部输入轨（ext_12v/24v/comp）仅上报不触发，避免输入瞬断导致误关断。
+       PGD 仅在对应使能已驱动时才判定故障：AUX_EN/MOTOR_EN=0 时 PGD 恒低属正常。 */
+    return (srv_pwr_ctrl_is_motor_enabled() && !st->motor_power_ok)
+        || (srv_pwr_ctrl_is_aux_enabled() && !st->aux_power_ok)
         || st->dbr_ocp
         || st->motor_chg_ocp
         || st->hsd_fault;
@@ -126,10 +127,10 @@ static void fault_policy_log_reasons(const srv_pwr_det_status_t* st)
     if (st->estop_on) {
         APP_FAULT_POLICY_LOG_W("  [原因] E-STOP 急停触发");
     }
-    if (!st->motor_power_ok) {
+    if (srv_pwr_ctrl_is_motor_enabled() && !st->motor_power_ok) {
         APP_FAULT_POLICY_LOG_E("  [原因] MOTOR_POWER PGD 丢失 (motor_pwr=0)");
     }
-    if (!st->aux_power_ok) {
+    if (srv_pwr_ctrl_is_aux_enabled() && !st->aux_power_ok) {
         APP_FAULT_POLICY_LOG_E("  [原因] AUX_POWER PGD 丢失 (aux_pwr=0)");
     }
     if (st->dbr_ocp) {

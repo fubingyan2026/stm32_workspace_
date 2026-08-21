@@ -12,7 +12,8 @@
  *   1. 走 FDCAN1（DRV_CAN_CH_1），与苇熠(HT) 测试通过 srv_motor_test_select.h
  *      三选一（互斥）；PA430(Motorevo) 仍在 FDCAN2 独立并行；
  *   2. 使用位置模式 + 梯形轨迹（Set_Controller_Mode 3/5 + Set_Input_Pos），主机只交替
- *      下发目标位置（±SRV_TONGZHI_POS_AMP_TURNS 转），电机自带梯形规划平滑加减速，
+ *      下发目标位置（各自初始化零点 ±SRV_TONGZHI_POS_AMP_TURNS 转，零点 = 各电机初始化
+ *      完成时读回的编码器位置），电机自带梯形规划平滑加减速，
  *      目标为锁存式，无需像 MIT 那样高频持续下发保持刚度；
  *   3. 多台电机按 node_id（0~63）寻址，靠电机周期推送的心跳(0x01)被动发现在线电机，
  *      编码器位置(0x09)由电机周期推送（默认 10ms），用于到位判定。
@@ -58,7 +59,8 @@ void srv_tongzhi_torque_test_init(void);
  * @note  等待电机周期心跳(0x01)被动发现 node_id，对发现的电机下发
  *        清错 → 闭环(Set_Axis_State 8) → 位置+梯形轨迹(Set_Controller_Mode 3/5) →
  *        梯形限速限加（Set_Traj_Vel_Limit / Set_Traj_Accel_Limits）；
- *        Set_Input_Pos 在 ±SRV_TONGZHI_POS_AMP_TURNS 两端点间交替，全部到位即反向
+ *        Set_Input_Pos 在 各自初始化零点±SRV_TONGZHI_POS_AMP_TURNS 两端点间交替，
+ *        全部到位即反向（零点 = 各电机初始化完成后读回的当前位置，掉线恢复后重新锁存）
  */
 void srv_tongzhi_torque_test_start(void);
 

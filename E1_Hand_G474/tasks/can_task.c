@@ -12,6 +12,7 @@
 #include "can_task.h"
 
 #include "drv_can.h"
+#include "drv_systick.h"
 #include "log.h"
 #include "srv_can.h"
 #include "srv_ht_can2_torque_test.h"
@@ -82,6 +83,7 @@ static void can_rx_callback(drv_can_channel_t ch, const drv_can_msg_t* msg);
 
 void can_task_init(void)
 {
+    delay_ms(2000);
     drv_can_error_t err = drv_can_init();
     if (err != DRV_CAN_OK) {
         LOG_E("can_task", "drv_can_init failed: %d (FDCAN start error?)", (int)err);

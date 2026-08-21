@@ -6,7 +6,7 @@ REM Windows STM32 Build Script
 REM Usage: build.bat [project_dir] [-t Debug|Release]
 REM ================================================
 
-set "BUILD_TYPE=Debug"
+set "BUILD_TYPE=RelWithDebinfo"
 set "PROJ_DIR="
 
 :parse

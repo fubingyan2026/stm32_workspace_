@@ -39,7 +39,7 @@
 #define TASK_PERIOD_MS (1U)
 
 /** @brief 故障保护策略分频周期 (ms)：每 10 拍执行一次 */
-#define FAULT_POLICY_PERIOD_MS (10U)
+#define FAULT_POLICY_PERIOD_MS (1U)
 
 /** @brief 分频系数 = FAULT_POLICY_PERIOD_MS / TASK_PERIOD_MS */
 #define POWER_SUB_DIV (FAULT_POLICY_PERIOD_MS / TASK_PERIOD_MS)

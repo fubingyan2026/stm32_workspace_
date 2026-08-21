@@ -10,7 +10,9 @@
  *
  * 控制方式：位置模式 + 梯形轨迹。对发现的电机下发 清错 → Set_Axis_State(8=闭环) →
  * Set_Controller_Mode(control=3 position, input=5 trap_traj) → Set_Traj_Vel_Limit /
- * Set_Traj_Accel_Limits；之后 Set_Input_Pos 在 ±SRV_TONGZHI_POS_AMP_TURNS 两端点间交替。
+ * Set_Traj_Accel_Limits；之后 Set_Input_Pos 在「初始化零点」±SRV_TONGZHI_POS_AMP_TURNS
+ * 两端点间交替（零点 = 各电机初始化完成、首次进入闭环时的编码器位置，即读回的当前
+ * 位置；掉线恢复后重新锁存；未锁存前暂按绝对 ±AMP 下发）。
  * ODrive 的 Set_Input_Pos 为锁存式目标（梯形规划器自动跑到位并保持），无需像 MIT 模式
  * 那样高频持续下发保持刚度；到位判定靠电机周期推送的编码器位置(0x09)，全部已闭环电机
  * 到位后目标翻转（未闭环/掉线/无编码器反馈的电机不参与判定，镜像 PA430）。
@@ -32,7 +34,7 @@
 
 /* 模块日志开关 ----------------------------------------------------------------*/
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印（耐久测试确认摆动正常后可关闭） */
-#define SRV_TONGZHI_TORQUE_TEST_LOG_ENABLE 1
+#define SRV_TONGZHI_TORQUE_TEST_LOG_ENABLE 0
 
 #if SRV_TONGZHI_TORQUE_TEST_LOG_ENABLE
 #define SRV_TONGZHI_TORQUE_TEST_LOG_I(...) LOG_I("tongzhi_test", __VA_ARGS__)
@@ -58,16 +60,16 @@
 
 /* --- 往复运动参数（物理单位可调） --- */
 
-/** @brief 往复半幅（转）：目标在 ±AMP 两端点间交替 */
-#define SRV_TONGZHI_POS_AMP_TURNS (12.5f)
+/** @brief 往复半幅（转）：目标在 初始化零点 ±AMP 两端点间交替（零点=初始化完成时的当前位置） */
+#define SRV_TONGZHI_POS_AMP_TURNS (6.5f)
 /** @brief 到位判定阈值（转）：|编码器位置−目标| ≤ 该值视为到位（随后翻转目标） */
-#define SRV_TONGZHI_ARRIVE_THRESH_TURNS (0.6f)
+#define SRV_TONGZHI_ARRIVE_THRESH_TURNS (0.25f)
 /** @brief 梯形轨迹最大速度（转/s） */
-#define SRV_TONGZHI_TRAJ_VEL_LIMIT_TPS (1.5f)
+#define SRV_TONGZHI_TRAJ_VEL_LIMIT_TPS (12.0f)
 /** @brief 梯形轨迹加速度（转/s²） */
-#define SRV_TONGZHI_TRAJ_ACCEL_TPS2 (1.0f)
+#define SRV_TONGZHI_TRAJ_ACCEL_TPS2 (2.0f)
 /** @brief 梯形轨迹减速度（转/s²） */
-#define SRV_TONGZHI_TRAJ_DECEL_TPS2 (1.0f)
+#define SRV_TONGZHI_TRAJ_DECEL_TPS2 (2.0f)
 
 /* --- 周期 --- */
 
@@ -158,11 +160,15 @@ static uint8_t s_motor_cnt;
 /** @brief 已打印日志的电机数（避免重复打印发现日志） */
 static uint8_t s_scan_log_cnt;
 
-/** @brief 当前方向：+1=朝 +AMP，-1=朝 -AMP */
+/** @brief 当前目标方向：+1=朝 +AMP 端点，-1=朝 -AMP 端点（所有电机同向摆动） */
 static int8_t s_dir;
 
-/** @brief 当前目标位置（转，主循环维护，Set_Input_Pos 使用） */
-static float s_target_turns;
+/** @brief 每电机往复中心（转）：各电机初始化完成（首次进入闭环）时的读回位置为自身 0 点，
+ *        目标在 各自中心±AMP 间交替（多电机各以自身零点摆动） */
+static float s_center_turns[SRV_TONGZHI_MAX_MOTORS];
+
+/** @brief 每电机往复中心是否已锁存（init 完成且已有编码器反馈后锁存；掉线恢复后重新锁存） */
+static bool s_center_latched[SRV_TONGZHI_MAX_MOTORS];
 
 /** @brief 每电机最新心跳轴状态（ISR 写） */
 static uint8_t s_motor_axis_state[SRV_TONGZHI_MAX_MOTORS];
@@ -270,6 +276,7 @@ static void srv_tongzhi_torque_test_send_get_error(uint8_t node);
 static void srv_tongzhi_torque_test_motor_init_step(uint8_t node, uint8_t step);
 static void srv_tongzhi_torque_test_probe_step(uint32_t now);
 static void srv_tongzhi_torque_test_fallback(uint32_t now);
+static float srv_tongzhi_torque_test_motor_target(uint8_t idx);
 static bool srv_tongzhi_torque_test_in_control(uint8_t idx);
 static bool srv_tongzhi_torque_test_target_ready(uint8_t idx);
 static void srv_tongzhi_torque_test_scan_record(uint8_t node);
@@ -299,9 +306,10 @@ void srv_tongzhi_torque_test_start(void)
     s_online_ms = 0; /* 持续在线时长从 0 累计 */
     s_online_last_ms = s_start_ms;
 
-    /* 初始目标：朝 +AMP 端点 */
+    /* 初始方向：朝 +AMP 端点；零点未锁存时暂按绝对 ±AMP 下发，锁存后自动校正为 各自中心±AMP */
     s_dir = 1;
-    s_target_turns = SRV_TONGZHI_POS_AMP_TURNS;
+    memset(s_center_turns, 0, sizeof(s_center_turns));
+    memset(s_center_latched, 0, sizeof(s_center_latched));
     s_last_enable_retry_ms = s_start_ms;
     s_enable_stall_since_ms = 0;
     s_enable_warned = false;
@@ -333,7 +341,7 @@ void srv_tongzhi_torque_test_start(void)
         s_motor_last_seen_ms[i] = s_start_ms; /* 掉线检测起点 */
     }
 
-    SRV_TONGZHI_TORQUE_TEST_LOG_I("良志(ODrive) 往复启动：心跳被动发现 + 主动探测 node 0~%u（目标 ±%d 毫转，梯形限速 %d 毫转/s）",
+    SRV_TONGZHI_TORQUE_TEST_LOG_I("良志(ODrive) 往复启动：心跳被动发现 + 主动探测 node 0~%u（初始化零点 ±%d 毫转，梯形限速 %d 毫转/s）",
         (unsigned)(SRV_TONGZHI_MAX_MOTORS - 1U),
         (int)(SRV_TONGZHI_POS_AMP_TURNS * 1000.0f), (int)(SRV_TONGZHI_TRAJ_VEL_LIMIT_TPS * 1000.0f));
 }
@@ -432,6 +440,25 @@ void srv_tongzhi_torque_test_step(void)
         }
     }
 
+    /* 锁存往复零点：电机初始化完成（init 序列走完 + 已有编码器反馈）时，
+       以读回的当前位置为各自 0 点，此后目标在 各自中心±AMP 两端点间交替，
+       而非绝对 ±AMP。盲发回退（无反馈）保持绝对目标 */
+    for (uint8_t i = 0; i < s_motor_cnt; i++) {
+        if (!s_center_latched[i] && srv_tongzhi_torque_test_target_ready(i) && s_motor_have_encoder[i]) {
+            s_center_turns[i] = s_motor_encoder_turns[i];
+            s_center_latched[i] = true;
+            SRV_TONGZHI_TORQUE_TEST_LOG_I("已锁存往复零点：电机 node=%u 当前 %d 毫转为 0 点，目标区间 [%d, %d] 毫转",
+                (unsigned)s_motor_ids[i],
+                (int)(s_center_turns[i] * 1000.0f),
+                (int)((s_center_turns[i] - SRV_TONGZHI_POS_AMP_TURNS) * 1000.0f),
+                (int)((s_center_turns[i] + SRV_TONGZHI_POS_AMP_TURNS) * 1000.0f));
+            /* 锁存前可能已按绝对目标下发过，立即重发校正后的 中心±AMP 目标 */
+            if (srv_tongzhi_torque_test_target_ready(i)) {
+                srv_tongzhi_torque_test_send_input_pos(s_motor_ids[i], srv_tongzhi_torque_test_motor_target(i));
+            }
+        }
+    }
+
     /* 到位翻转双模式：
        - 全部受控电机均有编码器反馈 → 位置到位判定（受控=心跳确认闭环或假定闭环）；
        - 存在无反馈的受控电机 → 定时翻转（按 TRAVEL_EST_MS 粗估单程移动时间） */
@@ -454,7 +481,7 @@ void srv_tongzhi_torque_test_step(void)
                 if (!srv_tongzhi_torque_test_in_control(i)) {
                     continue; /* 未受控电机不参与到位判定 */
                 }
-                float diff = s_motor_encoder_turns[i] - s_target_turns;
+                float diff = s_motor_encoder_turns[i] - srv_tongzhi_torque_test_motor_target(i);
                 if (diff < 0.0f) {
                     diff = -diff;
                 }
@@ -477,19 +504,17 @@ void srv_tongzhi_torque_test_step(void)
         }
         if (s_dir > 0) {
             s_dir = -1;
-            s_target_turns = -SRV_TONGZHI_POS_AMP_TURNS;
         } else {
             s_dir = 1;
-            s_target_turns = SRV_TONGZHI_POS_AMP_TURNS;
         }
         s_last_flip_ms = now;
         for (uint8_t i = 0; i < s_motor_cnt; i++) {
             if (srv_tongzhi_torque_test_target_ready(i)) {
-                srv_tongzhi_torque_test_send_input_pos(s_motor_ids[i], s_target_turns);
+                srv_tongzhi_torque_test_send_input_pos(s_motor_ids[i], srv_tongzhi_torque_test_motor_target(i));
             }
         }
-        SRV_TONGZHI_TORQUE_TEST_LOG_I("目标翻转 → %d 毫转（%s）",
-            (int)(s_target_turns * 1000.0f),
+        SRV_TONGZHI_TORQUE_TEST_LOG_I("目标翻转 → %s 端（%s）",
+            (s_dir > 0) ? "+AMP" : "-AMP",
             flip_timeout ? "到达超时" : (all_have_encoder ? "位置到位" : "定时"));
     }
 
@@ -498,7 +523,7 @@ void srv_tongzhi_torque_test_step(void)
         s_last_target_resend_ms = now;
         for (uint8_t i = 0; i < s_motor_cnt; i++) {
             if (srv_tongzhi_torque_test_target_ready(i)) {
-                srv_tongzhi_torque_test_send_input_pos(s_motor_ids[i], s_target_turns);
+                srv_tongzhi_torque_test_send_input_pos(s_motor_ids[i], srv_tongzhi_torque_test_motor_target(i));
             }
         }
     }
@@ -511,12 +536,13 @@ void srv_tongzhi_torque_test_step(void)
             if (!srv_tongzhi_torque_test_in_control(i)) {
                 continue;
             }
-            SRV_TONGZHI_TORQUE_TEST_LOG_I("状态 node=%u axis=%u err=0x%08lX enc=%d 毫转 tgt=%d 毫转 enc_ok=%u last_seen=%lu ms",
+            SRV_TONGZHI_TORQUE_TEST_LOG_I("状态 node=%u axis=%u err=0x%08lX enc=%d 毫转 tgt=%d 毫转 ctr=%d 毫转 enc_ok=%u last_seen=%lu ms",
                 (unsigned)s_motor_ids[i],
                 (unsigned)s_motor_axis_state[i],
                 (unsigned long)s_motor_err[i],
                 (int)(s_motor_encoder_turns[i] * 1000.0f),
-                (int)(s_target_turns * 1000.0f),
+                (int)(srv_tongzhi_torque_test_motor_target(i) * 1000.0f),
+                (int)(s_center_turns[i] * 1000.0f),
                 s_motor_have_encoder[i] ? 1U : 0U,
                 (unsigned long)(now - s_motor_last_seen_ms[i]));
         }
@@ -539,6 +565,7 @@ void srv_tongzhi_torque_test_step(void)
             s_assumed_closed[i] = false;
             s_last_init_ms[i] = 0U; /* 强制重新走完整 init 序列 */
             s_init_step[i] = 0U;
+            s_center_latched[i] = false; /* 重新以该电机恢复后的当前位置为往复零点 */
             SRV_TONGZHI_TORQUE_TEST_LOG_W("电机 node=%u 恢复在线，重新按序下发闭环/模式/梯形参数",
                 (unsigned)s_motor_ids[i]);
         }
@@ -803,9 +830,24 @@ static void srv_tongzhi_torque_test_fallback(uint32_t now)
     s_last_init_ms[idx] = now;
     s_assumed_closed[idx] = true; /* 盲发：直接假定受控，避免反复重发 */
     s_init_step[idx] = 5U; /* 假定已闭环 → init 序列视为已完成（盲发节点无真实反馈） */
-    srv_tongzhi_torque_test_send_input_pos(SRV_TONGZHI_FALLBACK_NODE, s_target_turns);
+    srv_tongzhi_torque_test_send_input_pos(SRV_TONGZHI_FALLBACK_NODE, srv_tongzhi_torque_test_motor_target(idx));
     SRV_TONGZHI_TORQUE_TEST_LOG_W("探测 %u 个 node 均无应答，回退默认 node_id=%u 盲发（若总线无 ACK 请核对波特率/使能）",
         (unsigned)SRV_TONGZHI_MAX_MOTORS, (unsigned)SRV_TONGZHI_FALLBACK_NODE);
+}
+
+/**
+ * @brief 计算指定电机的当前目标位置（转）
+ * @param idx 电机索引
+ * @return 目标位置：已锁存零点时为其自身中心±AMP（各电机以自身零点摆动）；
+ *         未锁存（盲发回退/启动初期）为绝对 ±AMP
+ */
+static float srv_tongzhi_torque_test_motor_target(uint8_t idx)
+{
+    if (s_center_latched[idx]) {
+        return (s_dir > 0) ? (s_center_turns[idx] + SRV_TONGZHI_POS_AMP_TURNS)
+                           : (s_center_turns[idx] - SRV_TONGZHI_POS_AMP_TURNS);
+    }
+    return (s_dir > 0) ? SRV_TONGZHI_POS_AMP_TURNS : -SRV_TONGZHI_POS_AMP_TURNS;
 }
 
 /**
@@ -1053,6 +1095,8 @@ static void srv_tongzhi_torque_test_scan_record(uint8_t node)
         s_motor_last_seen_ms[idx] = millis();
         s_motor_axis_state[idx] = 0U; /* 尚未闭环 */
         s_motor_have_encoder[idx] = false;
+        s_center_latched[idx] = false; /* 新电机：未锁存往复零点 */
+        s_center_turns[idx] = 0.0f;
         s_init_step[idx] = 0U; /* 新电机：从 init 序列头开始（逐帧下发） */
         s_motor_cnt++;
     }
