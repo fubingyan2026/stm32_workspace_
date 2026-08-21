@@ -36,48 +36,27 @@
 extern "C" {
 #endif
 
-#include "srv_can_dual.h"
-
 #include <stdbool.h>
 #include <stdint.h>
 
 /* Exported types ------------------------------------------------------------*/
 
 /**
- * @brief P_CAN 帧 ID 枚举（0x001 ~ 0x015）
+ * @brief P_CAN 上报帧 ID 枚举（0x010 ~ 0x012，连续）
  *
- * 电源板向主机上报数据的 CAN ID 定义。
- * 0x001 为系统状态帧（必发），0x011-0x015 为电池数据帧（按 feedback_select 选发，与位一一对应）。
+ * 电源板向主机上报数据的 CAN ID 定义，全部随 0x001 主机控制帧触发/周期发送。
  */
 typedef enum {
-    SRV_CAN_MST_ID_STATUS = 0x001, /**< 系统状态 + 错误标志（始终发送） */
-    SRV_CAN_MST_ID_BAT_BASE = 0x011, /**< 电池基础参数：容量 + 循环 + 充电标志 */
-    SRV_CAN_MST_ID_BAT_VOLT = 0x012, /**< 电池电压 + 电流 */
-    SRV_CAN_MST_ID_BAT_STATUS = 0x013, /**< 电池版本：HW/SW 版本 */
-    SRV_CAN_MST_ID_BAT_ERROR = 0x014, /**< 双电池故障码 */
-    SRV_CAN_MST_ID_BAT_CNT = 0x015, /**< 故障等级 + 预警 + 温度 */
+    SRV_CAN_MST_ID_STATUS = 0x010, /**< 系统状态 + 错误标志（始终发送） */
+    SRV_CAN_MST_ID_VOLT_TEMP = 0x011, /**< NTC/MCU 温度 */
+    SRV_CAN_MST_ID_POWER_FAULT = 0x012, /**< 电源电压 + 电机预充故障 */
 } srv_can_mst_can_id_t;
 
 /**
- * @brief feedback_select 位掩码枚举
- *
- * 主机通过 0x001 控制帧的 feedback_select 字节选择需要哪些电池数据帧。
- * srv_can_mst_request(fb) 时传入此掩码的组合。
- */
-typedef enum {
-    SRV_CAN_MST_FEEDBACK_BAT_BASE = (1U << 0), /**< 请求电池基础参数 (0x011): 容量/循环/充电 */
-    SRV_CAN_MST_FEEDBACK_BAT_VOLTAGE = (1U << 1), /**< 请求电池电压+电流 (0x012) */
-    SRV_CAN_MST_FEEDBACK_BAT_STATUS = (1U << 2), /**< 请求电池版本 (0x013) */
-    SRV_CAN_MST_FEEDBACK_BAT_ERROR = (1U << 3), /**< 请求电池错误码 (0x014) */
-    SRV_CAN_MST_FEEDBACK_BAT_COUNTER = (1U << 4), /**< 请求故障等级+预警+温度 (0x015) */
-    /* bit5-7 保留 */
-} srv_can_mst_feedback_t;
-
-/**
- * @brief 0x001 状态帧（Byte0-7）视图（字段声明顺序 = bit 顺序，bit0 在前）
+ * @brief 0x010 状态帧（Byte0-1）视图（字段声明顺序 = bit 顺序，bit0 在前）
  *
  * 位域由编译器自动对齐，替代手写移位打包；union 的 bytes 视图便于整帧观察/校验。
- * Byte0-5 为状态位域，Byte6-7 为双电池 SOC 简略信息。
+ * 按当前工程精简：0x001 状态帧压缩为 2 字节（状态位 + NTC 连接状态）。
  *
  * @attention 位域分配由编译器/ABI 决定（C 标准未规定）：
  *   - GCC ARM (AAPCS, little-endian) 下从 LSB 分配，实测与协议一致；
@@ -85,86 +64,55 @@ typedef enum {
  */
 typedef union {
     struct __attribute__((packed)) {
-        /* === byte0: 系统运行状态 === */
-        uint8_t stop_key_state : 1; /**< [bit0] 急停状态：0=释放, 1=按下 */
-        uint8_t battery_key_state : 1; /**< [bit1] 电池开关：0=关闭, 1=打开 */
-        uint8_t battery_charging : 1; /**< [bit2] 充电状态：0=放电, 1=充电 */
-        uint8_t battery_temp_error : 1; /**< [bit3] 电池温度异常标志 */
-
-        uint8_t device_online_slaver : 1; // 副电源管理控制板在线
-        uint8_t device_online_dual : 1; // 双电池控制板在线
-        uint8_t device_online_bat1 : 1; // 电池1 在线
-        uint8_t device_online_bat2 : 1; // 电池2 在线
-
-        /* === byte1: 内部/外部电源轨错误 === */
-        uint8_t err_vin : 1; /**< [bit0] 主输入电压异常（48V 母线） */
-        uint8_t err_vin_dcdc : 1; /**< [bit1] DCDC 输出异常 */
-        uint8_t err_12v_int : 1; /**< [bit2] 内部 12V 电源轨异常 */
-        uint8_t err_5v_int : 1; /**< [bit3] 内部 5V 电源轨异常 */
-        uint8_t err_12v_ext : 1; /**< [bit4] 外部 12V 输出异常 */
-        uint8_t err_24v_ext : 1; /**< [bit5] 外部 24V 输出异常 */
-        uint8_t err_12v_user : 1; /**< [bit6] 用户 12V 输出异常 */
-        uint8_t err_24v_user : 1; /**< [bit7] 用户 24V 输出异常 */
-        /* === byte2: 输出电源错误 === */
-        uint8_t err_24v_comp : 1; /**< [bit0] 工控机 24V 输出异常 */
-        uint8_t err_power : 1; /**< [bit1] 从板电源异常（SLAVE_POWER） */
-        uint8_t err_motor : 1; /**< [bit2] 电机电源异常 */
-        uint8_t err_chg_out : 1; /**< [bit3] 预充电异常（Pre-charge fault） */
-        uint8_t err_hsd1_12v : 1; /**< [bit4] HSD1 12V 通道异常 */
-        uint8_t err_hsd2_12v : 1; /**< [bit5] HSD2 12V 通道异常 */
-        uint8_t err_hsd3_12v : 1; /**< [bit6] HSD3 12V 通道异常 */
-        uint8_t err_dbr : 1; /**< [bit7] 制动电阻异常（DBR overcurrent 等） */
-        /* === byte3: HSD-24V / LSD / 风扇错误 === */
-        uint8_t err_hsd1_24v : 1; /**< [bit0] HSD1 24V 通道异常 */
-        uint8_t err_hsd2_24v : 1; /**< [bit1] HSD2 24V 通道异常 */
-        uint8_t err_hsd3_24v : 1; /**< [bit2] HSD3 24V 通道异常 */
-        uint8_t err_lsd1_24v : 1; /**< [bit3] LSD1 24V 通道异常 */
-        uint8_t err_lsd2_24v : 1; /**< [bit4] LSD2 24V 通道异常 */
-        uint8_t err_fan0 : 1; /**< [bit5] 风扇0 异常 */
-        uint8_t err_fan1 : 1; /**< [bit6] 风扇1 异常 */
-        uint8_t byte3_fixed1 : 1; /**< [bit7] 协议固定为 1 */
-        /* === byte4: NTC 温度异常（8 路） === */
-        uint8_t err_ntc0 : 1; /**< [bit0] NTC0 温度超限 */
-        uint8_t err_ntc1 : 1; /**< [bit1] NTC1 温度超限 */
-        uint8_t err_ntc2 : 1; /**< [bit2] NTC2 温度超限 */
-        uint8_t err_ntc3 : 1; /**< [bit3] NTC3 温度超限 */
-        uint8_t err_ntc4 : 1; /**< [bit4] NTC4 温度超限 */
-        uint8_t err_ntc5 : 1; /**< [bit5] NTC5 温度超限 */
-        uint8_t err_ntc6 : 1; /**< [bit6] NTC6 温度超限 */
-        uint8_t err_ntc7 : 1; /**< [bit7] NTC7 温度超限 */
-        /* === byte5: 模拟输入 + 上电时序故障 === */
-        uint8_t a_in1_io : 1; /**< [bit0] A_IN1_IO 模拟输入 */
-        uint8_t a_in2_io : 1; /**< [bit1] A_IN2_IO 模拟输入 */
-        uint8_t a_in3_io : 1; /**< [bit2] A_IN3_IO 模拟输入 */
-        uint8_t seq_vin_fault : 1; /**< [bit3] VIN_DCDC 上电时序故障 */
-        uint8_t seq_chg_fault : 1; /**< [bit4] 预充电时序故障 */
-        uint8_t seq_motor_fault : 1; /**< [bit5] 电机上电时序故障 */
-        uint8_t byte5_reserved : 2; /**< [bit6~7] 保留 */
-        /* === byte6-7: 电池简略信息 === */
-        uint8_t bat1_soc; /**< [Byte6] 电池1 SOC（0-100%） */
-        uint8_t bat2_soc; /**< [Byte7] 电池2 SOC（0-100%），0=无电池2 */
+        /* === byte0: 急停 + 电源/输出异常 === */
+        uint8_t stop_key_state : 1; /**< [bit0] 急停：0=释放, 1=按下 */
+        uint8_t err_12v_ext : 1; /**< [bit1] 外部 12V 输出异常 */
+        uint8_t err_24v_ext : 1; /**< [bit2] 外部 24V 输出异常 */
+        uint8_t err_24v_computer : 1; /**< [bit3] 工控机 24V 输出异常 */
+        uint8_t err_aux_power : 1; /**< [bit4] 辅电电源异常（AUX PGD） */
+        uint8_t err_motor_power : 1; /**< [bit5] 电机电源异常（MOTOR PGD） */
+        uint8_t err_chg_out : 1; /**< [bit6] 预充电异常（CHG OCP） */
+        uint8_t err_hsd_fault : 1; /**< [bit7] HSD公用通道异常 */
+        /* === byte1: 制动/模拟输入/风扇 === */
+        uint8_t err_dbr : 1; /**< [bit0] 制动电阻过流（DBR OCP） */
+        uint8_t a_in1_io : 1; /**< [bit1] A_IN1_IO 模拟输入 */
+        uint8_t a_in2_io : 1; /**< [bit2] A_IN2_IO 模拟输入 */
+        uint8_t a_in3_io : 1; /**< [bit3] A_IN3_IO 模拟输入 */
+        uint8_t err_fan0 : 1; /**< [bit4] 风扇0 异常 */
+        uint8_t err_fan1 : 1; /**< [bit5] 风扇1 异常 */
+        uint8_t err_ntc1 : 1; /**< [bit6] ntc1 未连接 */
+        uint8_t err_ntc2 : 1; /**< [bit7] ntc2 未连接 */
     } bits;
-    uint8_t bytes[8]; /**< 原始字节视图（0x001 帧 Byte0-7） */
+
+    uint8_t bytes[2]; /**< 原始字节视图（0x001 帧 Byte0-7） */
 } srv_can_mst_status_frame_t;
 
 /**
- * @brief 单电池上报参数（双电池各自持有实例）
- *
- * 仅承载电池帧数据（0x011-0x015），与 0x001 状态帧的 SOC 位域分开。
+ * @brief 0x011 温度帧视图（NTC/MCU 温度，8 字节）
  */
-typedef struct {
-    /* 核心参数（2×uint16 先占 4B，使紧随的 uint32 对齐到 4 无需填充） */
-    uint16_t voltage_dv; /**< 电池电压 (0.1V), e.g. 480=48.0V */
-    int16_t current_da; /**< 电池电流 (0.1A, 正=放电) */
-    /* 版本信息 */
-    uint32_t capacity_mah; /**< 设计容量 (mAh) */
-    uint16_t cycle_count; /**< 循环次数 */
-    uint16_t hw_version; /**< 硬件版本 */
-    uint16_t sw_version; /**< 软件版本 */
-    /* 单字节字段收尾 */
-    int8_t temp_c; /**< 电芯温度 (°C) */
-    bool charging; /**< 充电中 */
-} srv_can_mst_bat_t; /* sizeof = 16B（重排消除 4B 填充，无需 packed） */
+typedef union {
+    struct __attribute__((packed)) {
+        int16_t ntc1_temp_x100; /**< [Byte0-1] NTC1 温度 (°C×100, int16 LE) */
+        int16_t ntc2_temp_x100; /**< [Byte2-3] NTC2 温度 (°C×100, int16 LE) */
+        int16_t mcu_temp_x100; /**< [Byte4-5] MCU 温度 (°C×100, int16 LE) */
+        uint8_t reserved[2]; /**< [Byte6-7] 保留 */
+    } data;
+    uint8_t bytes[8]; /**< 原始字节视图 */
+} srv_can_mst_volt_temp_frame_t;
+
+/**
+ * @brief 0x012 电源电压+预充故障帧视图（8 字节）
+ */
+typedef union {
+    struct __attribute__((packed)) {
+        uint16_t vin_mv; /**< [Byte0-1] 主输入电压 (mV, uint16 LE) */
+        uint16_t motor_power_mv; /**< [Byte2-3] 电机电源电压 (mV, uint16 LE) */
+        uint16_t aux_power_mv; /**< [Byte4-5] 辅助电源电压 (mV, uint16 LE) */
+        uint8_t precharge_fault; /**< [Byte6] 电机预充故障码：0=无,1=短路,2=未接负载 */
+        uint8_t byte7_reserved; /**< [Byte7] 保留 */
+    } data;
+    uint8_t bytes[8]; /**< 原始字节视图 */
+} srv_can_mst_power_fault_frame_t;
 
 /**
  * @brief 上报数据体 — 对应 CAN 帧 0x001 及电池帧
@@ -174,15 +122,13 @@ typedef struct {
  * （偏移由 srv_can_mst.c 内 offsetof 静态断言保障）。
  */
 typedef struct {
-    /* === 0x001 帧 Byte0-7: 系统运行/电源轨/输出/风扇/NTC/模拟输入 + 双电池 SOC === */
-    srv_can_mst_status_frame_t status; /**< 0x001 状态帧（写入 .bits 成员） */
-
-    /* === 电池帧数据 (0x011-0x015) — 双电池核心参数 === */
-    srv_can_mst_bat_t bat1; /**< 电池1 上报参数 */
-    srv_can_mst_bat_t bat2; /**< 电池2 上报参数 */
-    /* 电池故障码（两电池故障结构不同，保持独立类型） */
-    srv_can_dual_fault_bat1_t bat1_fault; /**< 电池1 故障详情 */
-    srv_can_dual_fault_bat2_t bat2_fault; /**< 电池2 故障详情 */
+    /* === 0x010 帧 Byte0-1: 急停/电源/输出/制动/模拟输入/风扇/NTC 连接状态 === */
+    srv_can_mst_status_frame_t status; /**< 0x010 状态帧（写入 .bits 成员） */
+    /** add 电池状态数据和故障码 */
+    /* === 0x011 帧: NTC/MCU 温度 === */
+    srv_can_mst_volt_temp_frame_t volt_temp; /**< 0x011 温度帧 */
+    /* === 0x012 帧: 电源电压 + 电机预充故障 === */
+    srv_can_mst_power_fault_frame_t power_fault; /**< 0x012 电压+预充故障帧 */
 } srv_can_mst_data_t;
 
 /**
@@ -220,14 +166,17 @@ typedef struct {
 } srv_can_mst_config_t;
 
 /**
- * @brief 主机下发的控制指令（从 0x001 RX 控制帧解析，3 字节，不含 LED）
+ * @brief 主机下发的控制指令（从 0x001 RX 控制帧解析，6 字节，含 LED RGB）
  */
 typedef struct {
-    uint8_t feedback_select; /**< 反馈请求位掩码 (Byte0) */
-    uint8_t buzzer_duty; /**< 蜂鸣器占空比 0-50 (Byte1) */
-    bool hsd1_12v_on; /**< HSD1 12V 输出：1=开, 0=关 (Byte2 bit4，bit5 有效) */
-    bool hsd1_24v_on; /**< HSD1 24V 输出：1=开, 0=关 (Byte2 bit2，bit3 有效) */
-    bool hsd2_24v_on; /**< HSD2 24V 输出：1=开, 0=关 (Byte2 bit0，bit1 有效) */
+    uint8_t buzzer_duty; /**< 蜂鸣器占空比 0-50 (Byte0) */
+    bool hsd1_12v_on; /**< HSD1 12V 输出：1=开, 0=关 (Byte1 bit4，bit5 有效) */
+    bool hsd1_24v_on; /**< HSD1 24V 输出：1=开, 0=关 (Byte1 bit2，bit3 有效) */
+    bool hsd2_24v_on; /**< HSD2 24V 输出：1=开, 0=关 (Byte1 bit0，bit1 有效) */
+    uint8_t led_index; /**< LED 索引 (Byte2)：0-31=通道1(RGB1), 32-63=通道2(RGB2) */
+    uint8_t led_r; /**< LED 红亮度 (Byte3) */
+    uint8_t led_g; /**< LED 绿亮度 (Byte4) */
+    uint8_t led_b; /**< LED 蓝亮度 (Byte5) */
 } srv_can_mst_cmd_t;
 
 /**

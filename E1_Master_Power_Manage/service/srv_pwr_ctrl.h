@@ -53,6 +53,12 @@ bool srv_pwr_ctrl_is_aux_enabled(void);
  */
 bool srv_pwr_ctrl_is_motor_enabled(void);
 
+/**
+ * @brief 读取电机预充电故障码
+ * @return 0=无故障, 1=后级短路 (SHORT_CIRCUIT), 2=未接负载/上电故障 (NO_LOAD)
+ */
+uint8_t srv_pwr_ctrl_get_precharge_fault(void);
+
 #ifdef __cplusplus
 }
 #endif

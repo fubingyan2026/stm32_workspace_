@@ -127,7 +127,7 @@ typedef struct {
     bool power_on_requested;
     uint16_t steady_ms;
     bool precharge_off_done; /**< MOTOR 态是否已完成预充电移交关闭 */
-    bool aux_en;   /**< AUX_POWER_EN 驱动状态（PGD 判定门控） */
+    bool aux_en; /**< AUX_POWER_EN 驱动状态（PGD 判定门控） */
     bool motor_en; /**< MOTOR_POWER_EN 驱动状态（PGD 判定门控） */
 } power_ctrl_ctx_t;
 
@@ -250,8 +250,6 @@ void srv_pwr_ctrl_step(uint16_t elapsed_ms)
     /* 2. 电源 FSM 步进 */
     s_ctx.steady_ms += elapsed_ms;
     fsm_step(&s_fsm);
-
-    // drv_power_set(DRV_POWER_RAIL_DC_DC_EN, true);
 }
 
 void srv_pwr_ctrl_request_on(void)
@@ -295,6 +293,11 @@ bool srv_pwr_ctrl_is_aux_enabled(void)
 bool srv_pwr_ctrl_is_motor_enabled(void)
 {
     return s_ctx.motor_en;
+}
+
+uint8_t srv_pwr_ctrl_get_precharge_fault(void)
+{
+    return (uint8_t)s_precharge.fault;
 }
 
 /* Private functions ---------------------------------------------------------*/
@@ -369,7 +372,8 @@ static fsm_state_t pwr_state_motor(fsm_t* ctx)
 
     /* 移交完成且母线稳定后进入 DONE */
     return (p->precharge_off_done && p->steady_ms >= STEADY_TIME_MS)
-        ? PWR_STATE_DONE : PWR_STATE_MOTOR;
+        ? PWR_STATE_DONE
+        : PWR_STATE_MOTOR;
 }
 
 static fsm_state_t pwr_state_done(fsm_t* ctx)
@@ -393,6 +397,8 @@ static void pwr_entry_cb(fsm_t* ctx, fsm_state_t state)
         p->aux_en = true;
         drv_power_set(DRV_POWER_RAIL_DC_DC_EN, true);
         drv_power_set(DRV_POWER_RAIL_AUX_EN, true);
+        drv_power_set(DRV_POWER_RAIL_DBR_LSD_EN, false);
+
         break;
     case PWR_STATE_PRECHARGE:
         /* 启动预充电软启动（内部先复位清锁存再 start） */
@@ -408,6 +414,8 @@ static void pwr_entry_cb(fsm_t* ctx, fsm_state_t state)
         drv_power_set(DRV_POWER_RAIL_HSD1_12V, true);
         drv_power_set(DRV_POWER_RAIL_HSD1_24V, true);
         drv_power_set(DRV_POWER_RAIL_HSD2_24V, true);
+        drv_power_set(DRV_POWER_RAIL_DBR_LSD_EN, true);
+
         /* 预充电保持导通，等母线抬到接近 VIN 后再关闭（见 pwr_state_motor） */
         break;
     default:

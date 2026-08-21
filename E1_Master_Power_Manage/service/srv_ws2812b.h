@@ -40,7 +40,7 @@ void srv_ws2812b_step(uint16_t elapsed_ms);
 void srv_ws2812b_set_auto(bool on);
 
 /**
- * @brief 设置单个 LED 颜色（0x004 CAN RGB 输出控制帧）
+ * @brief 设置单个 LED 颜色（0x001 控制帧 LED RGB 字段）
  * @param index LED 索引：0-31=通道1(RGB1/SPI1), 32-63=通道2(RGB2/SPI3)
  * @param r,g,b RGB 亮度 (0-255)
  * @return 0=成功；非 0=索引越界（超过对应通道 LED 数）

@@ -13,7 +13,7 @@
  * - 当前监控两台设备：
  *   - SRV_DEVICE_SLAVER：副电源管理控制板（0x002 ACK 即心跳）
  *   - SRV_DEVICE_DUAL：双电池控制板（0x200/0x201/0x202 即心跳）
- * - 供 app_status_report 填充 0x001 状态帧的 device_online_* 位
+ * - 供上层（app_status_report / 指示灯策略）查询在线状态
  *
  * ## 用法
  * @code

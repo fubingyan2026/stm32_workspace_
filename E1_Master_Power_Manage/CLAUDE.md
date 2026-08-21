@@ -140,19 +140,18 @@ A single CAN peripheral (CAN1) multiplexes three service layers. The RX callback
 
 | CAN ID | Direction | Service | Purpose |
 |--------|-----------|---------|---------|
-| `0x001` (len=3) | Host ↔ Board | `srv_can_mst` | Host control commands (RX) + system status reports (TX) |
-| `0x004` (len=8) | Host → Board | `can_task` | RGB output control (2× LED index + RGB brightness) → `srv_ws2812b_set_pixel` (snapshot in ISR, applied in main loop; stops comet animation) |
+| `0x001` (len=6) | Host → Board | `srv_can_mst` | Host control commands (RX): buzzer duty + HSD outputs + LED RGB (`led_index` selects channel) — board status reports now on 0x010/0x011/0x012 (TX) |
 | `0x003` (len=1) | Host → Board | `can_task` | Request to enter upgrade mode → `srv_boot_ctrl_request_boot()` (ISR sets flag, main loop applies). The host tool **sends it directly** to trigger upgrade (harmless if the board is already in Boot — Boot ignores it), then waits for the Boot heartbeat beacon (`0x702`, payload cmd `0x09`, `hw_id` check) to confirm entry — see [docs/boot_upgrade.md](docs/boot_upgrade.md) |
 | `0x002` | Board ↔ Slave | `srv_can_slv` | Slave power board control + ACK handshake (50ms retry) |
 | `0x200` | Battery → Board | `srv_can_dual` | Dual battery core dynamic data (100ms MUX) |
 | `0x201` | Battery → Board | `srv_can_dual` | Battery info frames (capacity, version — request/response) |
 | `0x202` | Battery → Board | `srv_can_dual` | Battery detailed fault frames |
 
-In `can_rx_callback`: `0x003`+len=1 → set `s_enter_boot_requested` flag (consumed by `can_timer_cb` → `srv_boot_ctrl_request_boot`); `0x001`+len=3 → `srv_can_mst_process_rx`; `0x004`+len≥4 → snapshot RGB pending (applied by `can_timer_cb` via `srv_ws2812b_set_pixel`); every other ID falls through to `srv_can_slv_process_rx` then `srv_can_dual_process_rx` (each service ignores frames it doesn't own).
+In `can_rx_callback`: `0x003`+len=1 → set `s_enter_boot_requested` flag (consumed by `can_timer_cb` → `srv_boot_ctrl_request_boot`); `0x001`+len=6 → `srv_can_mst_process_rx` (control frame carrying buzzer/HSD/LED RGB; the LED part is applied by `can_timer_cb` via `srv_ws2812b_set_pixel`); every other ID falls through to `srv_can_slv_process_rx` then `srv_can_dual_process_rx` (each service ignores frames it doesn't own).
 
 ### TX flow
 
-- **`srv_can_mst`**: `app_status_report_fill` ([app_status_report.c](applications/app_status_report.c)) packs board status (power faults, E-STOP, fan faults, dual-battery snapshot) into `srv_can_mst_data_t`. The 0x001 status frame is a **packed bitfield union** (`srv_can_mst_status_frame_t`), so frame building is one `memcpy` (field layout is GCC-little-endian — `srv_can_mst_init` runs a layout self-check); battery data rides continuous TX IDs 0x011–0x015 (capacity/cycles, voltage+current, HW/SW version, faults, temp+fault-level), merged from 7→5 frames in the recent refactor. Queued via `msg_fifo`, one frame per task tick (pending-frame retry when TX busy), with a 100ms periodic `srv_can_mst_request(0x00)` (status frame only; battery frames on-demand from host via `feedback_select` bitmask, bit0–4 = frames 0x011–0x015).
+- **`srv_can_mst`**: `app_status_report_fill` ([app_status_report.c](applications/app_status_report.c)) packs board status (E-STOP, rail/HSD/DBR faults, analog inputs, fan faults, NTC connection) into `srv_can_mst_data_t`. The 0x010 status frame is a **packed bitfield union** (`srv_can_mst_status_frame_t`, 2 bytes: byte0 system state + rail/HSD faults, byte1 DBR + analog inputs + fan faults + NTC connection); frame building is one `memcpy` (field layout is GCC-little-endian — `srv_can_mst_init` runs a layout self-check). Two always-sent companion frames with consecutive IDs: 0x011 (NTC1/NTC2/MCU temps, `srv_can_mst_data_t.volt_temp`) and 0x012 (VIN/motor/aux voltages + precharge fault, `srv_can_mst_data_t.power_fault`). Queued via `msg_fifo`, one frame per task tick (pending-frame retry when TX busy), with a 100ms periodic `srv_can_mst_request(0x00)` sending 0x010 + 0x011 + 0x012.
 - **`srv_can_slv`**: sends 0x002 control frame, waits for ACK (50ms timeout with retry). `can_task` polls it every 100ms as a slave liveness probe (the ACK, 0x002 len=8, feeds `srv_device_monitor`'s slaver watchdog); ACK → `SLAVE_ACKED` → auto-reset to `SLAVE_IDLE` in `srv_can_slv_task()` so the next poll can fire.
 - **`srv_can_dual`**: parses incoming battery data into `srv_can_dual_data_t` snapshot; `srv_can_dual_get_snapshot()` provides lock-free read access.
 

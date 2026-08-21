@@ -16,7 +16,6 @@
 #include "drv_systick.h"
 #include "log.h"
 #include "srv_boot_ctrl.h"
-#include "srv_can_dual.h"
 #include "srv_can_mst.h"
 #include "srv_can_slv.h"
 #include "srv_device_monitor.h"
@@ -59,10 +58,6 @@
 #define BOOT_REQUEST_LEN (1U)
 #define BOOT_REQUEST_MAGIC (0x01U)
 
-/** @brief RGB 输出控制帧（主机 → 板卡，8 字节：每灯 4 字节 = index + RGB，一帧控 2 灯） */
-#define CAN_RGB_CTRL_ID (0x004U)
-#define CAN_RGB_CTRL_LEN (8U)
-
 /* Private variables ---------------------------------------------------------*/
 
 static sw_timer_t s_timer;
@@ -77,21 +72,8 @@ static srv_can_slv_ctrl_t s_slave_ctrl;
 /** @brief 收到 0x003 进 boot 命令标志（ISR 置位，主循环 can_timer_cb 消费） */
 static volatile bool s_enter_boot_requested;
 
-/** @brief 0x004 单灯控制数据（每灯 4 字节：索引 + RGB 亮度） */
-typedef struct {
-    uint8_t index; /**< LED 索引：0-31=通道1, 32-63=通道2 */
-    uint8_t r; /**< 红亮度 */
-    uint8_t g; /**< 绿亮度 */
-    uint8_t b; /**< 蓝亮度 */
-} can_rgb_pixel_t;
-
-/** @brief 收到 0x004 RGB 控制帧快照（一帧两灯，ISR 仅存数据，主循环 can_timer_cb 应用） */
-typedef struct {
-    can_rgb_pixel_t led[2]; /**< 两个 LED 控制块 */
-    bool valid; /**< 有待应用命令 */
-} can_rgb_pending_t;
-
-static can_rgb_pending_t s_rgb_pending;
+/** @brief 收到 0x001 控制帧标志（ISR 置位；主循环应用其中携带的 LED RGB） */
+static volatile bool s_ctrl_new;
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -127,10 +109,6 @@ void can_task_init(void)
         .get_ctrl = can_read_slave_ctrl,
     };
     srv_can_slv_init(&slaver_cfg);
-
-    /* 双电池协议解析 */
-    const srv_can_dual_config_t dual_cfg = { .send_frame = can_send_frame };
-    srv_can_dual_init(&dual_cfg);
 
     /* 设备在线监控（daemon 封装；心跳喂狗点见 can_rx_callback） */
     srv_device_monitor_init(NULL);
@@ -169,18 +147,14 @@ static void can_timer_cb(void* user_data)
         }
     }
 
-    /* 应用 0x004 RGB 控制命令（主循环上下文，避免 ISR 内驱动 SPI DMA；一帧控 2 灯） */
-    if (s_rgb_pending.valid) {
-        s_rgb_pending.valid = false;
-        int err = srv_ws2812b_set_pixel(s_rgb_pending.led[0].index,
-            s_rgb_pending.led[0].r, s_rgb_pending.led[0].g, s_rgb_pending.led[0].b);
-        if (err == 0) {
-            err = srv_ws2812b_set_pixel(s_rgb_pending.led[1].index,
-                s_rgb_pending.led[1].r, s_rgb_pending.led[1].g, s_rgb_pending.led[1].b);
-        }
-        if (err != 0) {
-            CAN_TASK_LOG_W("RGB 控制应用失败: idx=%u",
-                (unsigned)s_rgb_pending.led[0].index);
+    /* 应用 0x001 控制帧携带的 LED RGB 命令（主循环上下文，避免 ISR 内驱动 SPI DMA） */
+    if (s_ctrl_new) {
+        s_ctrl_new = false;
+        const srv_can_mst_cmd_t* cmd = srv_can_mst_get_cmd();
+        if (cmd
+            && srv_ws2812b_set_pixel(cmd->led_index,
+                cmd->led_r, cmd->led_g, cmd->led_b) != 0) {
+            CAN_TASK_LOG_W("LED 控制应用失败: idx=%u", (unsigned)cmd->led_index);
         }
     }
 
@@ -192,7 +166,7 @@ static void can_timer_cb(void* user_data)
     s_report_ms += TASK_PERIOD_MS;
     if (s_report_ms >= REPORT_INTERVAL_MS) {
         s_report_ms = 0;
-        srv_can_mst_request(0x00); /* 仅发送 0x001 状态帧，电池帧按需由主机触发 */
+        srv_can_mst_request(0x00); /* 周期上报 0x010/0x011/0x012 三帧 */
     }
 
     /* 周期从板存活探测：发送 0x002，ACK 到达即喂狗判在线 */
@@ -256,37 +230,17 @@ static void can_rx_callback(drv_can_channel_t ch, const drv_can_msg_t* msg)
         return;
     }
 
-    /* 主机控制指令解析（0x001, len=3） */
-    if (msg->id == 0x001 && msg->dlc == 3) {
+    /* 主机控制指令解析（0x001, len=6，含 LED RGB）：ISR 解析，LED 由主循环 can_timer_cb 应用 */
+    if (msg->id == 0x001 && msg->dlc == 6) {
         srv_can_mst_process_rx(msg->data, msg->dlc);
-        return;
-    }
-
-    /* RGB 输出控制帧（0x004, len=8，一帧控 2 灯，每灯 4 字节）：ISR 仅快照，主循环 can_timer_cb 应用 */
-    if (msg->id == CAN_RGB_CTRL_ID && msg->dlc == CAN_RGB_CTRL_LEN) {
-        s_rgb_pending.led[0].index = msg->data[0];
-        s_rgb_pending.led[0].r = msg->data[1];
-        s_rgb_pending.led[0].g = msg->data[2];
-        s_rgb_pending.led[0].b = msg->data[3];
-        s_rgb_pending.led[1].index = msg->data[4];
-        s_rgb_pending.led[1].r = msg->data[5];
-        s_rgb_pending.led[1].g = msg->data[6];
-        s_rgb_pending.led[1].b = msg->data[7];
-        s_rgb_pending.valid = true;
+        s_ctrl_new = true;
         return;
     }
 
     /* 设备在线喂狗（ISR 安全：daemon_reload 仅时间戳更新） */
     if (msg->id == SRV_CAN_SLV_ID_CTRL && msg->dlc == SRV_CAN_SLV_ACK_LEN) {
         srv_device_monitor_feed(SRV_DEVICE_SLAVER);
-    } else if (msg->id == SRV_CAN_DUAL_ID_CORE || msg->id == SRV_CAN_DUAL_ID_INFO
-        || msg->id == SRV_CAN_DUAL_ID_FAULT) {
-        srv_device_monitor_feed(SRV_DEVICE_DUAL);
     }
-
     /* 从板控制 ACK 处理（0x002） */
     srv_can_slv_process_rx(msg->id, msg->data, msg->dlc);
-
-    /* 双电池上报解析（0x200/0x201/0x202） */
-    srv_can_dual_process_rx(msg->id, msg->data, msg->dlc);
 }

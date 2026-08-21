@@ -48,6 +48,12 @@ static void fault_policy_log_reasons(const srv_pwr_det_status_t* st);
 void app_fault_policy_init(void)
 {
     s_tripped = false;
+    srv_pwr_det_status_t st;
+    srv_pwr_det_read(&st);
+    if (!st.estop_on) {
+        app_fault_policy_reset();
+        srv_pwr_ctrl_request_on();
+    }
 }
 
 void app_fault_policy_step(uint16_t elapsed_ms)
