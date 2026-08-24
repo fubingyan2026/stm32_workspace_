@@ -9,6 +9,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "srv_fan_ctrl.h"
 
+#include "stdlib.h"
 #include <string.h>
 
 #include "drv_fan.h"
@@ -20,13 +21,13 @@
 /* 模块日志开关 ----------------------------------------------------------------*/
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
-#define SRV_FAN_CTRL_LOG_ENABLE 0
+#define SRV_FAN_CTRL_LOG_ENABLE 1
 
 #if SRV_FAN_CTRL_LOG_ENABLE
 #define SRV_FAN_CTRL_LOG_E(...) LOG_E("srv_fan_ctrl", __VA_ARGS__)
 #define SRV_FAN_CTRL_LOG_W(...) LOG_W("srv_fan_ctrl", __VA_ARGS__)
 #define SRV_FAN_CTRL_LOG_I(...) LOG_I("srv_fan_ctrl", __VA_ARGS__)
-#define SRV_FAN_CTRL_LOG_D(...) LOG_D("srv_fan_ctrl", __VA_ARGS__)
+#define SRV_FAN_CTRL_LOG_D(...) ((void)0) // LOG_D("srv_fan_ctrl", __VA_ARGS__)
 #else
 #define SRV_FAN_CTRL_LOG_E(...) ((void)0)
 #define SRV_FAN_CTRL_LOG_W(...) ((void)0)
@@ -45,10 +46,10 @@
 #define TEMP_START_C (4000) /**< 起转温度 (0.01°C) = 40°C */
 #define TEMP_STOP_C (3800) /**< 停转温度 (0.01°C) = 38°C (迟滞) */
 #define TEMP_FULL_C (6500) /**< 满速温度 (0.01°C) = 65°C */
-#define DUTY_MIN (20U) /**< 最低占空比 (防止低速无法启动) */
+#define DUTY_MIN (25U) /**< 最低占空比 (防止低速无法启动) */
 #define RPM_FILTER_CUTOFF_HZ (5U) /**< RPM 低通截止频率 (Hz), < Nyquist=5Hz */
 #define RPM_SAMPLE_RATE_HZ (10U) /**< RPM 采样率 (Hz), 100ms 周期 */
-
+#define FAN_DEFAULT_DUTY (85U) /** 风扇默认占空比 */
 /* FSM 状态 -----------------------------------------------------------------*/
 
 /**
@@ -314,6 +315,10 @@ static fsm_state_t fan_state_fault(fsm_t* ctx)
  */
 static void fan_apply_temp_duty(fan_ctrl_t* f)
 {
+    if (!s_temp_read) {
+        f->duty = FAN_DEFAULT_DUTY;
+    }
+
     if (f->auto_mode && s_temp_read) {
         f->duty = temp_to_duty(s_temp_read(f->id));
     }
@@ -335,7 +340,7 @@ static void fan_apply_temp_duty(fan_ctrl_t* f)
 static uint8_t temp_to_duty(int16_t temp_centi)
 {
     if (temp_centi >= TEMP_FULL_C) {
-        return 100;
+        return FAN_DEFAULT_DUTY;
     }
 
     if (temp_centi <= TEMP_STOP_C) {

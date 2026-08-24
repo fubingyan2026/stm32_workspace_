@@ -6,7 +6,7 @@
 
 /**
  * @file    can_task.c
- * @brief   CAN 通信任务 — 主机上报 + 从板控制 + RX 接收
+ * @brief   CAN 通信任务 — 主机上报 + RX 接收
  */
 
 #include "can_task.h"
@@ -17,8 +17,6 @@
 #include "log.h"
 #include "srv_boot_ctrl.h"
 #include "srv_can_mst.h"
-#include "srv_can_slv.h"
-#include "srv_device_monitor.h"
 #include "srv_pwr_det.h"
 #include "srv_ws2812b.h"
 #include "sw_timer.h"
@@ -47,9 +45,6 @@
 #define TASK_PERIOD_MS (10U)
 #define REPORT_INTERVAL_MS (100U)
 
-/** @brief 从板存活探测间隔 (ms)：周期发 0x002，ACK 到达即在线 */
-#define SLAVE_POLL_PERIOD_MS (100U)
-
 /** @brief CAN TX/RX 日志限频窗口 (ms)：总线繁忙时防止刷屏 */
 #define CAN_TASK_ERR_LOG_PERIOD_MS (1000U)
 
@@ -62,12 +57,8 @@
 
 static sw_timer_t s_timer;
 static uint16_t s_report_ms;
-static uint16_t s_slave_poll_ms;
 static uint32_t s_tx_err_log_ts;
 static uint32_t s_rx_log_ts;
-
-/** @brief 当前从板控制状态（由外部通过 can_task_set_slave_ctrl 设置） */
-static srv_can_slv_ctrl_t s_slave_ctrl;
 
 /** @brief 收到 0x003 进 boot 命令标志（ISR 置位，主循环 can_timer_cb 消费） */
 static volatile bool s_enter_boot_requested;
@@ -80,7 +71,6 @@ static volatile bool s_ctrl_new;
 static void can_timer_cb(void* user_data);
 
 static bool can_send_frame(uint16_t can_id, const uint8_t* data, uint8_t len);
-static void can_read_slave_ctrl(srv_can_slv_ctrl_t* ctrl);
 static void can_rx_callback(drv_can_channel_t ch, const drv_can_msg_t* msg);
 
 /* Exported functions --------------------------------------------------------*/
@@ -92,8 +82,6 @@ void can_task_init(void)
         CAN_TASK_LOG_E("CAN 驱动初始化失败 (err=%d)", (int)can_err);
     }
 
-    memset(&s_slave_ctrl, 0, sizeof(s_slave_ctrl));
-
     srv_pwr_det_init();
 
     /* 主机上报服务（read_data 由应用层 app_status_report 聚合填充） */
@@ -103,21 +91,10 @@ void can_task_init(void)
     };
     srv_can_mst_init(&master_cfg);
 
-    /* 从板控制服务 */
-    const srv_can_slv_config_t slaver_cfg = {
-        .send_frame = can_send_frame,
-        .get_ctrl = can_read_slave_ctrl,
-    };
-    srv_can_slv_init(&slaver_cfg);
-
-    /* 设备在线监控（daemon 封装；心跳喂狗点见 can_rx_callback） */
-    srv_device_monitor_init(NULL);
-
     /* 注册 CAN 接收回调 */
     drv_can_register_rx_callback(DRV_CAN_CH_1, can_rx_callback);
 
     s_report_ms = 0;
-    s_slave_poll_ms = 0;
 
     const sw_timer_config_t timer_cfg = {
         .priority = SW_TIMER_PRIO_NORMAL,
@@ -159,21 +136,12 @@ static void can_timer_cb(void* user_data)
     }
 
     srv_can_mst_task();
-    srv_can_slv_task();
-    srv_device_monitor_step();
 
     /* 周期触发主机上报 */
     s_report_ms += TASK_PERIOD_MS;
     if (s_report_ms >= REPORT_INTERVAL_MS) {
         s_report_ms = 0;
         srv_can_mst_request(0x00); /* 周期上报 0x010/0x011/0x012 三帧 */
-    }
-
-    /* 周期从板存活探测：发送 0x002，ACK 到达即喂狗判在线 */
-    s_slave_poll_ms += TASK_PERIOD_MS;
-    if (s_slave_poll_ms >= SLAVE_POLL_PERIOD_MS) {
-        s_slave_poll_ms = 0;
-        srv_can_slv_request();
     }
 }
 
@@ -196,13 +164,6 @@ static bool can_send_frame(uint16_t can_id, const uint8_t* data, uint8_t len)
     memcpy(msg.data, data, len);
 
     return drv_can_send(DRV_CAN_CH_1, &msg) == DRV_CAN_OK;
-}
-
-static void can_read_slave_ctrl(srv_can_slv_ctrl_t* ctrl)
-{
-    if (!ctrl)
-        return;
-    *ctrl = s_slave_ctrl;
 }
 
 /* --- CAN RX 回调 --- */
@@ -236,11 +197,4 @@ static void can_rx_callback(drv_can_channel_t ch, const drv_can_msg_t* msg)
         s_ctrl_new = true;
         return;
     }
-
-    /* 设备在线喂狗（ISR 安全：daemon_reload 仅时间戳更新） */
-    if (msg->id == SRV_CAN_SLV_ID_CTRL && msg->dlc == SRV_CAN_SLV_ACK_LEN) {
-        srv_device_monitor_feed(SRV_DEVICE_SLAVER);
-    }
-    /* 从板控制 ACK 处理（0x002） */
-    srv_can_slv_process_rx(msg->id, msg->data, msg->dlc);
 }

@@ -19,7 +19,7 @@
 /* 模块日志开关 ----------------------------------------------------------------*/
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
-#define SRV_ADC_LOG_ENABLE 0
+#define SRV_ADC_LOG_ENABLE 1
 
 #if SRV_ADC_LOG_ENABLE
 #define SRV_ADC_LOG_E(...) LOG_E("srv_adc", __VA_ARGS__)
@@ -54,6 +54,13 @@
 #define SRV_ADC_AIN_CH_MIN (1U) /**< A_IN1_IO 对应 CD4051B 起始通道 (Y1) */
 #define SRV_ADC_AIN_CH_MAX (SRV_ADC_AIN_CH_MIN + SRV_ADC_AIN_NUM - 1U) /**< A_IN3_IO 对应 CD4051B 结束通道 (Y3) */
 #define SRV_ADC_AIN_HIGH_RAW (2048U) /**< A_INx_IO 逻辑高判定阈值（12-bit，≈50% VDDA ≈ 1.65V），按分压实际调整 */
+
+/** @brief 12-bit ADC 满量程原始值 */
+#define SRV_ADC_RAW_MAX (4095U)
+
+/** @brief E-STOP 双通道冗余容差（raw，12-bit）：偏差落在 0 附近或满量程(4095)附近均为正常，
+ *        仅当偏差处于中间区间（两路既不一致也不互补）才判冗余通道失效/线缆异常 */
+#define SRV_ADC_ESTOP_REDUND_TOL_RAW (256U)
 
 /* 外部电压分压比 */
 #define ADC_SCALE_VIN (31.0f)
@@ -282,11 +289,11 @@ void srv_adc_step(void)
         //         (unsigned)s_ts_cal1, (unsigned)s_ts_cal2);
         // }
 
-        SRV_ADC_LOG_D("ADC测试:vdda(inter)=%umV,vin=%umV,motor=%umV,aux=%umV,vbat(inter)=%umV,mcuT(inter)=%d,ntc1=%d,ntc2=%d(温度*100),ain1=%u,ain2=%u,ain3=%u",
-            (unsigned)s.vdda_mv, (unsigned)s.vin_mv, (unsigned)s.motor_power_mv,
-            (unsigned)s.aux_power_mv, (unsigned)s.vbat_mv,
-            (int)s.mcu_temp_x100, (int)s.ntc1_temp_x100, (int)s.ntc2_temp_x100,
-            (unsigned)s.a_in1_io_raw, (unsigned)s.a_in2_io_raw, (unsigned)s.a_in3_io_raw);
+        // SRV_ADC_LOG_D("ADC测试:vdda(inter)=%umV,vin=%umV,motor=%umV,aux=%umV,vbat(inter)=%umV,mcuT(inter)=%d,ntc1=%d,ntc2=%d(温度*100),ain1=%u,ain2=%u,ain3=%u",
+        //     (unsigned)s.vdda_mv, (unsigned)s.vin_mv, (unsigned)s.motor_power_mv,
+        //     (unsigned)s.aux_power_mv, (unsigned)s.vbat_mv,
+        //     (int)s.mcu_temp_x100, (int)s.ntc1_temp_x100, (int)s.ntc2_temp_x100,
+        //     (unsigned)s.a_in1_io_raw, (unsigned)s.a_in2_io_raw, (unsigned)s.a_in3_io_raw);
 
         /* E-STOP 双通道冗余状态：4 个急停开关 × (ADC1/ADC2 两路原始值)。
          * 偏差 = ADC1 - ADC2；两路偏差过大提示冗余通道失效/线缆异常。 */
@@ -299,6 +306,29 @@ void srv_adc_step(void)
         //     (int)s.e_stop2_adc1 - (int)s.e_stop2_adc2,
         //     (int)s.e_stop3_adc1 - (int)s.e_stop3_adc2,
         //     (int)s.e_stop4_adc1 - (int)s.e_stop4_adc2);
+
+        /* E-STOP 双通道冗余校验：两路为互补冗余，正常仅两种情形——
+         *   · 偏差 ≈ 0     （两路一致，同为高或同为低）
+         *   · 偏差 ≈ ±4095 （两路互补，一高一低）
+         * 偏差落入中间区间即判冗余通道失效/线缆异常。 */
+        #define SRV_ADC_ESTOP_CHK(name, a1, a2) \
+            do { \
+                const int _d = (int)(a1) - (int)(a2); \
+                const int _ad = (_d < 0) ? -_d : _d; \
+                const int _tol = (int)SRV_ADC_ESTOP_REDUND_TOL_RAW; \
+                const int _full = (int)SRV_ADC_RAW_MAX; \
+                const bool _normal = (_ad <= _tol) \
+                    || (_ad >= _full - _tol); \
+                if (!_normal) { \
+                    SRV_ADC_LOG_E("急停冗余通道偏差异常 " name ": ADC1=%u ADC2=%u 偏差=%+d (正常应≈0或≈±%u)", \
+                        (unsigned)(a1), (unsigned)(a2), _d, (unsigned)SRV_ADC_RAW_MAX); \
+                } \
+            } while (0)
+        SRV_ADC_ESTOP_CHK("S1", s.e_stop1_adc1, s.e_stop1_adc2);
+        SRV_ADC_ESTOP_CHK("S2", s.e_stop2_adc1, s.e_stop2_adc2);
+        SRV_ADC_ESTOP_CHK("S3", s.e_stop3_adc1, s.e_stop3_adc2);
+        SRV_ADC_ESTOP_CHK("S4", s.e_stop4_adc1, s.e_stop4_adc2);
+        #undef SRV_ADC_ESTOP_CHK
 
         /* 换算状态观测：VDDA/NTC1/NTC2/MCU 温度计算是否异常 */
         // SRV_ADC_LOG_D("换算状态: vdda=%s ntc1=%s ntc2=%s mcuT=%s",

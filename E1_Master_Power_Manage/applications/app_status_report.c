@@ -11,7 +11,6 @@
 
 #include "log.h"
 #include "srv_adc.h"
-#include "srv_device_monitor.h"
 #include "srv_fan_ctrl.h"
 #include "srv_pwr_ctrl.h"
 #include "srv_pwr_det.h"
@@ -65,8 +64,6 @@ void app_status_report_fill(srv_can_mst_data_t* d)
     /* 急停状态 */
     d->status.bits.stop_key_state = st.estop_on;
 
-    /* 子设备在线状态（srv_device_monitor 喂狗超时判定） */
-  
     /* 风扇故障（逐路检测） */
     d->status.bits.err_fan0 = srv_fan_ctrl_is_fault(0);
     d->status.bits.err_fan1 = srv_fan_ctrl_is_fault(1);
