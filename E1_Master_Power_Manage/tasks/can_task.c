@@ -13,6 +13,7 @@
 #include "app_status_report.h"
 
 #include "drv_can.h"
+#include "drv_power.h"
 #include "drv_systick.h"
 #include "log.h"
 #include "srv_boot_ctrl.h"
@@ -71,6 +72,7 @@ static volatile bool s_ctrl_new;
 static void can_timer_cb(void* user_data);
 
 static bool can_send_frame(uint16_t can_id, const uint8_t* data, uint8_t len);
+static void can_set_output(srv_can_mst_output_t out, bool on);
 static void can_rx_callback(drv_can_channel_t ch, const drv_can_msg_t* msg);
 
 /* Exported functions --------------------------------------------------------*/
@@ -84,10 +86,12 @@ void can_task_init(void)
 
     srv_pwr_det_init();
 
-    /* 主机上报服务（read_data 由应用层 app_status_report 聚合填充） */
+    /* 主机上报服务（read_data 由应用层 app_status_report 聚合填充；
+     * set_output 将 0x001 主机 HSD 指令映射到 drv_power，service 层不直连驱动） */
     const srv_can_mst_config_t master_cfg = {
         .read_data = app_status_report_fill,
         .send_frame = can_send_frame,
+        .set_output = can_set_output,
     };
     srv_can_mst_init(&master_cfg);
 
@@ -164,6 +168,34 @@ static bool can_send_frame(uint16_t can_id, const uint8_t* data, uint8_t len)
     memcpy(msg.data, data, len);
 
     return drv_can_send(DRV_CAN_CH_1, &msg) == DRV_CAN_OK;
+}
+
+/**
+ * @brief 主机 0x001 控制帧的 HSD 输出回调
+ *
+ * 由 srv_can_mst 在对应 valid 位置位时调用，将抽象通道映射到 drv_power 诊断使能，
+ * 使 service 层不直接依赖设备驱动（同层解耦）。
+ *
+ * @param out 输出通道
+ * @param on  true=开, false=关
+ */
+static void can_set_output(srv_can_mst_output_t out, bool on)
+{
+    drv_power_rail_t rail;
+    switch (out) {
+        case SRV_CAN_MST_OUTPUT_HSD1_12V:
+            rail = DRV_POWER_RAIL_HSD1_12V_DIAG;
+            break;
+        case SRV_CAN_MST_OUTPUT_HSD1_24V:
+            rail = DRV_POWER_RAIL_HSD1_24V_DIAG;
+            break;
+        case SRV_CAN_MST_OUTPUT_HSD2_24V:
+            rail = DRV_POWER_RAIL_HSD2_24V_DIAG;
+            break;
+        default:
+            return;
+    }
+    drv_power_set(rail, on);
 }
 
 /* --- CAN RX 回调 --- */

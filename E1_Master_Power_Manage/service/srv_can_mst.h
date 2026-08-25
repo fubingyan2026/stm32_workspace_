@@ -156,13 +156,34 @@ typedef bool (*srv_can_mst_send_cb_t)(uint16_t can_id,
     const uint8_t* data, uint8_t len);
 
 /**
+ * @brief 主机可控输出通道枚举（对应 0x001 Byte1 控制位）
+ */
+typedef enum {
+    SRV_CAN_MST_OUTPUT_HSD1_12V, /**< HSD1 12V 输出（Byte1 bit5=en, bit4=val） */
+    SRV_CAN_MST_OUTPUT_HSD1_24V, /**< HSD1 24V 输出（Byte1 bit3=en, bit2=val） */
+    SRV_CAN_MST_OUTPUT_HSD2_24V, /**< HSD2 24V 输出（Byte1 bit1=en, bit0=val） */
+} srv_can_mst_output_t;
+
+/**
+ * @brief 输出控制回调（主机 0x001 控制帧触发）
+ *
+ * task 层实现此回调，将主机指令映射到具体硬件驱动（如 drv_power_set），
+ * 使 service 层不直接依赖设备驱动，保持同层解耦。仅在对应 valid 位置位时回调。
+ *
+ * @param out 输出通道
+ * @param on  true=开, false=关
+ */
+typedef void (*srv_can_mst_set_output_cb_t)(srv_can_mst_output_t out, bool on);
+
+/**
  * @brief 服务配置结构体
  *
- * 两个回调均在 srv_can_mst_init() 时注入，不可为 NULL。
+ * read_data / send_frame 为必填；set_output 可选（NULL 时忽略主机 HSD 指令）。
  */
 typedef struct {
     srv_can_mst_read_cb_t read_data; /**< 数据读取回调（必填） */
     srv_can_mst_send_cb_t send_frame; /**< CAN 发送回调（必填） */
+    srv_can_mst_set_output_cb_t set_output; /**< 输出控制回调（可选） */
 } srv_can_mst_config_t;
 
 /**

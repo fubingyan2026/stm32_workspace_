@@ -97,7 +97,7 @@ power_task_init()   → power management (GPIO control + power-up sequencing + f
 
 `can_task_init()` wires `app_status_report_fill` (defined in [app_status_report.c](applications/app_status_report.c)) as the `read_data` callback for `srv_can_mst`, and also calls `srv_pwr_det_init()` — the power-status detection service (PGOOD rails / E-STOP via `drv_status`, A_IN1_IO~3 via the `srv_adc` CD4051B path) has **no dedicated task**; it's read on demand via `srv_pwr_det_read()` (see [app_status_report.c:47](applications/app_status_report.c#L47)). If `power_task_init()` ran first and triggered CAN reporting, the callback wouldn't exist yet.
 
-> **Not yet wired**: the 0x001 control frame's command fields (buzzer duty, HSD outputs) are parsed into `srv_can_mst_cmd_t` but **not consumed** by any module (`power_task_request_on()/emergency_off()` were removed as dead code). Host frames only *report* power status; they don't command power on/off.
+> **0x001 控制帧已接通（同层解耦）**：`srv_can_mst_process_rx` 解析 `buzzer_duty` / `ctrl_byte`(3 对 valid+value) / `led_index` / LED RGB 到 `srv_can_mst_cmd_t`。HSD 输出经 `set_output` 回调（注入于 `can_task.c:can_set_output`）映射为 `drv_power_set(DRV_POWER_RAIL_HSD1_12V_DIAG / HSD1_24V_DIAG / HSD2_24V_DIAG, on)` —— service 层不直接依赖 `drv_power`；LED RGB 由主循环 `can_timer_cb` 经 `srv_ws2812b_set_pixel()` 应用（ISR 不碰 SPI DMA）。蜂鸣器占空比已解析但尚未消费（无蜂鸣器驱动接线）。
 
 ### Framework primitives actually used here
 

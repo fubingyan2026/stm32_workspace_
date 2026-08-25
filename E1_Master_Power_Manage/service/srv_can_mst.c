@@ -183,13 +183,22 @@ void srv_can_mst_process_rx(const uint8_t* data, uint8_t len)
 
     s_last_cmd.buzzer_duty = (data[0] <= 50U) ? data[0] : 50U;
 
-    /* byte1: 3对 valid+value 控制位 */
-    if (data[1] & (1U << 5))
-        s_last_cmd.hsd1_12v_on = (data[1] >> 4) & 1;
-    if (data[1] & (1U << 3))
-        s_last_cmd.hsd1_24v_on = (data[1] >> 2) & 1;
-    if (data[1] & (1U << 1))
-        s_last_cmd.hsd2_24v_on = (data[1] >> 0) & 1;
+    /* byte1: 3对 valid+value 控制位；valid=1 时才更新并下发对应输出 */
+    if (data[1] & (1U << 5)) {
+        s_last_cmd.hsd1_12v_on = (data[1] >> 4) & 1U;
+        if (s_config.set_output)
+            s_config.set_output(SRV_CAN_MST_OUTPUT_HSD1_12V, s_last_cmd.hsd1_12v_on);
+    }
+    if (data[1] & (1U << 3)) {
+        s_last_cmd.hsd1_24v_on = (data[1] >> 2) & 1U;
+        if (s_config.set_output)
+            s_config.set_output(SRV_CAN_MST_OUTPUT_HSD1_24V, s_last_cmd.hsd1_24v_on);
+    }
+    if (data[1] & (1U << 1)) {
+        s_last_cmd.hsd2_24v_on = (data[1] >> 0) & 1U;
+        if (s_config.set_output)
+            s_config.set_output(SRV_CAN_MST_OUTPUT_HSD2_24V, s_last_cmd.hsd2_24v_on);
+    }
 
     /* byte2-5: LED RGB 控制（led_index 选通道，0-31=通道1, 32-63=通道2） */
     s_last_cmd.led_index = data[2];

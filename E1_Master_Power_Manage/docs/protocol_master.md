@@ -143,6 +143,37 @@
 
 ---
 
+## 代码映射（数据链接与同层解耦）
+
+协议帧与工程内数据结构的对应关系如下。`srv_can_mst`（service 层）遵循**回调注入**模式，
+仅持有回调指针，**不直接调用任何 `drv_*` 设备驱动或业务模块**；所有硬件/业务耦合由
+task 层（`can_task.c`）通过回调注入，保持 service 与应用/驱动的同层解耦。
+
+### 上报帧（主电源板 → 主机）
+
+| 帧 | 工程结构体（字段顺序 = 协议位序） | 数据填充位置（read_data 回调） |
+|----|----------------------------------|------------------------------|
+| 0x010 系统状态 | `srv_can_mst_status_frame_t`（位域 union，2 字节） | `app_status_report_fill()` 聚合：`srv_pwr_det_read()` 提供急停/电源轨/HSD/DBR，`srv_adc_read_ain()` 提供 A_IN1~3_IO，`srv_fan_ctrl_is_fault()` 提供风扇，`srv_adc_get_latest()` 提供 NTC 连接态 |
+| 0x011 温度 | `srv_can_mst_volt_temp_frame_t`（8 字节） | `srv_adc_get_latest()` 的 NTC1/NTC2/MCU 温度（°C×100，int16 LE） |
+| 0x012 电压+预充 | `srv_can_mst_power_fault_frame_t`（8 字节） | VIN/MOTOR/AUX 电压来自 `srv_adc_get_latest()`；`precharge_fault` 来自 `srv_pwr_ctrl_get_precharge_fault()`（0=无, 1=后级短路 SHORT_CIRCUIT, 2=未接负载/二极管断路 NO_LOAD） |
+
+打包链路：`srv_can_mst_request()` 同步调用 `read_data` → `cm_build_0x001 / cm_build_volt_temp / cm_build_power_fault` 入队；`srv_can_mst_task()` 经 `send_frame` 回调（`can_task.c:can_send_frame`，底层 `drv_can_send`）逐帧发送。
+
+### 控制帧（主机 → 主电源板）
+
+| 帧 | 工程结构体 / 函数 | 消费位置与解耦方式 |
+|----|------------------|------------------|
+| 0x001 统一控制 | `srv_can_mst_cmd_t`（解析于 `srv_can_mst_process_rx`，6 字节） | byte0 `buzzer_duty`（0-50）、byte1 `ctrl_byte`（3 对 valid+value）、byte2 `led_index`、byte3-5 LED RGB |
+| 0x001 HSD 输出 | `set_output` 回调（`srv_can_mst_set_output_cb_t`） | `srv_can_mst_process_rx()` 仅在 valid 位置位时调用 `s_config.set_output(out, on)`；task 层 `can_task.c:can_set_output()` 将抽象通道映射为 `drv_power_set(DRV_POWER_RAIL_HSD1_12V_DIAG / HSD1_24V_DIAG / HSD2_24V_DIAG, on)`。**service 层不直连 `drv_power`，同层解耦** |
+| 0x001 LED RGB | `srv_can_mst_get_cmd()` + `srv_ws2812b_set_pixel()` | RX 解析在 ISR（`can_rx_callback`），LED 应用延后到主循环 `can_timer_cb`（避免 ISR 内 SPI DMA） |
+| 0x003 进 Boot | `srv_boot_ctrl_request_boot()` | RX 仅置 `s_enter_boot_requested` 标志，主循环 `can_timer_cb` 消费并调用 |
+
+### 同层解耦要点
+- `srv_can_mst`（service 层）只持有 `read_data` / `send_frame` / `set_output` 三个回调指针，不含任何 `drv_*` 或业务模块调用。
+- `can_task.c`（task 层）是唯一同时接触 CAN 驱动、电源驱动与上报服务的边界：它实现上述回调，把抽象协议通道翻译为具体硬件动作（`drv_power_set`、`srv_ws2812b_set_pixel`、`srv_boot_ctrl_request_boot`）。
+
+---
+
 ## 通讯时序
 
 ### 上报触发机制

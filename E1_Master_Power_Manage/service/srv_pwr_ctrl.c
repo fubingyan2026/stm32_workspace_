@@ -430,7 +430,6 @@ static void pwr_entry_cb(fsm_t* ctx, fsm_state_t state)
     switch (state) {
     case PWR_STATE_AUX:
         p->aux_en = true;
-        // drv_power_set(DRV_POWER_RAIL_DC_DC_EN, true);
         drv_power_set(DRV_POWER_RAIL_AUX_EN, true);
         drv_power_set(DRV_POWER_RAIL_DBR_LSD_EN, false);
 
@@ -438,17 +437,15 @@ static void pwr_entry_cb(fsm_t* ctx, fsm_state_t state)
     case PWR_STATE_PRECHARGE:
         /* 启动预充电软启动（内部先复位清锁存再 start） */
         precharge_begin();
-        drv_power_set(DRV_POWER_RAIL_HSD1_12V_DIAG, true);
-        drv_power_set(DRV_POWER_RAIL_HSD1_24V_DIAG, true);
-        drv_power_set(DRV_POWER_RAIL_HSD2_24V_DIAG, true);
+        
         break;
     case PWR_STATE_MOTOR:
         p->precharge_off_done = false;
         p->motor_en = true;
         drv_power_set(DRV_POWER_RAIL_MOTOR_EN, true);
-        drv_power_set(DRV_POWER_RAIL_HSD1_12V, true);
-        drv_power_set(DRV_POWER_RAIL_HSD1_24V, true);
-        drv_power_set(DRV_POWER_RAIL_HSD2_24V, true);
+        // drv_power_set(DRV_POWER_RAIL_HSD1_12V, true);
+        // drv_power_set(DRV_POWER_RAIL_HSD1_24V, true);
+        // drv_power_set(DRV_POWER_RAIL_HSD2_24V, true);
 
         /* 预充电保持导通，等母线抬到接近 VIN 后再关闭（见 pwr_state_motor） */
         break;
