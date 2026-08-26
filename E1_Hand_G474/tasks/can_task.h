@@ -21,6 +21,13 @@ extern "C" {
 void can_task_init(void);
 void can_task_tick(void);
 
+/**
+ * @brief 高速步进（主循环全速调用）：驱动电机/传感器控制（如橘虾 MIT 1ms→全速、Mz 响应门控轮询）
+ * @note  仅包含需要最高周期的步骤（CAN1/CAN2 测试模块 step），
+ *        总线状态轮询与 UART 主机协议仍在 1ms 定时器中执行
+ */
+void can_task_fast_step(void);
+
 #ifdef __cplusplus
 }
 #endif

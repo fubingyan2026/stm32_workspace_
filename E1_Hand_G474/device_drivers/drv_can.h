@@ -54,6 +54,7 @@ typedef struct {
     uint32_t id;          /**< CAN ID（标准 11-bit 或扩展 29-bit） */
     bool     is_extended; /**< true=扩展帧 */
     bool     is_fd;       /**< true=CAN FD 帧 */
+    bool     brs;         /**< true=CAN FD 帧启用位速率切换（仲裁段 1M / 数据段 5M）；仅 is_fd 时有效 */
     uint8_t  dlc;         /**< 数据长度（字节数，0-64） */
     uint8_t  data[64];    /**< 数据负载 */
 } drv_can_msg_t;

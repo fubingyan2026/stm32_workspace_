@@ -35,6 +35,17 @@
 #define LOG_TASK_PERIOD_MS (10U)
 #define LOG_TASK_CMD_BUF_SIZE (32U)
 
+/* ── 输出后端 / 控制台命令开关 ─────────────────────────────────────────────
+ * App：日志走 SEGGER RTT（USART1 让位给上位机二进制主机协议，控制台文本命令关闭）；
+ * Boot：保持 USART1 输出与控制台命令。均可用编译宏覆盖。 */
+#if defined(E1_BUILD_BOOT)
+#define LOG_TASK_DEFAULT_OUTPUT_RTT 0
+#define LOG_TASK_ENABLE_CONSOLE_CMD 1
+#else
+#define LOG_TASK_DEFAULT_OUTPUT_RTT 1
+#define LOG_TASK_ENABLE_CONSOLE_CMD 0
+#endif
+
 /* Private types -------------------------------------------------------------*/
 
 /* Exported types ------------------------------------------------------------*/
@@ -65,24 +76,29 @@ typedef enum {
 
 static uint8_t s_tx_buf[LOG_TASK_TX_BUF_SIZE];
 static sw_timer_t s_log_timer;
-static log_task_output_t s_output_mode = LOG_OUTPUT_UART;
+static log_task_output_t s_output_mode =
+    LOG_TASK_DEFAULT_OUTPUT_RTT ? LOG_OUTPUT_RTT : LOG_OUTPUT_UART;
 
+#if LOG_TASK_ENABLE_CONSOLE_CMD
 /** @brief 控制台命令行累积缓冲（主循环从 drv_log_uart kfifo 读取后填充） */
 static char s_cmd_buf[LOG_TASK_CMD_BUF_SIZE];
 static uint8_t s_cmd_len = 0;
 
 /** @brief 待处理命令（主循环置位并消费） */
 static log_task_cmd_t s_pending_cmd = LOG_TASK_CMD_NONE;
+#endif
 
 /* Private function prototypes -----------------------------------------------*/
 
 static void log_timer_cb(void* user_data);
 
+#if LOG_TASK_ENABLE_CONSOLE_CMD
 static void log_task_print_help(void);
 
 static log_task_cmd_t log_task_parse_cmd(const char* line);
 
 static void log_task_poll_rx(void);
+#endif
 
 /* Exported functions --------------------------------------------------------*/
 
@@ -181,6 +197,7 @@ static void log_timer_cb(void* user_data)
 {
     (void)user_data;
 
+#if LOG_TASK_ENABLE_CONSOLE_CMD
     /* ── 控制台 RX：从 drv_log_uart kfifo 读取并累积命令行（主循环上下文） ── */
     log_task_poll_rx();
 
@@ -207,6 +224,7 @@ static void log_timer_cb(void* user_data)
     default:
         break;
     }
+#endif /* LOG_TASK_ENABLE_CONSOLE_CMD */
 
 #if !defined(E1_BUILD_BOOT)
     /* ── 日志 Flash 落盘驱动（有新增记录且到限流间隔时写入） ── */
@@ -248,6 +266,8 @@ static void log_timer_cb(void* user_data)
     srv_log_flash_dump_step();
 #endif
 }
+
+#if LOG_TASK_ENABLE_CONSOLE_CMD
 
 /**
  * @brief 打印控制台帮助
@@ -309,3 +329,5 @@ static void log_task_poll_rx(void)
         s_cmd_buf[s_cmd_len++] = (char)c;
     }
 }
+
+#endif /* LOG_TASK_ENABLE_CONSOLE_CMD */

@@ -53,14 +53,13 @@
 /** @brief 发送延迟补偿滤波窗口长度 TDCF（mtq 单位），的范围是 0~127（单位 mtq）过滤接收位中的显性毛刺 */
 #define DRV_CAN_TDC_FILTER 16U
 
-/** @brief 数据段位时序覆盖（对齐 Motorevo 电机 docs/Motorevo电机CAN协议文档.md §1.3）：
- *        电机数据段 Seg1=25/Seg2=8（采样 76.47%，Seg2=47ns）。CAN FD 数据段规则
- *        「发送方 Seg2 ≥ 接收方 Seg2」：CubeMX 默认 Seg2=3tq(37.5ns) < 电机 47ns，
- *        导致本机发 5M 数据对方收不到。此处 Seg1=11/Seg2=4 → 采样 75%、Seg2=50ns ≥ 47ns，
- *        位速率仍 5M（2×(1+11+4)=32tq=200ns）。 */
-#define DRV_CAN_DATA_TSEG1 11U
-#define DRV_CAN_DATA_TSEG2 4U
-#define DRV_CAN_DATA_SJW 2U
+/** @brief 数据段位时序覆盖（对齐巨蟹电机：数据段波特率 = 仲裁段 1M）：
+ *        与 CubeMX fdcan.c 一致：DBRP=8，Seg1=14/Seg2=5 → (1+14+5)*8=160tq=1M，
+ *        采样 75%。电机以 FD+BRS 回发反馈帧时接收端须按此数据段时序解帧；
+ *        若数据段仍按 5M 采样，数据段持续位错误导致 REC 顶格(127)、帧被丢弃。 */
+#define DRV_CAN_DATA_TSEG1 14U
+#define DRV_CAN_DATA_TSEG2 5U
+#define DRV_CAN_DATA_SJW 5U
 
 /* Private constants -----------------------------------------------------------*/
 
@@ -242,7 +241,7 @@ drv_can_error_t drv_can_send(drv_can_channel_t ch, const drv_can_msg_t* msg)
         .TxFrameType = FDCAN_DATA_FRAME,
         .DataLength = bytes_to_fdcan_dlc(msg->dlc),
         .ErrorStateIndicator = FDCAN_ESI_ACTIVE,
-        .BitRateSwitch = FDCAN_BRS_OFF,// msg->is_fd ? FDCAN_BRS_ON : FDCAN_BRS_OFF, /* FD 帧启用位速率切换：仲裁段 1M / 数据段 5M */
+        .BitRateSwitch = msg->brs ? FDCAN_BRS_ON : FDCAN_BRS_OFF, /* FD 帧按 brs 位启用数据段 5M 位速率切换 */
         .FDFormat = msg->is_fd ? FDCAN_FD_CAN : FDCAN_CLASSIC_CAN,
         .TxEventFifoControl = FDCAN_NO_TX_EVENTS,
         .MessageMarker = 0,

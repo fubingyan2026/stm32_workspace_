@@ -13,10 +13,12 @@
  *   - SRV_MOTOR_TEST_HT_TORQUE = 0 苇熠(HT) 位置模式往复耐久测试（srv_ht_torque_test）
  *   - SRV_MOTOR_TEST_HT_TEMP   = 1 苇熠(HT) 速度模式原测试（srv_ht_temp_test）
  *   - SRV_MOTOR_TEST_TONGZHI   = 2 良志(ODrive) 位置模式往复耐久测试（srv_tongzhi_torque_test）
+ *   - SRV_MOTOR_TEST_JUXIE     = 3 橘虾(juxie) CAN FD MIT 电机控制（srv_juxie_motor，默认）
  *
  * CAN2 可选模块（SRV_MOTOR_TEST_SELECT_CAN2，与 CAN1 并行运行、互不干扰）：
  *   - SRV_MOTOR_TEST_HT_CAN2 = 0 苇熠(HT) 速度模式往复耐久 CAN2 版（srv_ht_can2_torque_test）
  *   - SRV_MOTOR_TEST_PA430   = 1 Motorevo(PA430) MIT 力位混合来回测试（srv_pa430_torque_test）
+ *   - SRV_MOTOR_TEST_MZ      = 2 Mz 扭矩传感器高频读取（srv_mz_sensor，默认）
  */
 
 #ifndef __SRV_MOTOR_TEST_SELECT_H
@@ -35,6 +37,7 @@ typedef enum {
     SRV_MOTOR_TEST_SEL_HT_TORQUE = 0, /* 苇熠(HT) 位置模式往复耐久（srv_ht_torque_test） */
     SRV_MOTOR_TEST_SEL_HT_TEMP = 1, /* 苇熠(HT) 速度模式原测试（srv_ht_temp_test） */
     SRV_MOTOR_TEST_SEL_TONGZHI = 2, /* 良志(ODrive) 位置模式往复（srv_tongzhi_torque_test） */
+    SRV_MOTOR_TEST_SEL_JUXIE = 3, /* 橘虾(juxie) CAN FD MIT 电机控制（srv_juxie_motor） */
     SRV_MOTOR_TEST_SEL_NUM
 } srv_motor_test_sel_t;
 
@@ -44,6 +47,7 @@ typedef enum {
 typedef enum {
     SRV_MOTOR_TEST_SEL_HT_CAN2 = 0, /* 苇熠(HT) 速度模式往复耐久 CAN2 版（srv_ht_can2_torque_test） */
     SRV_MOTOR_TEST_SEL_PA430 = 1, /* Motorevo(PA430) MIT 力位混合来回（srv_pa430_torque_test） */
+    SRV_MOTOR_TEST_SEL_MZ = 2, /* Mz 扭矩传感器高频读取（srv_mz_sensor） */
     SRV_MOTOR_TEST_SEL_CAN2_NUM
 } srv_motor_test_can2_sel_t;
 
@@ -53,27 +57,29 @@ typedef enum {
 #define SRV_MOTOR_TEST_HT_TORQUE 0
 #define SRV_MOTOR_TEST_HT_TEMP 1
 #define SRV_MOTOR_TEST_TONGZHI 2
+#define SRV_MOTOR_TEST_JUXIE 3
 
 //can2的选项电机
 #define SRV_MOTOR_TEST_HT_CAN2 0
 #define SRV_MOTOR_TEST_PA430 1
+#define SRV_MOTOR_TEST_MZ 2
 
 /* --- 当前选择（命令行 -DSRV_MOTOR_TEST_SELECT=SRV_MOTOR_TEST_HT_TORQUE 等可覆盖） --- */
 
 /**
- * @brief 当前激活的 CAN1 测试模块（默认良志 TONGZHI；可用编译宏覆盖）
+ * @brief 当前激活的 CAN1 测试模块（默认橘虾 JUXIE；可用编译宏覆盖）
  * @note  命令行覆盖必须使用上面的宏名或整型字面量（枚举名不是预处理器符号，无法用于 #if）
  */
 #ifndef SRV_MOTOR_TEST_SELECT
-#define SRV_MOTOR_TEST_SELECT SRV_MOTOR_TEST_HT_TORQUE
+#define SRV_MOTOR_TEST_SELECT SRV_MOTOR_TEST_JUXIE
 #endif
 
 /**
- * @brief 当前激活的 CAN2 测试模块（默认苇熠 HT_CAN2；可用编译宏覆盖）
+ * @brief 当前激活的 CAN2 测试模块（默认 Mz 扭矩传感器；可用编译宏覆盖）
  * @note  命令行覆盖必须使用上面的宏名或整型字面量（枚举名不是预处理器符号，无法用于 #if）
  */
 #ifndef SRV_MOTOR_TEST_SELECT_CAN2
-#define SRV_MOTOR_TEST_SELECT_CAN2 SRV_MOTOR_TEST_HT_CAN2
+#define SRV_MOTOR_TEST_SELECT_CAN2 SRV_MOTOR_TEST_MZ
 #endif
 
 /* --- 便捷判定宏（供 #if 使用） --- */
@@ -81,8 +87,10 @@ typedef enum {
 #define SRV_MOTOR_TEST_IS_HT_TORQUE (SRV_MOTOR_TEST_SELECT == SRV_MOTOR_TEST_HT_TORQUE)
 #define SRV_MOTOR_TEST_IS_HT_TEMP (SRV_MOTOR_TEST_SELECT == SRV_MOTOR_TEST_HT_TEMP)
 #define SRV_MOTOR_TEST_IS_TONGZHI (SRV_MOTOR_TEST_SELECT == SRV_MOTOR_TEST_TONGZHI)
+#define SRV_MOTOR_TEST_IS_JUXIE (SRV_MOTOR_TEST_SELECT == SRV_MOTOR_TEST_JUXIE)
 #define SRV_MOTOR_TEST_IS_HT_CAN2 (SRV_MOTOR_TEST_SELECT_CAN2 == SRV_MOTOR_TEST_HT_CAN2)
 #define SRV_MOTOR_TEST_IS_PA430 (SRV_MOTOR_TEST_SELECT_CAN2 == SRV_MOTOR_TEST_PA430)
+#define SRV_MOTOR_TEST_IS_MZ (SRV_MOTOR_TEST_SELECT_CAN2 == SRV_MOTOR_TEST_MZ)
 
 #ifdef __cplusplus
 }

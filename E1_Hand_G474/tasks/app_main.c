@@ -54,13 +54,14 @@ int app_main(void)
     /* 守护进程监控（9 电机反馈超时看门狗，依赖 behavior_task 已注册电机句柄） */
     // daemon_task_init();
 
-    /* 主循环：sw_timer 驱动日志/LED/CAN/FB，motor 全速 poll */
+    /* 主循环：sw_timer 驱动日志/LED/CAN/FB，motor 与 CAN 控制全速 poll */
     for (;;) {
         drv_uart_rx_restart(DRV_UART_CH_2);
         drv_uart_rx_restart(DRV_UART_CH_3);
         sw_timer_tick(millis());
         sw_timer_task();
         srv_motor_step();
+        can_task_fast_step(); /* 电机/传感器控制周期最大化（受 TX FIFO 与应答门控自限） */
     }
 
     return 0;

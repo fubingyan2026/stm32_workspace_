@@ -6,7 +6,17 @@
 
 /**
  * @file    can_task.c
- * @brief   CAN 通信任务 — sw_timer 驱动 srv_can 处理 + 反馈上报
+ * @brief   CAN 通信任务 — 1ms sw_timer 驱动电机/传感器/主机协议服务
+ *
+ * CAN1（FDCAN1）测试模块选择：由 service/srv_motor_test_select.h 的 SRV_MOTOR_TEST_SELECT
+ * 统一决定（HT_TORQUE=苇熠位置往复 / HT_TEMP=苇熠速度 / TONGZHI=良志ODrive /
+ * JUXIE=橘虾 CAN FD MIT，默认）。
+ * CAN2（FDCAN2）测试模块选择：由 SRV_MOTOR_TEST_SELECT_CAN2 统一决定
+ * （HT_CAN2=苇熠 CAN2 版 / PA430=Motorevo / MZ=Mz 扭矩传感器，默认）。
+ *
+ * 接收分发统一走 srv_can_bus：srv_can_bus_init() 在 drv_can 注册每通道唯一的
+ * 分发回调，can_task 将各通道绑定到对应模块的 on_rx（JUXIE/MZ 直连服务，
+ * 旧测试模块经适配器转发，语义不变）。换 CAN 通道只需改 srv_can_bus_bind 参数。
  */
 
 #include "can_task.h"
@@ -15,71 +25,159 @@
 #include "drv_systick.h"
 #include "log.h"
 #include "srv_can.h"
+#include "srv_can_bus.h"
 #include "srv_ht_can2_torque_test.h"
+#include "srv_ht_temp_test.h"
+#include "srv_ht_torque_test.h"
+#include "srv_juxie_motor.h"
 #include "srv_motor_test_select.h"
+#include "srv_mz_sensor.h"
 #include "srv_pa430_torque_test.h"
 #include "srv_tongzhi_torque_test.h"
+#include "srv_uart_host.h"
 #include "sw_timer.h"
 
-/* CAN1（FDCAN1）测试模块选择：由 service/srv_motor_test_select.h 的 SRV_MOTOR_TEST_SELECT
- * 统一决定（HT_TORQUE=苇熠位置往复 / HT_TEMP=苇熠速度 / TONGZHI=良志ODrive 位置往复）。
- *   - 苇熠模式：RX 经 srv_can_on_rx 路由（srv_can 内部再按选择转发给对应 HT 模块）；
- *   - 良志模式：CH_1 全部帧直连 srv_tongzhi_torque_test_on_rx，srv_can 不参与。
- * CAN2（FDCAN2）测试模块选择：由 service/srv_motor_test_select.h 的
- * SRV_MOTOR_TEST_SELECT_CAN2 统一决定（HT_CAN2=苇熠速度模式往复 CAN2 版 /
- * PA430=Motorevo MIT 力位混合）。两者共用 FDCAN2 独立总线，同一时刻只激活一个，
- * 与 CAN1 上的测试并行运行、互不干扰 */
+/* Private variables ---------------------------------------------------------*/
+
+static sw_timer_t s_timer;
+
+/** @brief CAN1 总线句柄（JUXIE 模式绑定电机服务） */
+static srv_can_bus_t s_can1_bus;
+
+/** @brief CAN2 总线句柄（MZ 模式绑定扭矩传感器服务） */
+static srv_can_bus_t s_can2_bus;
+
+/* --- CAN1（FDCAN1）模块接线 -------------------------------------------------- */
 #if SRV_MOTOR_TEST_IS_TONGZHI
-#define CAN1_TEST_INIT srv_tongzhi_torque_test_init
-#define CAN1_TEST_STEP srv_tongzhi_torque_test_step
-#define CAN1_TEST_ON_RX srv_tongzhi_torque_test_on_rx
 #define CAN1_TEST_USE_SRV_CAN 0
+static void can1_test_init(void)
+{
+    srv_tongzhi_torque_test_init();
+}
+static void can1_test_step(void)
+{
+    srv_tongzhi_torque_test_step();
+}
+static void can1_bus_rx(const drv_can_msg_t* msg, void* ctx)
+{
+    (void)ctx;
+    (void)srv_tongzhi_torque_test_on_rx(msg);
+}
 #elif SRV_MOTOR_TEST_IS_HT_TORQUE
-#include "srv_ht_torque_test.h"
-#define CAN1_TEST_INIT srv_ht_torque_test_init
-#define CAN1_TEST_STEP srv_ht_torque_test_step
-#define CAN1_TEST_ON_RX srv_can_on_rx
 #define CAN1_TEST_USE_SRV_CAN 1
+static void can1_test_init(void)
+{
+    srv_ht_torque_test_init();
+}
+static void can1_test_step(void)
+{
+    srv_ht_torque_test_step();
+}
+static void can1_bus_rx(const drv_can_msg_t* msg, void* ctx)
+{
+    (void)ctx;
+    (void)srv_can_on_rx(msg); /* srv_can 内部再按选择转发给对应 HT 模块 */
+}
 #elif SRV_MOTOR_TEST_IS_HT_TEMP
-#include "srv_ht_temp_test.h"
-#define CAN1_TEST_INIT srv_ht_temp_test_init
-#define CAN1_TEST_STEP srv_ht_temp_test_step
-#define CAN1_TEST_ON_RX srv_can_on_rx
 #define CAN1_TEST_USE_SRV_CAN 1
+static void can1_test_init(void)
+{
+    srv_ht_temp_test_init();
+}
+static void can1_test_step(void)
+{
+    srv_ht_temp_test_step();
+}
+static void can1_bus_rx(const drv_can_msg_t* msg, void* ctx)
+{
+    (void)ctx;
+    (void)srv_can_on_rx(msg);
+}
+#elif SRV_MOTOR_TEST_IS_JUXIE
+#define CAN1_TEST_USE_SRV_CAN 0
+static void can1_test_init(void)
+{
+    srv_juxie_motor_init(&s_can1_bus);
+}
+static void can1_test_step(void)
+{
+    srv_juxie_motor_step();
+}
+static void can1_bus_rx(const drv_can_msg_t* msg, void* ctx)
+{
+    (void)ctx;
+    srv_juxie_motor_on_rx(msg, NULL);
+}
 #else
 #error "SRV_MOTOR_TEST_SELECT 值无效"
 #endif
 
+/* --- CAN2（FDCAN2）模块接线 -------------------------------------------------- */
 #if SRV_MOTOR_TEST_IS_HT_CAN2
-#define CAN2_TEST_INIT srv_ht_can2_torque_test_init
-#define CAN2_TEST_STEP srv_ht_can2_torque_test_step
-#define CAN2_TEST_ON_RX srv_ht_can2_torque_test_on_rx
+static void can2_test_init(void)
+{
+    srv_ht_can2_torque_test_init();
+}
+static void can2_test_step(void)
+{
+    srv_ht_can2_torque_test_step();
+}
+static void can2_bus_rx(const drv_can_msg_t* msg, void* ctx)
+{
+    (void)ctx;
+    (void)srv_ht_can2_torque_test_on_rx(msg);
+}
 #elif SRV_MOTOR_TEST_IS_PA430
-#define CAN2_TEST_INIT srv_pa430_torque_test_init
-#define CAN2_TEST_STEP srv_pa430_torque_test_step
-#define CAN2_TEST_ON_RX srv_pa430_torque_test_on_rx
+static void can2_test_init(void)
+{
+    srv_pa430_torque_test_init();
+}
+static void can2_test_step(void)
+{
+    srv_pa430_torque_test_step();
+}
+static void can2_bus_rx(const drv_can_msg_t* msg, void* ctx)
+{
+    (void)ctx;
+    (void)srv_pa430_torque_test_on_rx(msg);
+}
+#elif SRV_MOTOR_TEST_IS_MZ
+static void can2_test_init(void)
+{
+    srv_mz_sensor_init(&s_can2_bus);
+}
+static void can2_test_step(void)
+{
+    srv_mz_sensor_step();
+}
+static void can2_bus_rx(const drv_can_msg_t* msg, void* ctx)
+{
+    (void)ctx;
+    srv_mz_sensor_on_rx(msg, NULL);
+}
 #else
 #error "SRV_MOTOR_TEST_SELECT_CAN2 值无效"
 #endif
 
 /* Private constants ---------------------------------------------------------*/
 
-#define TASK_PERIOD_MS 5U
-#define FB_INTERVAL_MS 100U
-#define STATUS_INTERVAL_MS 500U
-
-/* Private variables ---------------------------------------------------------*/
-
-static sw_timer_t s_timer;
-static uint8_t s_fb_tick;
-static uint8_t s_status_tick;
+#define TASK_PERIOD_MS 1U /* 1ms：总线状态轮询 + UART 主机协议（高速控制移到主循环 can_task_fast_step） */
 
 /* Private function prototypes -----------------------------------------------*/
 
 static void can_timer_cb(void* user_data);
-static void can_rx_callback(drv_can_channel_t ch, const drv_can_msg_t* msg);
 
 /* Exported functions --------------------------------------------------------*/
+
+void can_task_fast_step(void)
+{
+    /* 主循环全速调用：电机控制、传感器轮询与 UART 主机协议周期最大化。
+     * 橘虾 MIT 发送受 TX FIFO 背压自限；Mz 轮询受应答门控自限；
+     * UART 应答 TX 队列随 DMA 空闲逐帧发送（1M 下可达 ~5000 帧/s）。 */
+    can1_test_step();
+    can2_test_step();
+    srv_uart_host_step();
+}
 
 void can_task_init(void)
 {
@@ -89,18 +187,19 @@ void can_task_init(void)
         LOG_E("can_task", "drv_can_init failed: %d (FDCAN start error?)", (int)err);
         return; /* CAN 不可用，不启动周期任务 */
     }
-#if CAN1_TEST_USE_SRV_CAN
-    srv_can_init(); /* 旧 0x100 上位机协议：仅苇熠模式使用（良志接管时停用） */
-#endif
-    CAN1_TEST_INIT(); /* CAN1：苇熠伺服执行器测试或良志(ODrive)测试（见顶部接线宏） */
-#if defined(CAN2_TEST_INIT)
-    CAN2_TEST_INIT(); /* CAN2：苇熠 CAN2 版或 PA430 MIT 测试（见顶部接线宏） */
-#endif
 
-    drv_can_register_rx_callback(DRV_CAN_CH_1, can_rx_callback);
-#if defined(CAN2_TEST_INIT)
-    drv_can_register_rx_callback(DRV_CAN_CH_2, can_rx_callback);
+    /* 统一接收分发：srv_can_bus 占用每通道唯一的 drv_can 回调槽位 */
+    srv_can_bus_init();
+    srv_can_bus_bind(&s_can1_bus, DRV_CAN_CH_1, can1_bus_rx, NULL);
+    srv_can_bus_bind(&s_can2_bus, DRV_CAN_CH_2, can2_bus_rx, NULL);
+
+#if CAN1_TEST_USE_SRV_CAN
+    srv_can_init(); /* 旧 0x100 上位机协议：仅苇熠模式使用 */
 #endif
+    can1_test_init(); /* CAN1：苇熠/良志测试 或 橘虾 MIT 电机（见顶部接线宏） */
+    can2_test_init(); /* CAN2：苇熠 CAN2 版/PA430 或 Mz 扭矩传感器（见顶部接线宏） */
+
+    srv_uart_host_init(); /* USART1 主机二进制定长帧协议 */
 
     const sw_timer_config_t cfg = {
         .priority = SW_TIMER_PRIO_NORMAL,
@@ -116,40 +215,10 @@ static void can_timer_cb(void* user_data)
 {
     (void)user_data;
 
-    drv_can_poll_status(DRV_CAN_CH_1); /* Bus-Off 恢复 + 错误状态告警（苇熠/良志测试总线） */
-#if defined(CAN2_TEST_INIT)
-    drv_can_poll_status(DRV_CAN_CH_2); /* Bus-Off 恢复 + 错误状态告警（苇熠 CAN2 / PA430 伺服总线） */
-#endif
+    drv_can_poll_status(DRV_CAN_CH_1); /* Bus-Off 恢复 + 错误状态告警 */
+    drv_can_poll_status(DRV_CAN_CH_2);
+
 #if CAN1_TEST_USE_SRV_CAN
     srv_can_process(); /* 旧 0x100 上位机协议：仅苇熠模式使用 */
-#endif
-    CAN1_TEST_STEP(); /* CAN1：苇熠/良志测试：扫描/往复驱动 */
-#if defined(CAN2_TEST_INIT)
-    CAN2_TEST_STEP(); /* CAN2：苇熠 CAN2 版/PA430：扫描/往复驱动 */
-#endif
-
-    s_fb_tick++;
-    s_status_tick++;
-
-    // if (s_fb_tick >= (FB_INTERVAL_MS / TASK_PERIOD_MS)) {
-    //     s_fb_tick = 0;
-    //     srv_can_send_feedback();
-    // }
-    // if (s_status_tick >= (STATUS_INTERVAL_MS / TASK_PERIOD_MS)) {
-    //     s_status_tick = 0;
-    //     srv_can_send_status();
-    // }
-}
-
-static void can_rx_callback(drv_can_channel_t ch, const drv_can_msg_t* msg)
-{
-    /* 按通道分发：CAN1 = 良志(接管时)或苇熠测试 + 旧 0x100 协议；CAN2 = 苇熠 CAN2 版/PA430 反馈帧 */
-    if (ch == DRV_CAN_CH_1) {
-        CAN1_TEST_ON_RX(msg);
-    }
-#if defined(CAN2_TEST_INIT)
-    else if (ch == DRV_CAN_CH_2) {
-        CAN2_TEST_ON_RX(msg);
-    }
 #endif
 }
