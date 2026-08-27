@@ -116,6 +116,8 @@ typedef struct {
     int8_t pos_sign[SRV_TZ_TEMP_MAX_MOTORS]; /**< 每电机目标方向：+1=朝 +180°，-1=朝 -180° */
     uint32_t pos_last_flip_ms[SRV_TZ_TEMP_MAX_MOTORS]; /**< 每电机最近目标翻转时间 (millis) */
     float pos_cmd_vel_tps[SRV_TZ_TEMP_MAX_MOTORS]; /**< 每电机当前下发速度（转/s，按加减速限制渐变） */
+    bool return_center; /**< 位置模式停止序列：正在回 0°（中心）标志 */
+    uint32_t return_center_start_ms; /**< 位置模式回 0° 起始时间 (millis) */
     uint32_t last_enable_retry_ms; /**< 上次重发 init 的时间 (millis) */
     uint32_t enable_stall_since_ms; /**< 进入"需闭环"状态起始时间，0=不在该状态 */
     bool enable_warned; /**< 闭环确认超时告警是否已打印 */
@@ -172,7 +174,7 @@ void srv_tz_temp_test_init(srv_tz_temp_test_inst_t* inst,
 void srv_tz_temp_test_start(srv_tz_temp_test_inst_t* inst);
 
 /**
- * @brief 停止该实例的耐久测试（软停止：斜坡回 0 后电机回 IDLE）
+ * @brief 停止该实例的耐久测试（软停止：速度回 0；位置模式先回 0° 中心，随后发 IDLE）
  * @param inst 实例句柄
  */
 void srv_tz_temp_test_stop(srv_tz_temp_test_inst_t* inst);

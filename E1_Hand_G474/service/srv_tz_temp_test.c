@@ -92,8 +92,10 @@
 #define SRV_TZ_TEMP_DEF_STATUS_LOG_MS 5000U
 /** @brief 默认未发现电机周期告警间隔 (ms) */
 #define SRV_TZ_TEMP_DEF_NO_MOTOR_LOG_MS 5000U
-/** @brief 默认耐久运行时长 (ms)：24h = 86400000 ms（uint32 范围内）；0=禁用 */
-#define SRV_TZ_TEMP_DEF_DURATION_MS 86400000U
+/** @brief 默认耐久运行时长（速度模式）：24h = 86400000 ms（uint32 范围内）；0=禁用 */
+#define SRV_TZ_TEMP_DEF_DURATION_SPEED_MS 86400000U
+/** @brief 默认耐久运行时长（位置模式）：30 天 = 2592000000 ms（uint32 范围内）；0=禁用 */
+#define SRV_TZ_TEMP_DEF_DURATION_POSITION_MS 2592000000U
 
 /* --- 良志(ODrive) 协议指令（docs/良志电机can协议.md §3） --- */
 
@@ -125,6 +127,8 @@
 #define SRV_TZ_TEMP_DEF_POS_ARRIVE_THRESH_TURNS (0.01f)
 /** @brief 默认位置到位判定超时 (ms)：超过该时长仍未到位则强制翻转（反馈冻结/到位偏置兜底） */
 #define SRV_TZ_TEMP_DEF_POS_ARRIVE_TIMEOUT_MS 6000U
+/** @brief 停止序列回 0°（中心）超时 (ms)：超时仍未全部到位则强制进入保持+IDLE */
+#define SRV_TZ_TEMP_POS_RETURN_TIMEOUT_MS 60000U
 
 /* Private types -------------------------------------------------------------*/
 
@@ -181,6 +185,7 @@ static void srv_tz_temp_test_log_phase(srv_tz_temp_test_inst_t* inst, srv_tz_tem
 #if (SRV_TZ_TEMP_CTRL_MODE == SRV_TZ_TEMP_CTRL_MODE_POSITION)
 static float srv_tz_temp_test_pos_target_turns(const srv_tz_temp_test_inst_t* inst, uint8_t idx);
 static void srv_tz_temp_test_pos_step(srv_tz_temp_test_inst_t* inst, uint32_t now);
+static void srv_tz_temp_test_pos_return_center(srv_tz_temp_test_inst_t* inst, uint32_t now);
 #endif
 static void srv_tz_temp_test_scan_record(srv_tz_temp_test_inst_t* inst, uint8_t node);
 static void srv_tz_temp_test_scan_log_new(srv_tz_temp_test_inst_t* inst);
@@ -208,8 +213,11 @@ void srv_tz_temp_test_config_default(srv_tz_temp_test_config_t* cfg)
     cfg->init_grace_ms = SRV_TZ_TEMP_DEF_INIT_GRACE_MS;
     cfg->status_log_ms = SRV_TZ_TEMP_DEF_STATUS_LOG_MS;
     cfg->no_motor_log_ms = SRV_TZ_TEMP_DEF_NO_MOTOR_LOG_MS;
-    cfg->duration_ms = SRV_TZ_TEMP_DEF_DURATION_MS;
+    cfg->duration_ms = SRV_TZ_TEMP_DEF_DURATION_SPEED_MS;
     cfg->auto_start = true;
+#if (SRV_TZ_TEMP_CTRL_MODE == SRV_TZ_TEMP_CTRL_MODE_POSITION)
+    cfg->duration_ms = SRV_TZ_TEMP_DEF_DURATION_POSITION_MS; /* 位置模式默认 30 天 */
+#endif
     cfg->pos_amp_turns = SRV_TZ_TEMP_DEF_POS_AMP_TURNS;
     cfg->pos_kp = SRV_TZ_TEMP_DEF_POS_KP;
     cfg->pos_max_vel_tps = SRV_TZ_TEMP_DEF_POS_MAX_VEL_TPS;
@@ -263,6 +271,8 @@ void srv_tz_temp_test_start(srv_tz_temp_test_inst_t* inst)
     const uint32_t now = millis();
     inst->running = true;
     inst->stopping = false;
+    inst->return_center = false;
+    inst->return_center_start_ms = 0;
     inst->start_ms = now; /* 自动停止计时起点 */
     inst->online_ms = 0; /* 持续在线时长从 0 累计 */
     inst->online_last_ms = now;
@@ -342,7 +352,12 @@ void srv_tz_temp_test_stop(srv_tz_temp_test_inst_t* inst)
         return;
     inst->stopping = true;
     inst->stop_start_ms = millis();
-    SRV_TZ_TEMP_TEST_LOG_I(inst, "速度耐久停止：先斜坡回 0，随后发 IDLE");
+#if (SRV_TZ_TEMP_CTRL_MODE == SRV_TZ_TEMP_CTRL_MODE_POSITION)
+    /* 位置模式：停止前先回 0°（中心），到位后再保持零速并发 IDLE */
+    inst->return_center = true;
+    inst->return_center_start_ms = inst->stop_start_ms;
+#endif
+    SRV_TZ_TEMP_TEST_LOG_I(inst, "耐久停止：速度回 0（位置模式先回 0°），随后发 IDLE");
 }
 
 /**
@@ -368,8 +383,9 @@ void srv_tz_temp_test_step(srv_tz_temp_test_inst_t* inst)
         }
     }
 
-    /* 停止序列：先斜坡回 0（保持闭环制动），随后向所有电机发 IDLE 完成停止 */
+    /* 停止序列：速度模式先斜坡回 0；位置模式先回 0°（中心）；随后保持零速并发 IDLE 完成停止 */
     if (inst->stopping) {
+#if (SRV_TZ_TEMP_CTRL_MODE == SRV_TZ_TEMP_CTRL_MODE_SPEED)
         if ((now - inst->stop_start_ms)
             >= (inst->config.ramp_time_ms + inst->config.stop_hold_ms)) {
             for (uint8_t i = 0; i < inst->motor_cnt; i++) {
@@ -383,14 +399,35 @@ void srv_tz_temp_test_step(srv_tz_temp_test_inst_t* inst)
         } else {
             if ((now - inst->last_cmd_ms) >= inst->config.cmd_period_ms) {
                 inst->last_cmd_ms = now;
-#if (SRV_TZ_TEMP_CTRL_MODE == SRV_TZ_TEMP_CTRL_MODE_SPEED)
                 const float send = srv_tz_temp_test_ramp_next(inst, now, 0.0f);
                 srv_tz_temp_test_cmd_velocity_all(inst, send);
-#else
-                srv_tz_temp_test_cmd_velocity_all(inst, 0.0f);
-#endif
             }
         }
+#else
+        /* 位置模式：先 P 控制回 0°，全部到位（或超时）后保持零速，随后发 IDLE */
+        if (inst->return_center) {
+            if ((now - inst->last_cmd_ms) >= inst->config.cmd_period_ms) {
+                inst->last_cmd_ms = now;
+                srv_tz_temp_test_pos_return_center(inst, now);
+            }
+            return;
+        }
+        if ((now - inst->stop_start_ms) >= inst->config.stop_hold_ms) {
+            for (uint8_t i = 0; i < inst->motor_cnt; i++) {
+                srv_tz_temp_test_send_axis_state(inst, inst->motor_ids[i], SRV_TZ_TEMP_AXIS_STATE_IDLE);
+            }
+            inst->stopping = false;
+            inst->running = false;
+            SRV_TZ_TEMP_TEST_LOG_I(inst,
+                "位置耐久已停止：已回 0°并向 %u 台电机发 IDLE（累计在线 %lu ms）",
+                (unsigned)inst->motor_cnt, (unsigned long)inst->online_ms);
+        } else {
+            if ((now - inst->last_cmd_ms) >= inst->config.cmd_period_ms) {
+                inst->last_cmd_ms = now;
+                srv_tz_temp_test_cmd_velocity_all(inst, 0.0f);
+            }
+        }
+#endif
         return;
     }
 
@@ -402,7 +439,7 @@ void srv_tz_temp_test_step(srv_tz_temp_test_inst_t* inst)
     inst->online_last_ms = now;
 
     if ((inst->config.duration_ms != 0U) && (inst->online_ms >= inst->config.duration_ms)) {
-        SRV_TZ_TEMP_TEST_LOG_I(inst, "累计在线 %lu ms 已到，速度耐久自动停止",
+        SRV_TZ_TEMP_TEST_LOG_I(inst, "累计在线 %lu ms 已到，耐久自动停止",
             (unsigned long)inst->online_ms);
         srv_tz_temp_test_stop(inst);
         return;
@@ -974,6 +1011,87 @@ static void srv_tz_temp_test_pos_step(srv_tz_temp_test_inst_t* inst, uint32_t no
         inst->pos_cmd_vel_tps[i] = vel;
 
         srv_tz_temp_test_send_input_vel(inst, inst->motor_ids[i], vel);
+    }
+}
+
+/**
+ * @brief 停止序列回 0°（中心）：P 控制把受控电机带回初始化零点
+ * @param inst 实例句柄
+ * @param now  当前时间 (millis)
+ * @note   全部已锁存电机到位（|位置−中心| ≤ arrive_thresh）或超时后，
+ *        置 return_center=false 并重置 stop_start_ms 进入保持零速+IDLE 阶段；
+ *        未锁存（无反馈/盲发）电机发 0 速保持，不参与到位等待。
+ */
+static void srv_tz_temp_test_pos_return_center(srv_tz_temp_test_inst_t* inst, uint32_t now)
+{
+    bool all_at_center = true;
+    for (uint8_t i = 0; i < inst->motor_cnt; i++) {
+        if (!srv_tz_temp_test_in_control(inst, i)) {
+            continue;
+        }
+        if (!inst->center_latched[i]) {
+            /* 无编码器反馈（盲发/静默）：无法回中，发 0 速保持 */
+            srv_tz_temp_test_send_input_vel(inst, inst->motor_ids[i], 0.0f);
+            continue;
+        }
+
+        const float cur = inst->motor_encoder_turns[i];
+        const float err_s = inst->center_turns[i] - cur;
+        float err_abs = err_s;
+        if (err_abs < 0.0f) {
+            err_abs = -err_abs;
+        }
+
+        if (err_abs <= inst->config.pos_arrive_thresh_turns) {
+            /* 已到中心：下发速度按加减速限制渐变回 0 */
+            const float dt = (float)inst->config.cmd_period_ms / 1000.0f;
+            const float dv_max = inst->config.pos_accel_tps2 * dt;
+            float vel = inst->pos_cmd_vel_tps[i];
+            if (vel > dv_max) {
+                vel -= dv_max;
+            } else if (vel < -dv_max) {
+                vel += dv_max;
+            } else {
+                vel = 0.0f;
+            }
+            inst->pos_cmd_vel_tps[i] = vel;
+            srv_tz_temp_test_send_input_vel(inst, inst->motor_ids[i], vel);
+            continue;
+        }
+
+        all_at_center = false;
+        float desired = err_s * inst->config.pos_kp;
+        if (desired > inst->config.pos_max_vel_tps) {
+            desired = inst->config.pos_max_vel_tps;
+        } else if (desired < -inst->config.pos_max_vel_tps) {
+            desired = -inst->config.pos_max_vel_tps;
+        }
+        const float dt = (float)inst->config.cmd_period_ms / 1000.0f;
+        const float dv_max = inst->config.pos_accel_tps2 * dt;
+        float vel = inst->pos_cmd_vel_tps[i];
+        if (desired > vel) {
+            vel += dv_max;
+            if (vel > desired) {
+                vel = desired;
+            }
+        } else {
+            vel -= dv_max;
+            if (vel < desired) {
+                vel = desired;
+            }
+        }
+        inst->pos_cmd_vel_tps[i] = vel;
+        srv_tz_temp_test_send_input_vel(inst, inst->motor_ids[i], vel);
+    }
+
+    if (all_at_center) {
+        inst->return_center = false;
+        inst->stop_start_ms = now; /* 回 0° 完成，进入保持零速+IDLE 计时 */
+        SRV_TZ_TEMP_TEST_LOG_I(inst, "电机均已回到 0°，准备停止");
+    } else if ((now - inst->return_center_start_ms) >= SRV_TZ_TEMP_POS_RETURN_TIMEOUT_MS) {
+        inst->return_center = false;
+        inst->stop_start_ms = now;
+        SRV_TZ_TEMP_TEST_LOG_W(inst, "回 0° 超时，强制停止");
     }
 }
 #endif /* POSITION */
