@@ -19,16 +19,22 @@
 #include "srv_motor_test_select.h"
 #include "srv_pa430_torque_test.h"
 #include "srv_tongzhi_torque_test.h"
+#include "srv_tz_temp_test.h"
 #include "sw_timer.h"
 
 /* CAN1（FDCAN1）测试模块选择：由 service/srv_motor_test_select.h 的 SRV_MOTOR_TEST_SELECT
- * 统一决定（HT_TORQUE=苇熠位置往复 / HT_TEMP=苇熠速度 / TONGZHI=良志ODrive 位置往复）。
+ * 统一决定（HT_TORQUE=苇熠位置往复 / HT_TEMP=苇熠速度 / TONGZHI=良志ODrive 位置往复 /
+ * TZ_TEMP=良志ODrive 速度模式 24H 耐久）。
  *   - 苇熠模式：RX 经 srv_can_on_rx 路由（srv_can 内部再按选择转发给对应 HT 模块）；
- *   - 良志模式：CH_1 全部帧直连 srv_tongzhi_torque_test_on_rx，srv_can 不参与。
+ *   - 良志 TONGZHI：CH_1 全部帧直连 srv_tongzhi_torque_test_on_rx，srv_can 不参与；
+ *   - 良志 TZ_TEMP：RX 走驱动 msg_fifo 队列（can_task 不回调 on_rx，由 step() 内
+ *     drv_can_rx_pop 消费），TX 经 drv_can_tx_enqueue 入队，srv_can 不参与。
  * CAN2（FDCAN2）测试模块选择：由 service/srv_motor_test_select.h 的
  * SRV_MOTOR_TEST_SELECT_CAN2 统一决定（HT_CAN2=苇熠速度模式往复 CAN2 版 /
- * PA430=Motorevo MIT 力位混合）。两者共用 FDCAN2 独立总线，同一时刻只激活一个，
- * 与 CAN1 上的测试并行运行、互不干扰 */
+ * PA430=Motorevo MIT 力位混合 / TZ_TEMP_CAN2=良志ODrive 速度模式耐久 CAN2 版）。
+ * 三者共用 FDCAN2 独立总线，同一时刻只激活一个，与 CAN1 上的测试并行运行、互不干扰。
+ * TZ_TEMP_CAN2 为 srv_tz_temp_test 的第二个实例（绑 DRV_CAN_CH_2），RX 走驱动
+ * msg_fifo 队列（step() 内 drv_can_rx_pop 消费），TX 经 drv_can_tx_enqueue 入队。 */
 #if SRV_MOTOR_TEST_IS_TONGZHI
 #define CAN1_TEST_INIT srv_tongzhi_torque_test_init
 #define CAN1_TEST_STEP srv_tongzhi_torque_test_step
@@ -46,6 +52,17 @@
 #define CAN1_TEST_STEP srv_ht_temp_test_step
 #define CAN1_TEST_ON_RX srv_can_on_rx
 #define CAN1_TEST_USE_SRV_CAN 1
+#elif SRV_MOTOR_TEST_IS_TZ_TEMP
+/* 良志速度耐久 CAN1 实例（多实例：可再静态分配一个实例绑 DRV_CAN_CH_2 并行运行） */
+static srv_tz_temp_test_inst_t s_tz_temp_inst;
+#define CAN1_TEST_INIT() do { \
+    srv_tz_temp_test_config_default(&s_tz_temp_inst.config); \
+    s_tz_temp_inst.config.can_ch = DRV_CAN_CH_1; \
+    srv_tz_temp_test_init(&s_tz_temp_inst, &s_tz_temp_inst.config); \
+} while (0)
+#define CAN1_TEST_STEP() srv_tz_temp_test_step(&s_tz_temp_inst)
+#define CAN1_TEST_ON_RX(msg) ((void)(msg)) /* 良志速度耐久：RX 走驱动 msg_fifo 队列，step() 内 drv_can_rx_pop 消费 */
+#define CAN1_TEST_USE_SRV_CAN 0
 #else
 #error "SRV_MOTOR_TEST_SELECT 值无效"
 #endif
@@ -58,6 +75,17 @@
 #define CAN2_TEST_INIT srv_pa430_torque_test_init
 #define CAN2_TEST_STEP srv_pa430_torque_test_step
 #define CAN2_TEST_ON_RX srv_pa430_torque_test_on_rx
+#elif SRV_MOTOR_TEST_IS_TZ_TEMP_CAN2
+/* 良志速度耐久 CAN2 实例（与 CAN1 实例可并行，各占一条独立总线） */
+static srv_tz_temp_test_inst_t s_tz_temp_can2_inst;
+#define CAN2_TEST_INIT() do { \
+    srv_tz_temp_test_config_default(&s_tz_temp_can2_inst.config); \
+    s_tz_temp_can2_inst.config.can_ch = DRV_CAN_CH_2; \
+    s_tz_temp_can2_inst.config.pos_amp_turns = 8.5f; /* CAN2 实例往复半幅独立设为 12 转 */ \
+    srv_tz_temp_test_init(&s_tz_temp_can2_inst, &s_tz_temp_can2_inst.config); \
+} while (0)
+#define CAN2_TEST_STEP() srv_tz_temp_test_step(&s_tz_temp_can2_inst)
+#define CAN2_TEST_ON_RX(msg) ((void)(msg)) /* 良志速度耐久：RX 走驱动 msg_fifo 队列，step() 内 drv_can_rx_pop 消费 */
 #else
 #error "SRV_MOTOR_TEST_SELECT_CAN2 值无效"
 #endif

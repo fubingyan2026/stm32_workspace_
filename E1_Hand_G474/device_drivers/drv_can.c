@@ -18,6 +18,7 @@
 #include "fdcan.h"
 #include "log.h"
 #include "main.h"
+#include "msg_fifo.h"
 
 #include <string.h>
 
@@ -67,6 +68,11 @@
 /** @brief 发送失败日志聚合窗口 (ms) */
 #define DRV_CAN_ERR_LOG_PERIOD_MS (1000U)
 
+/** @brief 接收缓冲队列深度（报文数）：ISR 入队 / 主循环 drv_can_rx_pop 出队 */
+#define DRV_CAN_RX_FIFO_DEPTH 16U
+/** @brief 发送缓冲队列深度（报文数）：主循环入队 / drv_can_tx_flush 排空 */
+#define DRV_CAN_TX_FIFO_DEPTH 8U
+
 /* Private types -------------------------------------------------------------*/
 
 typedef struct {
@@ -115,6 +121,14 @@ static const uint8_t s_dlc_to_bytes[16] = {
 /* Private variables ---------------------------------------------------------*/
 
 static drv_can_ctx_t s_ctx[DRV_CAN_CH_NUM];
+
+/** @brief 每通道接收缓冲队列（元素 = drv_can_msg_t，ISR 单生产者） */
+static msg_fifo_t s_rx_fifo[DRV_CAN_CH_NUM];
+static uint8_t s_rx_fifo_buf[DRV_CAN_CH_NUM][DRV_CAN_RX_FIFO_DEPTH * sizeof(drv_can_msg_t)];
+
+/** @brief 每通道发送缓冲队列（元素 = drv_can_msg_t，主循环单生产者） */
+static msg_fifo_t s_tx_fifo[DRV_CAN_CH_NUM];
+static uint8_t s_tx_fifo_buf[DRV_CAN_CH_NUM][DRV_CAN_TX_FIFO_DEPTH * sizeof(drv_can_msg_t)];
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -194,6 +208,12 @@ drv_can_error_t drv_can_init(void)
         }
 
         s_ctx[ch].initialized = true;
+
+        /* 7. 初始化消息缓冲队列（接收/发送各一条，元素 = 完整报文） */
+        (void)msg_fifo_init(&s_rx_fifo[ch], s_rx_fifo_buf[ch],
+            (uint32_t)sizeof(s_rx_fifo_buf[ch]), (uint16_t)sizeof(drv_can_msg_t));
+        (void)msg_fifo_init(&s_tx_fifo[ch], s_tx_fifo_buf[ch],
+            (uint32_t)sizeof(s_tx_fifo_buf[ch]), (uint16_t)sizeof(drv_can_msg_t));
     }
 
     return DRV_CAN_OK;
@@ -207,6 +227,8 @@ void drv_can_deinit_all(void)
         }
         HAL_FDCAN_DeactivateNotification(s_hfdcan[ch], FDCAN_IT_RX_FIFO0_NEW_MESSAGE);
         HAL_FDCAN_Stop(s_hfdcan[ch]);
+        msg_fifo_deinit(&s_rx_fifo[ch]);
+        msg_fifo_deinit(&s_tx_fifo[ch]);
         memset(&s_ctx[ch], 0, sizeof(s_ctx[ch]));
     }
 
@@ -242,7 +264,7 @@ drv_can_error_t drv_can_send(drv_can_channel_t ch, const drv_can_msg_t* msg)
         .TxFrameType = FDCAN_DATA_FRAME,
         .DataLength = bytes_to_fdcan_dlc(msg->dlc),
         .ErrorStateIndicator = FDCAN_ESI_ACTIVE,
-        .BitRateSwitch = FDCAN_BRS_OFF,// msg->is_fd ? FDCAN_BRS_ON : FDCAN_BRS_OFF, /* FD 帧启用位速率切换：仲裁段 1M / 数据段 5M */
+        .BitRateSwitch = FDCAN_BRS_OFF, // msg->is_fd ? FDCAN_BRS_ON : FDCAN_BRS_OFF, /* FD 帧启用位速率切换：仲裁段 1M / 数据段 5M */
         .FDFormat = msg->is_fd ? FDCAN_FD_CAN : FDCAN_CLASSIC_CAN,
         .TxEventFifoControl = FDCAN_NO_TX_EVENTS,
         .MessageMarker = 0,
@@ -344,6 +366,9 @@ void drv_can_poll_status(drv_can_channel_t ch)
                 psr.BusOff ? " BUSOFF" : "");
         }
     }
+
+    /* 发送缓冲队列排空：周期把排队帧推入 FDCAN Tx FIFO（随状态轮询自动执行） */
+    drv_can_tx_flush(ch);
 }
 
 bool drv_can_tx_ready(drv_can_channel_t ch)
@@ -352,6 +377,79 @@ bool drv_can_tx_ready(drv_can_channel_t ch)
         return false;
     }
     return HAL_FDCAN_GetTxFifoFreeLevel(s_hfdcan[ch]) > 0;
+}
+
+/* --- 消息缓冲队列（msg_fifo） --- */
+
+bool drv_can_rx_pop(drv_can_channel_t ch, drv_can_msg_t* msg)
+{
+    if (ch >= DRV_CAN_CH_NUM || !msg) {
+        return false;
+    }
+    if (!s_ctx[ch].initialized) {
+        return false;
+    }
+    return msg_fifo_pop(&s_rx_fifo[ch], msg);
+}
+
+uint32_t drv_can_rx_pending(drv_can_channel_t ch)
+{
+    if (ch >= DRV_CAN_CH_NUM || !s_ctx[ch].initialized) {
+        return 0;
+    }
+    if (s_rx_fifo[ch].element_size == 0U) {
+        return 0;
+    }
+    return (uint32_t)(kfifo_len(&s_rx_fifo[ch].fifo) / s_rx_fifo[ch].element_size);
+}
+
+void drv_can_rx_fifo_reset(drv_can_channel_t ch)
+{
+    if (ch >= DRV_CAN_CH_NUM) {
+        return;
+    }
+    msg_fifo_deinit(&s_rx_fifo[ch]);
+    (void)msg_fifo_init(&s_rx_fifo[ch], s_rx_fifo_buf[ch],
+        (uint32_t)sizeof(s_rx_fifo_buf[ch]), (uint16_t)sizeof(drv_can_msg_t));
+}
+
+drv_can_error_t drv_can_tx_enqueue(drv_can_channel_t ch, const drv_can_msg_t* msg)
+{
+    if (ch >= DRV_CAN_CH_NUM || !msg) {
+        return DRV_CAN_ERROR_INVALID_PARAM;
+    }
+    if (!s_ctx[ch].initialized) {
+        return DRV_CAN_ERROR_UNINITIALIZED;
+    }
+    if (msg->dlc > 64) {
+        return DRV_CAN_ERROR_INVALID_PARAM;
+    }
+    return msg_fifo_push(&s_tx_fifo[ch], msg) ? DRV_CAN_OK : DRV_CAN_ERROR_TX_BUSY;
+}
+
+uint32_t drv_can_tx_pending(drv_can_channel_t ch)
+{
+    if (ch >= DRV_CAN_CH_NUM || !s_ctx[ch].initialized) {
+        return 0;
+    }
+    if (s_tx_fifo[ch].element_size == 0U) {
+        return 0;
+    }
+    return (uint32_t)(kfifo_len(&s_tx_fifo[ch].fifo) / s_tx_fifo[ch].element_size);
+}
+
+void drv_can_tx_flush(drv_can_channel_t ch)
+{
+    if (ch >= DRV_CAN_CH_NUM || !s_ctx[ch].initialized) {
+        return;
+    }
+    while (!msg_fifo_empty(&s_tx_fifo[ch]) && drv_can_tx_ready(ch)) {
+        drv_can_msg_t msg;
+        if (!msg_fifo_pop(&s_tx_fifo[ch], &msg)) {
+            break;
+        }
+        (void)drv_can_send(ch, &msg);
+    }
 }
 
 /* ===== HAL 回调 ===== */
@@ -393,6 +491,10 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef* hfdcan, uint32_t RxFifo0ITs)
         uint32_t dlc_val = rx.DataLength;
         msg.dlc = (dlc_val < 16) ? s_dlc_to_bytes[dlc_val] : 0;
     }
+
+    /* 缓冲队列：ISR 写入（单生产者），主循环 drv_can_rx_pop 出队消费。
+       旧接收回调仍保留调用，两者并存时同帧会被各处理一次 */
+    (void)msg_fifo_push(&s_rx_fifo[ch], &msg);
 
     if (s_ctx[ch].rx_callback) {
         s_ctx[ch].rx_callback(ch, &msg);

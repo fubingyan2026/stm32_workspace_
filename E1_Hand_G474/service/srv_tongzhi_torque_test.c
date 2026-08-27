@@ -287,7 +287,6 @@ static void srv_tongzhi_torque_test_err_print(uint8_t node, uint32_t code);
 
 void srv_tongzhi_torque_test_init(void)
 {
-    delay_ms(2000);
 #if SRV_TONGZHI_AUTO_START
     srv_tongzhi_torque_test_start(); /* 测试模式：心跳被动发现 + 往复驱动 */
 #endif
