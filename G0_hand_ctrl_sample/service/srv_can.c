@@ -96,7 +96,7 @@ void srv_can_process(void)
 
 void srv_can_send_heartbeat(void)
 {
-    if (!s_initialized || !drv_can_tx_ready(DRV_CAN_CH_1)) {
+    if (!s_initialized) {
         return;
     }
 

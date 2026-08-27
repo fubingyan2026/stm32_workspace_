@@ -1,13 +1,18 @@
 /**
  * @file    drv_can.h
  * @author  maximillian
- * @version V1.0.0
+ * @version V2.0.0
  * @date    2026-08-12
- * @brief   CAN 设备驱动（经典 bxCAN，中断接收，句柄自包含）
+ * @brief   CAN 设备驱动（经典 bxCAN，中断接收 + msg_fifo 收发缓冲队列）
  * @attention
  *
  * G0 手套 CubeMX 配置 CAN1 (PA11 RX / PA12 TX)。句柄表内置在 drv_can.c 中，
  * drv_can_init() 无需传参。经典 bxCAN：标准帧 11-bit ID，扩展帧 29-bit ID，DLC 0-8。
+ *
+ * 参考 E1_Hand_G474 的 drv_can 队列架构：
+ *   - RX：中断回调 HAL_CAN_RxFifo0MsgPendingCallback 入队 msg_fifo，
+ *         主循环 drv_can_rx_pop 出队消费（单生产者/单消费者，ISR 安全）
+ *   - TX：主循环 drv_can_tx_enqueue 入队，drv_can_tx_flush 排空到 bxCAN TX 邮箱
  */
 
 #ifndef __DRV_CAN_H
@@ -67,36 +72,60 @@ void drv_can_deinit_all(void);
 
 bool drv_can_is_initialized(drv_can_channel_t ch);
 
-/* --- 发送 --- */
+/* --- 发送（经 TX 队列） --- */
 
 /**
- * @brief 发送 CAN 报文（非阻塞）
- * @return DRV_CAN_ERROR_TX_BUSY 表示无可用邮箱
+ * @brief 发送 CAN 报文（非阻塞，经 TX 缓冲队列）
+ * @param ch  通道号
+ * @param msg 报文指针
+ * @return DRV_CAN_ERROR_TX_BUSY 表示 TX 队列满
+ * @note  队列中的帧由 drv_can_tx_flush() 排空到 bxCAN TX 邮箱
  */
 drv_can_error_t drv_can_send(drv_can_channel_t ch, const drv_can_msg_t* msg);
 
 /**
- * @brief 查询 TX 邮箱是否空闲
- * @param ch 通道号
- * @return true=有空闲邮箱
+ * @brief 查询 TX 队列中的待发报文数
  */
-bool drv_can_tx_ready(drv_can_channel_t ch);
+uint32_t drv_can_tx_pending(drv_can_channel_t ch);
 
 /**
- * @brief 查询全部 TX 邮箱是否空闲（所有已提交帧均已发出）
- * @param ch 通道号
- * @return true=3 个邮箱全部空闲；未初始化视作空闲
- * @note  bxCAN TSR.TME 位由硬件在帧传输完成后置位，无需开启 TX 中断。
+ * @brief 排空 TX 缓冲队列到 bxCAN TX 邮箱（主循环/任务周期调用）
+ * @note  在 can_task 的 sw_timer 回调中调用
+ */
+void drv_can_tx_flush(drv_can_channel_t ch);
+
+/**
+ * @brief 查询 bxCAN TX 邮箱是否空闲（3 邮箱全空）
  */
 bool drv_can_tx_all_done(drv_can_channel_t ch);
 
-/* --- 接收回调 --- */
+/* --- 接收（经 RX 队列） --- */
+
+/**
+ * @brief 出队一帧接收报文（主循环调用，单消费者）
+ * @return true 成功；false 队列空
+ * @note  接收帧由中断回调自动入队
+ */
+bool drv_can_rx_pop(drv_can_channel_t ch, drv_can_msg_t* msg);
+
+/**
+ * @brief 查询 RX 缓冲队列中的报文数
+ */
+uint32_t drv_can_rx_pending(drv_can_channel_t ch);
+
+/**
+ * @brief 清空 RX 接收缓冲队列
+ */
+void drv_can_rx_fifo_reset(drv_can_channel_t ch);
+
+/* --- 接收回调（可选，与 RX 队列并存时同帧会被两处各处理一次） --- */
 
 /**
  * @brief 注册接收回调（每通道独立注册）
  * @param ch       通道号
  * @param callback 回调函数（NULL=取消）
- * @note  回调在中断上下文中执行，应尽量简短
+ * @note  回调在中断上下文中执行，应尽量简短。
+ *        若使用 drv_can_rx_pop 队列消费，则无需注册本回调
  */
 drv_can_error_t drv_can_register_rx_callback(drv_can_channel_t ch,
     drv_can_rx_callback_t callback);
@@ -105,16 +134,11 @@ drv_can_error_t drv_can_register_rx_callback(drv_can_channel_t ch,
 
 /**
  * @brief 查询通道是否处于 Bus-Off 状态
- * @param ch 通道号
- * @return true=处于 Bus-Off（内核已置 ESR.BOFF 离线）
  */
 bool drv_can_is_bus_off(drv_can_channel_t ch);
 
 /**
  * @brief 从 Bus-Off 自动恢复（保留滤波器与接收回调）
- * @param ch 通道号
- * @return DRV_CAN_OK 表示已恢复或本就无需恢复
- * @note  内部经 HAL_CAN_Stop/Start 清 INIT，触发内核 128×11 隐性位恢复。
  */
 drv_can_error_t drv_can_recover(drv_can_channel_t ch);
 

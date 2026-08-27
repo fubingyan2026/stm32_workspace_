@@ -16,11 +16,12 @@
 #include "can_task.h"
 #include "drv_log_uart.h"
 #include "drv_systick.h"
+#include "drv_uart.h"
+#include "key_task.h"
 #include "led_task.h"
 #include "log.h"
 #include "log_task.h"
 #include "sample_task.h"
-#include "srv_log_flash.h"
 #include "sw_timer.h"
 
 int app_main(void)
@@ -28,11 +29,11 @@ int app_main(void)
     /* 系统节拍（延时/时间戳） */
     delay_init();
 
+    /* 通用串口（USART1，DMA + IDLE 接收） */
+    drv_uart_init();
+
     /* 日志输出（USART2 DMA，log_task 内部完成 log_init + drv_log_uart_init） */
     log_task_init();
-
-    /* 警告/错误日志 Flash 持久化（依赖 log 模块已初始化） */
-    srv_log_flash_init();
 
     /* CAN 通信 */
     can_task_init();
@@ -42,6 +43,9 @@ int app_main(void)
 
     /* ADC 采样（VIN/V_IMON） */
     sample_task_init();
+
+    /* 按键轮询（KEY1/KEY2） */
+    key_task_init();
 
     LOG_I("app_main", "==== G0_Hand 系统启动 ====");
 

@@ -19,8 +19,6 @@
 #include "drv_stm32h7_flash.h"
 #elif defined(HAL_FLASH_CHIP_STM32G0)
 #include "drv_stm32g0_flash.h"
-#elif defined(HAL_FLASH_CHIP_STM32F1)
-#include "drv_stm32f1_flash.h"
 #else
 #error "No HAL_FLASH_CHIP_xxx defined"
 #endif
@@ -39,9 +37,6 @@ extern hal_flash_dev_t h7_dev;
 #elif defined(HAL_FLASH_CHIP_STM32G0)
 extern hal_flash_dev_t g0_dev;
 #define FLASH_DEV g0_dev
-#elif defined(HAL_FLASH_CHIP_STM32F1)
-extern hal_flash_dev_t f1_dev;
-#define FLASH_DEV f1_dev
 #endif
 
 hal_flash_dev_t* hal_flash_dev(void)

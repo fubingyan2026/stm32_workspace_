@@ -65,7 +65,7 @@
 /* --- 默认配置（srv_tz_temp_test_config_default 用） --- */
 
 /** @brief 默认目标速度（转/s）：正转发 +SPEED，反转发 -SPEED，停发 0 */
-#define SRV_TZ_TEMP_DEF_SPEED_TPS (6.0f)
+#define SRV_TZ_TEMP_DEF_SPEED_TPS (18.0f)
 /** @brief 默认主机侧软斜坡时长 (ms) */
 #define SRV_TZ_TEMP_DEF_RAMP_TIME_MS 2000U
 /** @brief 默认速度命令帧发送周期 (ms) */

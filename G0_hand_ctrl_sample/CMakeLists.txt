@@ -48,21 +48,19 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # 批量收集源代码目录
 aux_source_directory(${CMAKE_SOURCE_DIR}/tasks TASKS)
 aux_source_directory(${CMAKE_SOURCE_DIR}/device_drivers DEV_DRV)
-aux_source_directory(${CMAKE_SOURCE_DIR}/../public_layer/device_drivers/hal_flash DEV_DRV_HAL_FLASH)
 
 aux_source_directory(${CMAKE_SOURCE_DIR}/service SERVICE)
+aux_source_directory(${CMAKE_SOURCE_DIR}/applications APP)
 
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     ${DEV_DRV}
-    ${DEV_DRV_HAL_FLASH}
     ${SERVICE}
     ${TASKS}
-    # 共享服务/任务（public_layer，App 的 LED/日志使用）
+    ${APP}
+    # 共享服务（public_layer，App 的 LED 使用）
     ${CMAKE_SOURCE_DIR}/../public_layer/service/srv_signal.c
-    ${CMAKE_SOURCE_DIR}/../public_layer/service/srv_log_flash.c
-    ${CMAKE_SOURCE_DIR}/../public_layer/task/log_task.c
 )
 
 # Add include paths
@@ -71,22 +69,17 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     tasks
     device_drivers
     service
-    ../public_layer/device_drivers/hal_flash
+    applications
     ../public_layer/service
-    ../public_layer/task
+    ../public_layer/m_middlewares/key_base
 )
 
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined symbols
-    HAL_FLASH_CHIP_STM32F1
     # mpaland_printf: STM32F103 Cortex-M3 无 FPU，禁用浮点输出
     PRINTF_DISABLE_SUPPORT_FLOAT
     PRINTF_DISABLE_SUPPORT_EXPONENTIAL
-    # srv_log_flash 参数配置：G0 预留 Flash 末尾 8KB（8 × 1KB 页）
-    SRV_LOG_FLASH_AREA_START=0x0800E000U
-    SRV_LOG_FLASH_AREA_SIZE=8*1024U
-    SRV_LOG_FLASH_SECTOR_SIZE=RING_STORAGE_SECTOR_1K
 )
 
 # Remove wrong libob.a library dependency when using cpp files

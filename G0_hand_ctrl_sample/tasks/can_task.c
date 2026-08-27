@@ -6,7 +6,7 @@
 
 /**
  * @file    can_task.c
- * @brief   CAN 通信任务 — sw_timer 驱动 srv_can 处理 + 周期心跳
+ * @brief   CAN 通信任务 — sw_timer 驱动：RX 队列消费 + srv_can 处理 + TX 队列排空 + 心跳
  */
 
 #include "can_task.h"
@@ -48,7 +48,7 @@ static uint16_t s_heartbeat_ms;
 
 static void can_timer_cb(void* user_data);
 
-static void can_rx_callback(drv_can_channel_t ch, const drv_can_msg_t* msg);
+static void can_poll_rx(void);
 
 /* Exported functions --------------------------------------------------------*/
 
@@ -61,8 +61,6 @@ void can_task_init(void)
     }
 
     srv_can_init();
-
-    drv_can_register_rx_callback(DRV_CAN_CH_1, can_rx_callback);
 
     s_heartbeat_ms = 0;
 
@@ -88,7 +86,13 @@ static void can_timer_cb(void* user_data)
         (void)drv_can_recover(DRV_CAN_CH_1);
     }
 
+    /* RX 队列消费 → srv_can 协议分发（主循环上下文，非 ISR） */
+    can_poll_rx();
+
     srv_can_process();
+
+    /* TX 队列排空到 bxCAN TX 邮箱 */
+    drv_can_tx_flush(DRV_CAN_CH_1);
 
     /* 周期心跳（链路验证） */
     s_heartbeat_ms += TASK_PERIOD_MS;
@@ -98,8 +102,13 @@ static void can_timer_cb(void* user_data)
     }
 }
 
-static void can_rx_callback(drv_can_channel_t ch, const drv_can_msg_t* msg)
+static void can_poll_rx(void)
 {
-    (void)ch;
-    srv_can_on_rx(msg);
+    drv_can_msg_t msg;
+    while (drv_can_rx_pending(DRV_CAN_CH_1) > 0U) {
+        if (!drv_can_rx_pop(DRV_CAN_CH_1, &msg)) {
+            break;
+        }
+        srv_can_on_rx(&msg);
+    }
 }

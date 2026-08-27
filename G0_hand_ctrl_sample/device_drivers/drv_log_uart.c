@@ -29,7 +29,7 @@
 /* 模块日志开关 ----------------------------------------------------------------*/
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
-#define DRV_LOG_UART_LOG_ENABLE 1
+#define DRV_LOG_UART_LOG_ENABLE 0
 
 #if DRV_LOG_UART_LOG_ENABLE
 #define DRV_LOG_UART_LOG_E(...) LOG_E("drv_log_uart", __VA_ARGS__)
@@ -69,6 +69,13 @@ static void drv_log_uart_sync_rx_dma(void);
 
 static void drv_log_uart_restart_rx(void);
 
+/* 注册到 HAL 的 per-instance 回调（热路径，禁止日志） */
+static void drv_log_uart_tx_cplt_cb(UART_HandleTypeDef* huart);
+
+static void drv_log_uart_rx_event_cb(UART_HandleTypeDef* huart, uint16_t size);
+
+static void drv_log_uart_error_cb(UART_HandleTypeDef* huart);
+
 /* Exported functions --------------------------------------------------------*/
 
 /**
@@ -93,6 +100,14 @@ drv_log_uart_error_t drv_log_uart_init(void)
         LOG_HUART->hdmarx->Init.Mode = DMA_CIRCULAR;
         LOG_HUART->hdmarx->Instance->CCR |= DMA_CCR_CIRC;
     }
+
+    /* 注册 per-instance 回调（USE_HAL_UART_REGISTER_CALLBACKS=1 时 HAL IRQ
+       按 huart->xxxCallback 指针分发，本驱动独占 huart2） */
+    HAL_UART_RegisterCallback(LOG_HUART, HAL_UART_TX_COMPLETE_CB_ID,
+        drv_log_uart_tx_cplt_cb);
+    HAL_UART_RegisterCallback(LOG_HUART, HAL_UART_ERROR_CB_ID,
+        drv_log_uart_error_cb);
+    HAL_UART_RegisterRxEventCallback(LOG_HUART, drv_log_uart_rx_event_cb);
 
     if (HAL_UARTEx_ReceiveToIdle_DMA(LOG_HUART, s_rx_dma_buf,
             sizeof(s_rx_dma_buf)) != HAL_OK) {
@@ -235,12 +250,12 @@ static void drv_log_uart_restart_rx(void)
     HAL_UARTEx_ReceiveToIdle_DMA(LOG_HUART, s_rx_dma_buf, sizeof(s_rx_dma_buf));
 }
 
-/* ===== HAL 弱回调（G0 仅一路 UART，全局回调；USE_HAL_UART_REGISTER_CALLBACKS=0） ===== */
+/* ===== 注册到 HAL 的 per-instance 回调（USE_HAL_UART_REGISTER_CALLBACKS=1） ===== */
 
 /**
- * @brief UART TX DMA 完成回调
+ * @brief UART TX DMA 完成回调（per-instance）
  */
-void HAL_UART_TxCpltCallback(UART_HandleTypeDef* huart)
+static void drv_log_uart_tx_cplt_cb(UART_HandleTypeDef* huart)
 {
     if (huart == LOG_HUART) {
         s_tx_busy = false;
@@ -248,11 +263,11 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef* huart)
 }
 
 /**
- * @brief UART RX IDLE 事件回调 — 同步 DMA 写指针到 kfifo
+ * @brief UART RX IDLE 事件回调（per-instance）— 同步 DMA 写指针到 kfifo
  */
-void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef* huart, uint16_t Size)
+static void drv_log_uart_rx_event_cb(UART_HandleTypeDef* huart, uint16_t size)
 {
-    (void)Size;
+    (void)size;
 
     if (huart == LOG_HUART) {
         drv_log_uart_sync_rx_dma();
@@ -260,9 +275,9 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef* huart, uint16_t Size)
 }
 
 /**
- * @brief UART 错误回调 — 丢弃缓冲数据并重启接收
+ * @brief UART 错误回调（per-instance）— 丢弃缓冲数据并重启接收
  */
-void HAL_UART_ErrorCallback(UART_HandleTypeDef* huart)
+static void drv_log_uart_error_cb(UART_HandleTypeDef* huart)
 {
     if (huart != LOG_HUART) {
         return;
