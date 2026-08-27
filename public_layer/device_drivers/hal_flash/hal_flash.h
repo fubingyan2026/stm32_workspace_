@@ -25,6 +25,7 @@
  *   HAL_FLASH_CHIP_STM32G4  — 选择 STM32G4 驱动
  *   HAL_FLASH_CHIP_STM32H7  — 选择 STM32H7 驱动 (H723, FLASHWORD 256-bit)
  *   HAL_FLASH_CHIP_STM32G0  — 选择 STM32G0 驱动 (2K 页, 64-bit 双字)
+ *   HAL_FLASH_CHIP_STM32F1  — 选择 STM32F1 驱动 (1K 页, 32-bit 字)
  *
  * 锁策略:
  *   默认使用裸机嵌套中断锁 (__disable_irq/__enable_irq)；
@@ -48,7 +49,7 @@ extern "C" {
  * 可在编译选项 (-DHAL_FLASH_CHIP_STM32F4) 中定义，
  * 也可在下方手动取消注释。
  */
-#if !defined(HAL_FLASH_CHIP_STM32F4) && !defined(HAL_FLASH_CHIP_STM32G4) && !defined(HAL_FLASH_CHIP_STM32H7) && !defined(HAL_FLASH_CHIP_STM32G0)
+#if !defined(HAL_FLASH_CHIP_STM32F4) && !defined(HAL_FLASH_CHIP_STM32G4) && !defined(HAL_FLASH_CHIP_STM32H7) && !defined(HAL_FLASH_CHIP_STM32G0) && !defined(HAL_FLASH_CHIP_STM32F1)
 /* 默认选择 H7，可根据项目修改 */
 #define HAL_FLASH_CHIP_STM32H7
 #endif

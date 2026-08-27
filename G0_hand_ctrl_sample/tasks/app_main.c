@@ -1,0 +1,55 @@
+/*
+ * Copyright (c) 2026 G0_Hand 项目组
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
+
+/**
+ * @file    app_main.c
+ * @brief   G0 遥操作手套主入口
+ *
+ * 初始化硬件后进入主循环，运行 sw_timer 协作式调度。
+ */
+
+#include "app_main.h"
+
+#include "can_task.h"
+#include "drv_log_uart.h"
+#include "drv_systick.h"
+#include "led_task.h"
+#include "log.h"
+#include "log_task.h"
+#include "sample_task.h"
+#include "srv_log_flash.h"
+#include "sw_timer.h"
+
+int app_main(void)
+{
+    /* 系统节拍（延时/时间戳） */
+    delay_init();
+
+    /* 日志输出（USART2 DMA，log_task 内部完成 log_init + drv_log_uart_init） */
+    log_task_init();
+
+    /* 警告/错误日志 Flash 持久化（依赖 log 模块已初始化） */
+    srv_log_flash_init();
+
+    /* CAN 通信 */
+    can_task_init();
+
+    /* LED 状态指示（TIM1_CH1 呼吸，依赖 drv_pwm） */
+    led_task_init();
+
+    /* ADC 采样（VIN/V_IMON） */
+    sample_task_init();
+
+    LOG_I("app_main", "==== G0_Hand 系统启动 ====");
+
+    /* 主循环：sw_timer 驱动全部周期任务 */
+    for (;;) {
+        sw_timer_tick(millis());
+        sw_timer_task();
+    }
+
+    return 0;
+}
