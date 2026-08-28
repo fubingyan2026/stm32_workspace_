@@ -37,7 +37,7 @@
 /* Private constants ---------------------------------------------------------*/
 
 #define TASK_PERIOD_MS 10U
-#define HEARTBEAT_INTERVAL_MS 1000U
+#define HEARTBEAT_INTERVAL_MS 500U
 
 /* Private variables ---------------------------------------------------------*/
 

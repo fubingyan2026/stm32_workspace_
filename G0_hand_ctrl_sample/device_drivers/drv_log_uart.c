@@ -47,7 +47,7 @@
 #define DRV_LOG_UART_RX_CIRC_BUF_SIZE (256U)
 
 /** @brief 日志串口 HAL 句柄（来自 CubeMX usart.c: USART2） */
-#define LOG_HUART (&huart2)
+#define LOG_HUART (&huart1)
 
 /* Private variables ---------------------------------------------------------*/
 

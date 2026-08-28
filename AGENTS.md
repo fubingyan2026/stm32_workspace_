@@ -23,6 +23,7 @@ STM32 固件 monorepo 工作区（git 根目录）：多个独立的 CubeMX 工�
 
 ## 分层架构（严格只向下依赖）
 ```
+applications/   app_* 业务策略（如 app_rgb_status：LED 灯效），依赖 service
 tasks/          xxx_task_init() + sw_timer 回调
 service/        srv_* 业务逻辑（FSM/协议/算法）
 m_middlewares/  平台无关通用模块——禁止含 HAL

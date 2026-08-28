@@ -1,15 +1,16 @@
 /**
  * @file    drv_uart.c
  * @author  maximillian
- * @version V1.0.0
+ * @version V2.0.0
  * @date    2026-08-12
- * @brief   通用串口设备驱动实现（USART1，DMA 输出 + DMA circular + IDLE 中断接收）
+ * @brief   通用串口设备驱动实现（DMA 输出 + DMA circular + IDLE → kfifo 环形缓冲）
  * @attention
  *
  * 参考 E1_Hand_G474 的 drv_uart 设计（per-instance HAL 回调）：
  *   - TX：DMA normal，gState + s_tx_busy 双状态检忙
- *   - RX：DMA circular + IDLE 事件 (ReceiveToIdle)，总线空闲即按实际长度上抛，
- *     天然帧分块、错位自愈
+ *   - RX：DMA circular + IDLE 事件 (ReceiveToIdle)，与 drv_log_uart 同构：
+ *     IDLE 中断只做 kfifo_move_in 推进读指针（不重启、不上抛），
+ *     消费方主循环轮询 drv_uart_rx_read/available
  *   - HAL 回调通过 HAL_UART_RegisterCallback/RegisterRxEventCallback 注册
  *     （USE_HAL_UART_REGISTER_CALLBACKS=1），与 drv_log_uart 互不冲突
  *
@@ -20,8 +21,10 @@
 /* Includes ------------------------------------------------------------------*/
 #include "drv_uart.h"
 
+#include "kfifo.h"
 #include "log.h"
 #include "main.h"
+#include "msg_fifo.h"
 #include "usart.h"
 
 #include <string.h>
@@ -45,24 +48,29 @@
 
 /* Private constants ---------------------------------------------------------*/
 
-/** @brief RX DMA 单缓冲字节数（IDLE 事件分帧） */
-#define DRV_UART_RX_BUF_SIZE (32U)
-
-/** @brief TX 最大单次发送量 */
-#define DRV_UART_TX_BUF_SIZE (128U)
+/** @brief RX DMA circular 缓冲区大小（字节，必须为 2 的幂，与接收 kfifo 共用） */
+#define DRV_UART_RX_BUF_SIZE (256U)
 
 /** @brief 错误日志聚合窗口 (ms)：窗口内的错误只在首次打印，附累计次数 */
 #define DRV_UART_ERR_LOG_PERIOD_MS (1000U)
 
 /* Private types -------------------------------------------------------------*/
 
+/** @brief TX 队列元素：单帧数据（长度 + 负载） */
+typedef struct {
+    uint16_t len;
+    uint8_t data[DRV_UART_TX_MAX_FRAME_LEN];
+} drv_uart_tx_frame_t;
+
 typedef struct {
     UART_HandleTypeDef* huart;          /**< HAL UART 句柄 */
-    uint8_t             rx_buf[DRV_UART_RX_BUF_SIZE]; /**< RX DMA 缓冲 */
-    uint8_t             tx_buf[DRV_UART_TX_BUF_SIZE]; /**< TX DMA 发送缓冲 */
+    uint8_t             rx_buf[DRV_UART_RX_BUF_SIZE]; /**< RX DMA circular 缓冲（与 kfifo 共用） */
+    uint8_t             tx_dma_buf[DRV_UART_TX_MAX_FRAME_LEN]; /**< TX DMA 缓冲（持久，防 DMA 读被覆盖） */
+    kfifo_t             rx_fifo;        /**< 接收 kfifo（环形缓冲，SPSC：ISR 写指针/主循环读） */
+    msg_fifo_t          tx_fifo;        /**< 发送缓冲队列（帧级，忙时入队不丢帧） */
+    uint8_t             tx_fifo_buf[DRV_UART_TX_QUEUE_DEPTH * sizeof(drv_uart_tx_frame_t)];
     bool                tx_busy;        /**< TX DMA 传输中 */
     bool                initialized;    /**< 初始化标志 */
-    drv_uart_rx_callback_t rx_callback; /**< 接收回调（中断中执行） */
     uint32_t            err_count;      /**< 日志聚合窗口内错误累计次数 */
     uint32_t            err_flags;      /**< 日志聚合窗口内错误标志并集 */
     uint32_t            err_last_log;   /**< 上次错误日志时间戳 (ms) */
@@ -71,17 +79,17 @@ typedef struct {
 /* Private variables ---------------------------------------------------------*/
 
 static drv_uart_inst_t s_inst[DRV_UART_CH_NUM] = {
-    /* CH_1 (USART1)：通用串口 */
-    [DRV_UART_CH_1] = { .huart = &huart1 },
-    /* CH_2 (USART2) 已由独立 drv_log_uart 控制台驱动接管，此处置空跳过 */
-    [DRV_UART_CH_2] = { .huart = NULL },
+    /* CH_1 (USART1) 已由独立 drv_log_uart 控制台驱动接管，此处置空跳过 */
+    [DRV_UART_CH_1] = { .huart = NULL },
+    /* CH_2 (USART2)：通用串口 */
+    [DRV_UART_CH_2] = { .huart = &huart2 },
 };
 
 /* Private functions prototypes ----------------------------------------------*/
 
 /**
  * @brief 启动/重启 RX DMA 到缓冲（ISR 与主循环共用）
- * @note  IDLE 事件模式：总线空闲即上报本次已收长度并重启，天然按帧分块。
+ * @note  DMA circular：IDLE 事件后不停止，硬件继续接收，只需同步 kfifo 读指针。
  * @return true=启动成功；false=HAL 句柄忙等，需主循环兜底重试
  */
 static bool drv_uart_rx_start(drv_uart_inst_t* inst)
@@ -97,6 +105,21 @@ static bool drv_uart_rx_start(drv_uart_inst_t* inst)
         return false;
     }
     return true;
+}
+
+/**
+ * @brief 将 RX circular DMA 写指针同步到接收 kfifo（IDLE 中断回调中调用）
+ */
+static void drv_uart_sync_rx_dma(drv_uart_inst_t* inst)
+{
+    if (inst->huart == NULL || inst->huart->hdmarx == NULL) {
+        return;
+    }
+
+    const uint32_t remaining = __HAL_DMA_GET_COUNTER(inst->huart->hdmarx);
+    const uint32_t dma_hw_index = DRV_UART_RX_BUF_SIZE - remaining;
+
+    kfifo_move_in(&inst->rx_fifo, dma_hw_index);
 }
 
 /* 注册到 HAL 的 per-instance 回调 */
@@ -117,13 +140,20 @@ drv_uart_error_t drv_uart_init(void)
     for (uint32_t ch = 0; ch < DRV_UART_CH_NUM; ch++) {
         drv_uart_inst_t* inst = &s_inst[ch];
 
-        /* CH_2 (USART2) 由 drv_log_uart 接管，跳过 */
+        /* CH_1 (USART1) 由 drv_log_uart 接管，跳过 */
         if (inst->huart == NULL) {
             continue;
         }
 
         inst->tx_busy = false;
         inst->initialized = false;
+
+        /* 接收 kfifo 与 DMA 共用缓冲，kfifo_move_in 按 DMA 写指针推进 */
+        kfifo_init(&inst->rx_fifo, inst->rx_buf, sizeof(inst->rx_buf), NULL);
+
+        /* TX 发送缓冲队列（帧级，元素 = drv_uart_tx_frame_t） */
+        (void)msg_fifo_init(&inst->tx_fifo, inst->tx_fifo_buf,
+            (uint32_t)sizeof(inst->tx_fifo_buf), (uint16_t)sizeof(drv_uart_tx_frame_t));
 
         if (!drv_uart_rx_start(inst)) {
             UART_LOG_E("ch%u rx start failed at init (HAL state=%d)",
@@ -154,6 +184,8 @@ void drv_uart_deinit_all(void)
         }
 
         HAL_UART_DMAStop(inst->huart);
+        kfifo_reset(&inst->rx_fifo);
+        msg_fifo_deinit(&inst->tx_fifo);
 
         inst->tx_busy = false;
         inst->initialized = false;
@@ -168,7 +200,53 @@ bool drv_uart_is_initialized(drv_uart_channel_t ch)
     return s_inst[ch].initialized;
 }
 
-/* --- TX --- */
+/* --- 错误恢复 --- */
+
+drv_uart_error_t drv_uart_recover(drv_uart_channel_t ch)
+{
+    if (ch >= DRV_UART_CH_NUM) {
+        return DRV_UART_ERROR_INVALID_PARAM;
+    }
+    drv_uart_inst_t* inst = &s_inst[ch];
+    if (!inst->initialized || inst->huart == NULL) {
+        return DRV_UART_ERROR_UNINITIALIZED;
+    }
+
+    const uint32_t err = HAL_UART_GetError(inst->huart);
+    const HAL_UART_StateTypeDef state = HAL_UART_GetState(inst->huart);
+
+    /* 无错误且 RX 正在运行（DMA circular 正常工作中）→ 无需恢复 */
+    if (err == HAL_UART_ERROR_NONE && state == HAL_UART_STATE_BUSY_RX) {
+        return DRV_UART_OK;
+    }
+
+    UART_LOG_W("ch%u recover: err=0x%08lX state=%d，重置接收链路",
+        (unsigned)ch + 1U, (unsigned long)err, (int)state);
+
+    /* 中止当前接收（阻塞式，释放 DMA + 清 RX 状态，IDLE 中断一并关闭） */
+    if (state != HAL_UART_STATE_READY) {
+        (void)HAL_UART_AbortReceive(inst->huart);
+    }
+
+    /* 丢弃残留接收数据并复位 kfifo */
+    kfifo_reset(&inst->rx_fifo);
+
+    /* 重启 RX DMA（含重使能 IDLE 中断），失败返回未初始化 */
+    if (!drv_uart_rx_start(inst)) {
+        UART_LOG_E("ch%u recover: rx restart failed (state=%d)",
+            (unsigned)ch + 1U, (int)HAL_UART_GetState(inst->huart));
+        return DRV_UART_ERROR_UNINITIALIZED;
+    }
+
+    /* TX 侧若已恢复 READY 则释放卡死的忙标志 */
+    if (inst->huart->gState == HAL_UART_STATE_READY) {
+        inst->tx_busy = false;
+    }
+
+    return DRV_UART_OK;
+}
+
+/* --- TX（经 msg_fifo 发送缓冲队列） --- */
 
 drv_uart_error_t drv_uart_send(drv_uart_channel_t ch, const uint8_t* data, uint32_t len)
 {
@@ -184,22 +262,29 @@ drv_uart_error_t drv_uart_send(drv_uart_channel_t ch, const uint8_t* data, uint3
 
     drv_uart_inst_t* inst = &s_inst[ch];
 
-    if (inst->tx_busy || inst->huart->gState != HAL_UART_STATE_READY) {
-        return DRV_UART_ERROR_TX_BUSY;
-    }
-
-    if (len > DRV_UART_TX_BUF_SIZE) {
+    if (len > DRV_UART_TX_MAX_FRAME_LEN) {
         return DRV_UART_ERROR_INVALID_PARAM;
     }
 
-    /* 拷贝到内部持久缓冲区再启动 DMA，防止调用者栈回收后 DMA 读脏数据 */
-    memcpy(inst->tx_buf, data, len);
-
-    if (HAL_UART_Transmit_DMA(inst->huart, inst->tx_buf, (uint16_t)len) != HAL_OK) {
-        return DRV_UART_ERROR_TX_BUSY;
+    /* TX 空闲：拷贝到持久 DMA 缓冲后立即发送（不进队列） */
+    if (!inst->tx_busy && inst->huart->gState == HAL_UART_STATE_READY
+        && msg_fifo_empty(&inst->tx_fifo)) {
+        memcpy(inst->tx_dma_buf, data, len);
+        if (HAL_UART_Transmit_DMA(inst->huart, inst->tx_dma_buf,
+                (uint16_t)len) == HAL_OK) {
+            inst->tx_busy = true;
+            return DRV_UART_OK;
+        }
     }
 
-    inst->tx_busy = true;
+    /* TX 忙或 DMA 启动失败：入队缓冲，由 drv_uart_tx_flush() 排空，保证不丢帧 */
+    drv_uart_tx_frame_t frame;
+    frame.len = (uint16_t)len;
+    memcpy(frame.data, data, len);
+
+    if (!msg_fifo_push(&inst->tx_fifo, &frame)) {
+        return DRV_UART_ERROR_TX_BUSY; /* 队列满才丢帧 */
+    }
 
     return DRV_UART_OK;
 }
@@ -213,13 +298,68 @@ bool drv_uart_is_tx_busy(drv_uart_channel_t ch)
     return s_inst[ch].tx_busy || s_inst[ch].huart->gState != HAL_UART_STATE_READY;
 }
 
-/* --- RX --- */
-
-void drv_uart_register_rx_callback(drv_uart_channel_t ch,
-    drv_uart_rx_callback_t callback)
+void drv_uart_tx_flush(drv_uart_channel_t ch)
 {
-    if (ch >= DRV_UART_CH_NUM) return;
-    s_inst[ch].rx_callback = callback;
+    if (ch >= DRV_UART_CH_NUM || !s_inst[ch].initialized) {
+        return;
+    }
+
+    drv_uart_inst_t* inst = &s_inst[ch];
+
+    while (inst->huart->gState == HAL_UART_STATE_READY
+        && !inst->tx_busy
+        && !msg_fifo_empty(&inst->tx_fifo)) {
+        drv_uart_tx_frame_t frame;
+        if (!msg_fifo_pop(&inst->tx_fifo, &frame)) {
+            break;
+        }
+
+        /* 拷贝到持久 DMA 缓冲再启动发送，防止队列后续入队覆盖 DMA 读区域 */
+        memcpy(inst->tx_dma_buf, frame.data, frame.len);
+
+        if (HAL_UART_Transmit_DMA(inst->huart, inst->tx_dma_buf,
+                frame.len) == HAL_OK) {
+            inst->tx_busy = true;
+            break; /* 等 TxCplt 清忙后下轮再发下一帧 */
+        }
+        /* DMA 启动失败：放回队列头部由下轮重试（msg_fifo 无 peek，用 push 暂存失败帧） */
+        (void)msg_fifo_push(&inst->tx_fifo, &frame);
+        break;
+    }
+}
+
+uint32_t drv_uart_tx_pending(drv_uart_channel_t ch)
+{
+    if (ch >= DRV_UART_CH_NUM || !s_inst[ch].initialized) {
+        return 0;
+    }
+    if (s_inst[ch].tx_fifo.element_size == 0U) {
+        return 0;
+    }
+    return (uint32_t)(kfifo_len(&s_inst[ch].tx_fifo.fifo) / s_inst[ch].tx_fifo.element_size);
+}
+
+/* --- RX（DMA circular + IDLE → kfifo 环形缓冲） --- */
+
+uint32_t drv_uart_rx_read(drv_uart_channel_t ch, uint8_t* buf, uint32_t max_len)
+{
+    if (ch >= DRV_UART_CH_NUM || !buf || max_len == 0) {
+        return 0;
+    }
+    if (!s_inst[ch].initialized) {
+        return 0;
+    }
+
+    return kfifo_get(&s_inst[ch].rx_fifo, buf, max_len);
+}
+
+uint32_t drv_uart_rx_available(drv_uart_channel_t ch)
+{
+    if (ch >= DRV_UART_CH_NUM || !s_inst[ch].initialized) {
+        return 0;
+    }
+
+    return kfifo_len(&s_inst[ch].rx_fifo);
 }
 
 /* ===== 注册到 HAL 的 per-instance 回调（USE_HAL_UART_REGISTER_CALLBACKS=1） ===== */
@@ -238,8 +378,8 @@ static void drv_uart_tx_cplt_cb(UART_HandleTypeDef* huart)
 }
 
 /**
- * @brief UART RX 事件回调（per-instance，IDLE/TC）— 上抛数据
- * @note  IDLE：总线空闲，本次突发结束，Size = 实际已收字节数。
+ * @brief UART RX 事件回调（per-instance，IDLE/HT）
+ * @note  DMA circular：IDLE 事件后硬件继续接收，仅同步 kfifo 读指针，不重启。
  */
 static void drv_uart_rx_event_cb(UART_HandleTypeDef* huart, uint16_t Size)
 {
@@ -249,24 +389,16 @@ static void drv_uart_rx_event_cb(UART_HandleTypeDef* huart, uint16_t Size)
 
     for (uint32_t ch = 0; ch < DRV_UART_CH_NUM; ch++) {
         if (s_inst[ch].initialized && s_inst[ch].huart == huart) {
-            drv_uart_inst_t* inst = &s_inst[ch];
-
-            /* 重启接收（幂等：IDLE 事件后 HAL 已停止本次接收） */
-            if (!drv_uart_rx_start(inst)) {
-                UART_LOG_E("ch%u rx restart failed in ISR", (unsigned)ch + 1U);
-            }
-
-            /* 上抛本次空闲间隙前收到的数据 */
-            if (Size > 0 && inst->rx_callback) {
-                inst->rx_callback((drv_uart_channel_t)ch, inst->rx_buf, Size);
-            }
+            drv_uart_sync_rx_dma(&s_inst[ch]);
             return;
         }
     }
+
+    (void)Size;
 }
 
 /**
- * @brief UART 错误回调（per-instance）— 限频打印错误原因，立即重启接收
+ * @brief UART 错误回调（per-instance）— 限频打印错误原因，丢弃缓冲并重启接收
  * @note  F1 无 UART_CLEAR_OREF/NEF/FEF/PEF，用 __HAL_UART_CLEAR_*FLAG。
  */
 static void drv_uart_error_cb(UART_HandleTypeDef* huart)
@@ -296,7 +428,8 @@ static void drv_uart_error_cb(UART_HandleTypeDef* huart)
             inst->err_flags = 0;
         }
 
-        /* RX DMA 已被 HAL 中止，原地立即重启 */
+        /* RX DMA 已被 HAL 中止，丢弃缓冲数据并原地立即重启 */
+        kfifo_reset(&inst->rx_fifo);
         if (!drv_uart_rx_start(inst)) {
             UART_LOG_E("ch%u rx err and receive restart failed", (unsigned)ch + 1U);
         }

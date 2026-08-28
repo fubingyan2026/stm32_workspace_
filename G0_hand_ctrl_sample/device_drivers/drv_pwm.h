@@ -30,9 +30,9 @@ extern "C" {
  * @brief PWM 通道枚举
  */
 typedef enum {
-    DRV_PWM_TIM1_CH1 = 0, /**< TIM1_CH1 — PA8 */
-    DRV_PWM_TIM4_CH1,     /**< TIM4_CH1 — PB6 */
-    DRV_PWM_TIM4_CH2,     /**< TIM4_CH2 — PB7 */
+    DRV_PWM_TIM1_CH1 = 0, /**< TIM1_CH1 — PA8(蓝色LED) */
+    DRV_PWM_TIM4_CH1,     /**< TIM4_CH1 — PB6(绿色LED) */
+    DRV_PWM_TIM4_CH2,     /**< TIM4_CH2 — PB7(红色LED) */
     DRV_PWM_CH_NUM,       /**< 通道总数 */
 } drv_pwm_channel_t;
 

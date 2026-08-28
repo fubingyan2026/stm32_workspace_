@@ -13,6 +13,8 @@
 
 #include "app_main.h"
 
+#include "app_rgb_status.h"
+#include "app_uart_interact.h"
 #include "can_task.h"
 #include "drv_log_uart.h"
 #include "drv_systick.h"
@@ -23,6 +25,7 @@
 #include "log_task.h"
 #include "sample_task.h"
 #include "sw_timer.h"
+#include "uart_cmd_task.h"
 
 int app_main(void)
 {
@@ -46,6 +49,12 @@ int app_main(void)
 
     /* 按键轮询（KEY1/KEY2） */
     key_task_init();
+
+    /* UART 命令收发（USART2，协议帧解析/打包） */
+    uart_cmd_task_init();
+
+    /* UART 交互：按键事件上报（需在 key_task 与 uart_cmd_task 之后） */
+    app_uart_interact_init();
 
     LOG_I("app_main", "==== G0_Hand 系统启动 ====");
 

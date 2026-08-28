@@ -57,7 +57,7 @@ typedef enum {
 
 static uint8_t s_tx_buf[LOG_TASK_TX_BUF_SIZE];
 static sw_timer_t s_log_timer;
-static log_task_output_t s_output_mode = LOG_OUTPUT_UART;
+static log_task_output_t s_output_mode = LOG_OUTPUT_RTT;
 
 /** @brief 控制台命令行累积缓冲（主循环从 drv_log_uart kfifo 读取后填充） */
 static char s_cmd_buf[LOG_TASK_CMD_BUF_SIZE];
@@ -85,13 +85,15 @@ void log_task_init(void)
         .get_timestamp_cb = millis,
     };
     log_init(&log_cfg);
-    log_set_level(LOG_LEVEL_DEBUG);
+    log_set_level(LOG_LEVEL_INFO);
 
     /* 日志串口（USART2 DMA）驱动初始化：本任务是 drv_log_uart 的唯一消费者，
      * 由 log_task 自行完成初始化，避免各 app_main（App/Boot 多工程）遗漏。
      * 需放在 log_init 之后：drv_log_uart_init() 内部的"初始化完成"日志
      * 经 log 缓冲输出，若先于 log_init 调用会被静默丢弃。 */
-    (void)drv_log_uart_init();
+    if (s_output_mode == LOG_OUTPUT_UART) {
+        (void)drv_log_uart_init();
+    }
 
     /* SEGGER RTT 初始化（无论当前模式，预初始化以便随时切换） */
     if (s_output_mode == LOG_OUTPUT_RTT) {
