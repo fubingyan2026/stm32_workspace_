@@ -15,7 +15,6 @@
 #if defined(E1_BUILD_BOOT)
 #include "boot_task.h" /* 位于 ../public_layer/task（Boot 目标 include path 提供） */
 #endif
-#include "buzzer_task.h"
 #include "can_task.h"
 #include "drv_revision.h"
 #include "drv_systick.h"
@@ -104,9 +103,6 @@ int app_main(void)
 
     /* LED 状态指示 */
     led_task_init();
-
-    /* 蜂鸣器（复用 srv_signal 实例；需在 led_task 之后） */
-    buzzer_task_init();
 
     /* WS2812B 灯带（彗星流光演示） */
     ws2812_task_init();

@@ -3,7 +3,7 @@
  * @author  maximillian
  * @version V1.0.0
  * @date    2026-08-05
- * @brief   WS2812B 灯带效果服务实现 — 彗星流光演示
+ * @brief   WS2812B 灯带效果服务实现 — RGB 由 CAN 指令控制（彗星动画默认关闭）
  */
 
 /* Includes ------------------------------------------------------------------*/
@@ -54,7 +54,7 @@ int srv_ws2812b_init(void)
         return err;
     }
 
-    s_auto = true;
+    s_auto = false; /* RGB 由 CAN 指令控制，默认不运行彗星流水动画 */
 
     SRV_WS2812B_LOG_I("WS2812B 灯带初始化完成 (通道1=%u, 通道2=%u)",
         (unsigned)drv_ws2812b_get_led_count(DRV_WS2812B_INST_1),

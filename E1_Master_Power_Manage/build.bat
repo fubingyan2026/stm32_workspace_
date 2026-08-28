@@ -3,10 +3,10 @@ setlocal enabledelayedexpansion
 
 REM ================================================
 REM Windows STM32 Build Script
-REM Usage: build.bat [project_dir] [-t Debug|Release]
+REM Usage: build.bat [project_dir] [-t Debug/RelWithDebInfo/Release]
 REM ================================================
 
-set "BUILD_TYPE=Release"
+set "BUILD_TYPE=RelWithDebInfo"
 set "PROJ_DIR="
 
 :parse

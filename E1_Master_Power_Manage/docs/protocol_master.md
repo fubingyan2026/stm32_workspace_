@@ -163,7 +163,7 @@ task 层（`can_task.c`）通过回调注入，保持 service 与应用/驱动�
 
 | 帧 | 工程结构体 / 函数 | 消费位置与解耦方式 |
 |----|------------------|------------------|
-| 0x001 统一控制 | `srv_can_mst_cmd_t`（解析于 `srv_can_mst_process_rx`，6 字节） | byte0 `buzzer_duty`（0-50）、byte1 `ctrl_byte`（3 对 valid+value）、byte2 `led_index`、byte3-5 LED RGB |
+| 0x001 统一控制 | `srv_can_mst_cmd_t`（解析于 `srv_can_mst_process_rx`，6 字节） | byte0 `buzzer_duty`（0-50，主循环 `can_timer_cb` 经 `drv_buzzer_set()` 直接驱动蜂鸣器，占空比直通）、byte1 `ctrl_byte`（3 对 valid+value）、byte2 `led_index`、byte3-5 LED RGB |
 | 0x001 HSD 输出 | `set_output` 回调（`srv_can_mst_set_output_cb_t`） | `srv_can_mst_process_rx()` 仅在 valid 位置位时调用 `s_config.set_output(out, on)`；task 层 `can_task.c:can_set_output()` 将抽象通道映射为 `drv_power_set(DRV_POWER_RAIL_HSD1_12V_DIAG / HSD1_24V_DIAG / HSD2_24V_DIAG, on)`。**service 层不直连 `drv_power`，同层解耦** |
 | 0x001 LED RGB | `srv_can_mst_get_cmd()` + `srv_ws2812b_set_pixel()` | RX 解析在 ISR（`can_rx_callback`），LED 应用延后到主循环 `can_timer_cb`（避免 ISR 内 SPI DMA） |
 | 0x003 进 Boot | `srv_boot_ctrl_request_boot()` | RX 仅置 `s_enter_boot_requested` 标志，主循环 `can_timer_cb` 消费并调用 |

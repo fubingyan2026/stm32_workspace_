@@ -12,6 +12,7 @@
 #include "can_task.h"
 #include "app_status_report.h"
 
+#include "drv_buzzer.h"
 #include "drv_can.h"
 #include "drv_power.h"
 #include "drv_systick.h"
@@ -84,6 +85,9 @@ void can_task_init(void)
         CAN_TASK_LOG_E("CAN 驱动初始化失败 (err=%d)", (int)can_err);
     }
 
+    /* 蜂鸣器 PWM 初始化（0x001 buzzer_duty 由 can_timer_cb 直接驱动） */
+    drv_buzzer_init();
+
     srv_pwr_det_init();
 
     /* 主机上报服务（read_data 由应用层 app_status_report 聚合填充；
@@ -128,14 +132,19 @@ static void can_timer_cb(void* user_data)
         }
     }
 
-    /* 应用 0x001 控制帧携带的 LED RGB 命令（主循环上下文，避免 ISR 内驱动 SPI DMA） */
+    /* 应用 0x001 控制帧携带的 LED RGB / 蜂鸣器命令
+     * （主循环上下文：蜂鸣器 PWM 直写，避免 ISR 内操作；LED SPI DMA 亦在主循环应用） */
     if (s_ctrl_new) {
         s_ctrl_new = false;
         const srv_can_mst_cmd_t* cmd = srv_can_mst_get_cmd();
-        if (cmd
-            && srv_ws2812b_set_pixel(cmd->led_index,
-                cmd->led_r, cmd->led_g, cmd->led_b) != 0) {
-            CAN_TASK_LOG_W("LED 控制应用失败: idx=%u", (unsigned)cmd->led_index);
+        if (cmd) {
+            /* 蜂鸣器占空比 0-50 → drv_buzzer_set 占空比 0-50 */
+            drv_buzzer_set(cmd->buzzer_duty);
+            if (srv_ws2812b_set_pixel(cmd->led_index,
+                    cmd->led_r, cmd->led_g, cmd->led_b)
+                != 0) {
+                CAN_TASK_LOG_W("LED 控制应用失败: idx=%u", (unsigned)cmd->led_index);
+            }
         }
     }
 
@@ -183,17 +192,17 @@ static void can_set_output(srv_can_mst_output_t out, bool on)
 {
     drv_power_rail_t rail;
     switch (out) {
-        case SRV_CAN_MST_OUTPUT_HSD1_12V:
-            rail = DRV_POWER_RAIL_HSD1_12V_DIAG;
-            break;
-        case SRV_CAN_MST_OUTPUT_HSD1_24V:
-            rail = DRV_POWER_RAIL_HSD1_24V_DIAG;
-            break;
-        case SRV_CAN_MST_OUTPUT_HSD2_24V:
-            rail = DRV_POWER_RAIL_HSD2_24V_DIAG;
-            break;
-        default:
-            return;
+    case SRV_CAN_MST_OUTPUT_HSD1_12V:
+        rail = DRV_POWER_RAIL_HSD1_12V_DIAG;
+        break;
+    case SRV_CAN_MST_OUTPUT_HSD1_24V:
+        rail = DRV_POWER_RAIL_HSD1_24V_DIAG;
+        break;
+    case SRV_CAN_MST_OUTPUT_HSD2_24V:
+        rail = DRV_POWER_RAIL_HSD2_24V_DIAG;
+        break;
+    default:
+        return;
     }
     drv_power_set(rail, on);
 }
