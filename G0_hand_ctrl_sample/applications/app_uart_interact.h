@@ -1,15 +1,19 @@
 /**
  * @file    app_uart_interact.h
  * @author  maximillian
- * @version V1.0.0
- * @date    2026-08-12
- * @brief   应用层 — UART 交互：将按键事件经 srv_uart_tx_cmd 协议帧上报
+ * @version V2.0.0
+ * @date    2026-08-31
+ * @brief   应用层 — UART 交互（收发集中管理：按键上报 / 心跳 / RX 命令处理）
  * @attention
  *
- * 上报帧（UART 命令协议）：
- *   [z][cmd=0x01 按键事件][data_len=2][key_index][event][crc][\n]
- *   key_index: 0=KEY1, 1=KEY2
- *   event:     key_base_event_t 值
+ * 串口协议帧（收发一致）：
+ *   [z][cmd][data_len][payload...][crc][\n]
+ *
+ * 本模块统一负责：
+ *   - 按键事件上报（cmd=0x01）
+ *   - 周期心跳（cmd=0x00）
+ *   - RX 命令接收处理（srv_uart_rx_cmd 回调）
+ * 底层驱动（drv_uart 轮询/恢复、srv_uart_rx_cmd step/tick）由 uart_cmd_task 驱动。
  */
 
 #ifndef APP_UART_INTERACT_H
@@ -21,17 +25,43 @@ extern "C" {
 
 /* Exported constants --------------------------------------------------------*/
 
+/** @brief 心跳命令字节（周期上报，载荷=2字节递增计数） */
+#define APP_UART_CMD_HEARTBEAT (0x00U)
+
 /** @brief 按键事件上报命令字节 */
 #define APP_UART_CMD_KEY_EVENT (0x01U)
+
+/** @brief 电机使能命令（载荷=0） */
+#define APP_UART_CMD_MOTOR_ENABLE (0x02U)
+
+/** @brief 电机禁用命令（载荷=0） */
+#define APP_UART_CMD_MOTOR_DISABLE (0x03U)
+
+/** @brief 电机设置目标命令（载荷=20B：pos/vel/kp/kd/tor 各 4B float LE） */
+#define APP_UART_CMD_MOTOR_SET_TARGET (0x04U)
+
+/** @brief 电机发送控制帧命令（载荷=0） */
+#define APP_UART_CMD_MOTOR_CTRL_SEND (0x05U)
+
+/** @brief 请求电机反馈命令（载荷=0，G0 回发 MOTOR_FEEDBACK_REPORT） */
+#define APP_UART_CMD_MOTOR_REQ_FEEDBACK (0x06U)
+
+/** @brief 电机反馈上报帧（载荷=20B：pos/vel/tor/Tmos/Tcoil 各 4B float LE） */
+#define APP_UART_CMD_MOTOR_FEEDBACK_REPORT (0x07U)
 
 /* Exported functions prototypes ---------------------------------------------*/
 
 /**
  * @brief 初始化 UART 交互应用
- * @note  需在 key_task_init() 与 uart_cmd_task_init() 之后调用
- *        （内部注册 srv_key 事件回调 → 经 srv_uart_tx_cmd 上报）
+ * @note  需在 uart_cmd_task_init() 之后调用
+ *        （注册 RX 命令回调 + 按键事件回调 → 经 srv_uart_tx_cmd 上报）
  */
 void app_uart_interact_init(void);
+
+/**
+ * @brief UART 交互步进：周期心跳发送（由 uart_cmd_task 的 sw_timer 调用）
+ */
+void app_uart_interact_step(void);
 
 #ifdef __cplusplus
 }

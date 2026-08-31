@@ -6,20 +6,25 @@
 
 /**
  * @file    uart_cmd_task.c
- * @brief   UART 命令任务 — sw_timer 轮询收发服务 + 周期错误恢复
+ * @brief   UART 命令任务 — sw_timer 驱动底层收发轮询 + 周期错误恢复
+ * @attention
+ *
+ * 本任务只负责底层驱动（drv_uart 恢复、TX 队列排空、RX step/tick）与
+ * 应用层步进（app_uart_interact_step：心跳）。协议帧的业务收发与
+ * 相关初始化（srv_uart_tx_cmd_init / srv_uart_rx_cmd_init / 按键上报）
+ * 全部集中在 applications/app_uart_interact。
  */
 
 #include "uart_cmd_task.h"
 
-#include "drv_systick.h"
+#include "app_uart_interact.h"
 #include "drv_uart.h"
 #include "log.h"
 #include "srv_uart_rx_cmd.h"
-#include "srv_uart_tx_cmd.h"
 #include "sw_timer.h"
 
 /** @brief UART 命令轮询周期 (ms) */
-#define UART_CMD_TASK_PERIOD_MS (10U)
+#define UART_CMD_TASK_PERIOD_MS (1U)
 
 static sw_timer_t s_timer;
 
@@ -27,15 +32,12 @@ static sw_timer_t s_timer;
 
 static void uart_cmd_timer_cb(void* user_data);
 
-static void uart_cmd_rx_callback(uint8_t cmd, const uint8_t* data,
-    uint8_t data_len);
-
 /* Exported functions --------------------------------------------------------*/
 
 void uart_cmd_task_init(void)
 {
-    srv_uart_tx_cmd_init();
-    srv_uart_rx_cmd_init(uart_cmd_rx_callback);
+    /* UART 交互：按键事件上报（需在 key_task 与 uart_cmd_task 之后） */
+    app_uart_interact_init();
 
     const sw_timer_config_t timer_cfg = {
         .priority = SW_TIMER_PRIO_NORMAL,
@@ -61,20 +63,12 @@ static void uart_cmd_timer_cb(void* user_data)
     /* 排空 TX 缓冲队列到 DMA（忙时入队的帧在此发出，保证不丢失） */
     drv_uart_tx_flush(DRV_UART_CH_2);
 
-    /* 喂数据 + 解析 + 分派 RX 回调 */
+    /* 喂数据 + 解析 + 分派 RX 回调（回调在 app_uart_interact） */
     srv_uart_rx_cmd_step();
 
     /* 空闲超时 tick */
     srv_uart_rx_cmd_tick();
-}
 
-/**
- * @brief RX 命令回调：当前打印透传，业务命令表后续由应用层扩展
- */
-static void uart_cmd_rx_callback(uint8_t cmd, const uint8_t* data,
-    uint8_t data_len)
-{
-    (void)data;
-    LOG_I("uart_cmd_task", "收到命令 cmd=0x%02X data_len=%u",
-        (unsigned)cmd, (unsigned)data_len);
+    /* 应用层步进：周期心跳 */
+    app_uart_interact_step();
 }

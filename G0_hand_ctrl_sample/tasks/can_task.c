@@ -6,15 +6,14 @@
 
 /**
  * @file    can_task.c
- * @brief   CAN 通信任务 — sw_timer 驱动：RX 队列消费 + srv_can 处理 + TX 队列排空 + 心跳
+ * @brief   CAN 通信任务 — sw_timer 驱动：RX 队列消费 + TX 队列排空 + DM4310 电机
  */
 
 #include "can_task.h"
 
 #include "drv_can.h"
-#include "drv_systick.h"
 #include "log.h"
-#include "srv_can.h"
+#include "srv_dm4310_ctrl.h"
 #include "sw_timer.h"
 
 /* 模块日志开关 ----------------------------------------------------------------*/
@@ -36,19 +35,15 @@
 
 /* Private constants ---------------------------------------------------------*/
 
-#define TASK_PERIOD_MS 10U
-#define HEARTBEAT_INTERVAL_MS 500U
+#define TASK_PERIOD_MS 1U
 
 /* Private variables ---------------------------------------------------------*/
 
 static sw_timer_t s_timer;
-static uint16_t s_heartbeat_ms;
 
 /* Private function prototypes -----------------------------------------------*/
 
 static void can_timer_cb(void* user_data);
-
-static void can_poll_rx(void);
 
 /* Exported functions --------------------------------------------------------*/
 
@@ -60,9 +55,8 @@ void can_task_init(void)
         return; /* CAN 不可用，不启动周期任务 */
     }
 
-    srv_can_init();
-
-    s_heartbeat_ms = 0;
+    /* DM4310 电机服务（MIT 模式，注册 CAN 发送回调） */
+    srv_dm4310_ctrl_init();
 
     const sw_timer_config_t cfg = {
         .priority = SW_TIMER_PRIO_NORMAL,
@@ -71,8 +65,8 @@ void can_task_init(void)
     sw_timer_init(&s_timer, &cfg);
     sw_timer_start(&s_timer, TASK_PERIOD_MS, 0);
 
-    CAN_TASK_LOG_I("CAN 任务初始化完成 (period=%ums, heartbeat=%ums)",
-        (unsigned)TASK_PERIOD_MS, (unsigned)HEARTBEAT_INTERVAL_MS);
+    CAN_TASK_LOG_I("CAN 任务初始化完成 (period=%ums)",
+        (unsigned)TASK_PERIOD_MS);
 }
 
 /* Private functions ---------------------------------------------------------*/
@@ -86,29 +80,12 @@ static void can_timer_cb(void* user_data)
         (void)drv_can_recover(DRV_CAN_CH_1);
     }
 
-    /* RX 队列消费 → srv_can 协议分发（主循环上下文，非 ISR） */
-    can_poll_rx();
+    /* RX 队列消费 → DM4310 电机反馈解析（主循环上下文，非 ISR） */
+    srv_dm4310_ctrl_poll_rx();
 
-    srv_can_process();
+    /* DM4310 电机状态机步进（初始化/使能/禁用状态转换） */
+    srv_dm4310_ctrl_step();
 
     /* TX 队列排空到 bxCAN TX 邮箱 */
     drv_can_tx_flush(DRV_CAN_CH_1);
-
-    /* 周期心跳（链路验证） */
-    s_heartbeat_ms += TASK_PERIOD_MS;
-    if (s_heartbeat_ms >= HEARTBEAT_INTERVAL_MS) {
-        s_heartbeat_ms = 0;
-        srv_can_send_heartbeat();
-    }
-}
-
-static void can_poll_rx(void)
-{
-    drv_can_msg_t msg;
-    while (drv_can_rx_pending(DRV_CAN_CH_1) > 0U) {
-        if (!drv_can_rx_pop(DRV_CAN_CH_1, &msg)) {
-            break;
-        }
-        srv_can_on_rx(&msg);
-    }
 }

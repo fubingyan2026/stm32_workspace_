@@ -16,6 +16,7 @@
 #include "app_rgb_status.h"
 #include "app_uart_interact.h"
 #include "can_task.h"
+#include "efuse_task.h"
 #include "drv_log_uart.h"
 #include "drv_systick.h"
 #include "drv_uart.h"
@@ -53,8 +54,8 @@ int app_main(void)
     /* UART 命令收发（USART2，协议帧解析/打包） */
     uart_cmd_task_init();
 
-    /* UART 交互：按键事件上报（需在 key_task 与 uart_cmd_task 之后） */
-    app_uart_interact_init();
+    /* eFuse 24V 故障保护（周期扫描） */
+    efuse_task_init();
 
     LOG_I("app_main", "==== G0_Hand 系统启动 ====");
 

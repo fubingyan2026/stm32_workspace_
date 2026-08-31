@@ -6,7 +6,7 @@
 
 /**
  * @file    can_task.h
- * @brief   CAN 通信任务 — srv_can 协议处理 + 周期心跳
+ * @brief   CAN 通信任务 — RX 队列消费 + TX 队列排空 + DM4310 电机
  */
 
 #ifndef CAN_TASK_H

@@ -28,13 +28,6 @@ extern "C" {
  */
 void log_task_init(void);
 
-/**
- * @brief 切换日志输出后端
- * @param mode  输出后端
- * @note  可在初始化后任意时刻调用，实时生效
- */
-void log_task_flush(void);
-
 #ifdef __cplusplus
 }
 #endif
