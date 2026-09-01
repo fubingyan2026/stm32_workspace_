@@ -45,11 +45,13 @@
 /* Private constants ---------------------------------------------------------*/
 
 /** @brief MIT 默认刚度/阻尼（合适初值，可按需调整） */
-#define SRV_DM4310_DEFAULT_KP (2.50f)
-#define SRV_DM4310_DEFAULT_KD (0.5f)
+#define SRV_DM4310_DEFAULT_KP (12.50f)
+#define SRV_DM4310_DEFAULT_KD (2.5f)
 
+#define SRV_USER_POS_MIN (0.000f)
+#define SRV_USER_POS_MAX (0.464f)
 /** @brief 扭矩给定限幅 (±N·m)，保护电机/负载 */
-#define SRV_DM4310_TORQUE_LIMIT_NM (0.1f)
+#define SRV_DM4310_TORQUE_LIMIT_NM (0.01f)
 
 /** @brief RX 数据日志限频窗口 (ms)：CAN 反馈 1kHz 下防刷屏 */
 #define SRV_DM4310_RX_LOG_PERIOD_MS (500U)
@@ -254,7 +256,8 @@ void srv_dm4310_ctrl_pos_step(float delta_pos)
     s_motor[MOTOR_1].cmd.pos_set += delta_pos;
 
     /* 位置钳位，防止累积超调 */
-    s_motor[MOTOR_1].cmd.pos_set = constrainf(s_motor[MOTOR_1].cmd.pos_set, P_MIN, P_MAX);
+    s_motor[MOTOR_1].cmd.pos_set
+        = constrainf(s_motor[MOTOR_1].cmd.pos_set, SRV_USER_POS_MIN, SRV_USER_POS_MAX);
 
     dm4310_set(&s_motor[MOTOR_1]);
     srv_dm4310_ctrl_send();
@@ -270,7 +273,7 @@ void srv_dm4310_ctrl_set_target(float pos, float vel, float kp, float kd, float 
     }
 
     /* 各参数按量程钳位，防止超调/非法给定（util_math constrainf） */
-    pos = constrainf(pos, P_MIN, P_MAX);
+    pos = constrainf(pos, SRV_USER_POS_MIN, SRV_USER_POS_MAX);
     vel = constrainf(vel, V_MIN, V_MAX);
     kp = constrainf(kp, KP_MIN, KP_MAX);
     kd = constrainf(kd, KD_MIN, KD_MAX);
@@ -296,6 +299,15 @@ void srv_dm4310_ctrl_send(void)
         return;
     }
     dm4310_ctrl_send(&s_motor[MOTOR_1]);
+}
+
+void srv_dm4310_ctrl_save_zero(void)
+{
+    if (srv_dm4310_ctrl_get_state() == SRV_DM4310_STATE_UNINIT) {
+        return;
+    }
+    save_pos_zero(s_motor[MOTOR_1].id, MIT_MODE);
+    SRV_DM4310_CTRL_LOG_I("已保存电机当前位置为零点");
 }
 
 void srv_dm4310_ctrl_poll_rx(void)
@@ -428,6 +440,8 @@ static void dm4310_on_entry(fsm_t* ctx, fsm_state_t state)
         break;
 
     case SRV_DM4310_STATE_ENABLED:
+        /* 先发送一帧参数（MIT 控制帧），电机按该参数就绪后再使能 */
+        dm4310_ctrl_send(&s_motor[MOTOR_1]);
         s_motor[MOTOR_1].start_flag = 1;
         /* 先发使能帧（FF...FC），确认发出后才能发控制帧 */
         dm4310_enable(&s_motor[MOTOR_1]);

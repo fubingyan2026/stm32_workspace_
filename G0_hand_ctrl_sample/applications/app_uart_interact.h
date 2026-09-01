@@ -37,7 +37,7 @@ extern "C" {
 /** @brief 请求电机反馈命令（载荷=0，G0 回发 MOTOR_FEEDBACK_REPORT） */
 #define APP_UART_CMD_MOTOR_REQ_FEEDBACK (0x03U)
 
-/** @brief 电机反馈上报帧（载荷=20B：pos/vel/tor/Tmos/Tcoil 各 4B float LE） */
+/** @brief 电机反馈上报帧（载荷=21B：state(1) + pos/vel/tor/Tmos/Tcoil 各 4B float LE） */
 #define APP_UART_CMD_MOTOR_FEEDBACK_REPORT (0x04U)
 
 /* Exported functions prototypes ---------------------------------------------*/

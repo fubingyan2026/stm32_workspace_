@@ -52,7 +52,7 @@
 #define SRV_EFUSE_DETECT_DELAY_MS (100U)
 
 /** @brief RUN 中 PGOOD 跌落去抖时间 (ms)：持续跌落超过此值才关断 */
-#define SRV_EFUSE_PGOOD_DROP_SHUTDOWN_MS (500U)
+#define SRV_EFUSE_PGOOD_DROP_SHUTDOWN_MS (1500U)
 
 /* Private variables ---------------------------------------------------------*/
 

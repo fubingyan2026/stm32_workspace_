@@ -9,6 +9,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "app_uart_interact.h"
 
+#include "drv_key.h"
 #include "drv_systick.h"
 #include "key_base.h"
 #include "log.h"
@@ -41,16 +42,21 @@
 #define APP_UART_KEY_EVENT_PAYLOAD_LEN (2U)
 #define APP_UART_HEARTBEAT_PAYLOAD_LEN (2U)
 #define APP_UART_MOTOR_TARGET_PAYLOAD_LEN (20U) /**< pos/vel/kp/kd/tor × 4B */
-#define APP_UART_MOTOR_FEEDBACK_PAYLOAD_LEN (20U) /**< pos/vel/tor/Tmos/Tcoil × 4B */
+#define APP_UART_MOTOR_FEEDBACK_PAYLOAD_LEN (21U) /**< state(1) + pos/vel/tor/Tmos/Tcoil × 4B */
 
 #define APP_UART_HEARTBEAT_INTERVAL_MS (1000U)
 #define APP_UART_MOTOR_PRINT_PERIOD_MS (1000U)
+
+/** @brief 双键组合长按时间 (ms)：KEY1+KEY2 同时按住触发电机保存零点 */
+#define APP_UART_COMBO_SAVE_ZERO_MS (3000U)
 
 /* Private variables ---------------------------------------------------------*/
 
 static uint32_t s_last_heartbeat_ms;
 static uint32_t s_last_motor_print_ms;
 static uint16_t s_heartbeat_tick;
+static uint32_t s_combo_press_ts; /**< 双键同时按住起始时间戳 (0=未同时按下) */
+static bool s_combo_triggered; /**< 组合长按已触发标志（防重复触发） */
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -65,6 +71,8 @@ static void app_uart_send_heartbeat(void);
 static void app_uart_motor_send_feedback(void);
 
 static void app_uart_motor_print_status(void);
+
+static void app_uart_combo_save_zero_check(void);
 
 /* Exported functions --------------------------------------------------------*/
 
@@ -93,6 +101,9 @@ void app_uart_interact_step(void)
         s_last_motor_print_ms = now_ms;
         app_uart_motor_print_status();
     }
+
+    /* 双键组合长按检测（KEY1+KEY2 同时按住 3s → 保存电机零点） */
+    app_uart_combo_save_zero_check();
 }
 
 /* Private functions ---------------------------------------------------------*/
@@ -184,11 +195,12 @@ static void app_uart_motor_send_feedback(void)
     }
 
     uint8_t payload[APP_UART_MOTOR_FEEDBACK_PAYLOAD_LEN];
-    memcpy(&payload[0], &motor->para.pos, 4);
-    memcpy(&payload[4], &motor->para.vel, 4);
-    memcpy(&payload[8], &motor->para.tor, 4);
-    memcpy(&payload[12], &motor->para.Tmos, 4);
-    memcpy(&payload[16], &motor->para.Tcoil, 4);
+    payload[0] = (uint8_t)(motor->para.state & 0xFFU);
+    memcpy(&payload[1], &motor->para.pos, 4);
+    memcpy(&payload[5], &motor->para.vel, 4);
+    memcpy(&payload[9], &motor->para.tor, 4);
+    memcpy(&payload[13], &motor->para.Tmos, 4);
+    memcpy(&payload[17], &motor->para.Tcoil, 4);
 
     const srv_uart_tx_cmd_error_t err = srv_uart_tx_cmd_send(APP_UART_CMD_MOTOR_FEEDBACK_REPORT, payload,
         APP_UART_MOTOR_FEEDBACK_PAYLOAD_LEN);
@@ -205,6 +217,44 @@ static void app_uart_motor_print_status(void)
     }
 
     const motor_fbpara_t* fb = &motor->para;
+
+    /* state 单独一帧，打印数值 + 含义 */
+    static const char* const state_desc[] = {
+        "失能", "使能", "电机侧未识别", "输出轴未识别",
+        "未知", "读取编码器错误", "未知", "读取编码器错误",
+        "超压", "欠压", "过电流", "MOS过温",
+        "电机线圈过温", "通讯丢失", "未知", "过载",
+    };
+    const uint8_t st = (uint8_t)(fb->state & 0x0F);
+    const char* desc = (st < 16U) ? state_desc[st] : "未知";
+
+    APP_UART_INTERACT_LOG_I("电机状态 state=%d (%s)", (int)fb->state, desc);
+
+    /* 物理量单独一帧 */
     APP_UART_INTERACT_LOG_I("电机反馈 pos=%.3f vel=%.3f tor=%.3f Tmos=%.3f Tcoil=%.3f",
         fb->pos, fb->vel, fb->tor, fb->Tmos, fb->Tcoil);
+}
+
+/**
+ * @brief 双键组合长按检测：KEY1+KEY2 同时按住 3s → 保存电机当前位置为零点
+ */
+static void app_uart_combo_save_zero_check(void)
+{
+    const bool k1 = drv_key_is_pressed(DRV_KEY_CH_1);
+    const bool k2 = drv_key_is_pressed(DRV_KEY_CH_2);
+
+    if (k1 && k2) {
+        if (s_combo_press_ts == 0U) {
+            s_combo_press_ts = millis();
+            s_combo_triggered = false;
+        } else if (!s_combo_triggered
+            && (uint32_t)(millis() - s_combo_press_ts) >= APP_UART_COMBO_SAVE_ZERO_MS) {
+            s_combo_triggered = true;
+            srv_dm4310_ctrl_save_zero();
+        }
+    } else {
+        /* 任一键松开：复位组合计时 */
+        s_combo_press_ts = 0U;
+        s_combo_triggered = false;
+    }
 }

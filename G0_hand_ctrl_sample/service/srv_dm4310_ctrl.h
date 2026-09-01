@@ -24,7 +24,7 @@ extern "C" {
 /* Exported constants --------------------------------------------------------*/
 
 /** @brief 位置微调步长 (rad)，按键单击一次的变化量 */
-#define SRV_DM4310_POS_STEP_RAD (0.25f)
+#define SRV_DM4310_POS_STEP_RAD (0.1f)
 
 /**
  * @brief 电机枚举（当前仅使用 MOTOR_1，保留供后续扩展）
@@ -86,6 +86,9 @@ void srv_dm4310_ctrl_set_target(float pos, float vel, float kp, float kd, float 
 
 /** @brief 发送 MIT 控制帧（需电机已使能） */
 void srv_dm4310_ctrl_send(void);
+
+/** @brief 保存当前电机位置为零点（save_pos_zero） */
+void srv_dm4310_ctrl_save_zero(void);
 
 /**
  * @brief 轮询 CAN RX 队列，解析电机反馈（task 层周期调用）
