@@ -25,7 +25,7 @@
 #define SRV_UART_TX_CMD_LOG_E(...) LOG_E("srv_uart_tx_cmd", __VA_ARGS__)
 #define SRV_UART_TX_CMD_LOG_W(...) LOG_W("srv_uart_tx_cmd", __VA_ARGS__)
 #define SRV_UART_TX_CMD_LOG_I(...) LOG_I("srv_uart_tx_cmd", __VA_ARGS__)
-#define SRV_UART_TX_CMD_LOG_D(...) LOG_D("srv_uart_tx_cmd", __VA_ARGS__)
+#define SRV_UART_TX_CMD_LOG_D(...) ((void)0)//LOG_D("srv_uart_tx_cmd", __VA_ARGS__)
 #else
 #define SRV_UART_TX_CMD_LOG_E(...) ((void)0)
 #define SRV_UART_TX_CMD_LOG_W(...) ((void)0)

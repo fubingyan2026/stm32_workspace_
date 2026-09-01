@@ -16,6 +16,7 @@
 #include "app_rgb_status.h"
 #include "app_uart_interact.h"
 #include "can_task.h"
+#include "daemon_task.h"
 #include "efuse_task.h"
 #include "drv_log_uart.h"
 #include "drv_systick.h"
@@ -38,6 +39,9 @@ int app_main(void)
 
     /* 日志输出（USART2 DMA，log_task 内部完成 log_init + drv_log_uart_init） */
     log_task_init();
+
+    /* 守护进程系统（先于各服务注册实例：DM4310 在线监控） */
+    daemon_task_init();
 
     /* CAN 通信 */
     can_task_init();

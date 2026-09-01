@@ -31,23 +31,14 @@ extern "C" {
 /** @brief 按键事件上报命令字节 */
 #define APP_UART_CMD_KEY_EVENT (0x01U)
 
-/** @brief 电机使能命令（载荷=0） */
-#define APP_UART_CMD_MOTOR_ENABLE (0x02U)
-
-/** @brief 电机禁用命令（载荷=0） */
-#define APP_UART_CMD_MOTOR_DISABLE (0x03U)
-
 /** @brief 电机设置目标命令（载荷=20B：pos/vel/kp/kd/tor 各 4B float LE） */
-#define APP_UART_CMD_MOTOR_SET_TARGET (0x04U)
-
-/** @brief 电机发送控制帧命令（载荷=0） */
-#define APP_UART_CMD_MOTOR_CTRL_SEND (0x05U)
+#define APP_UART_CMD_MOTOR_SET_TARGET (0x02U)
 
 /** @brief 请求电机反馈命令（载荷=0，G0 回发 MOTOR_FEEDBACK_REPORT） */
-#define APP_UART_CMD_MOTOR_REQ_FEEDBACK (0x06U)
+#define APP_UART_CMD_MOTOR_REQ_FEEDBACK (0x03U)
 
 /** @brief 电机反馈上报帧（载荷=20B：pos/vel/tor/Tmos/Tcoil 各 4B float LE） */
-#define APP_UART_CMD_MOTOR_FEEDBACK_REPORT (0x07U)
+#define APP_UART_CMD_MOTOR_FEEDBACK_REPORT (0x04U)
 
 /* Exported functions prototypes ---------------------------------------------*/
 

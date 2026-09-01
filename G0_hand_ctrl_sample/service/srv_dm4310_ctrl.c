@@ -16,13 +16,15 @@
 /* Includes ------------------------------------------------------------------*/
 #include "srv_dm4310_ctrl.h"
 
+#include "daemon.h"
 #include "drv_can.h"
 #include "drv_systick.h"
 #include "fsm.h"
 #include "log.h"
+#include "maths.h"
 
+#include "printf.h"
 #include <string.h>
-
 /* 模块日志开关 ----------------------------------------------------------------*/
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
@@ -32,7 +34,7 @@
 #define SRV_DM4310_CTRL_LOG_E(...) LOG_E("srv_dm4310_ctrl", __VA_ARGS__)
 #define SRV_DM4310_CTRL_LOG_W(...) LOG_W("srv_dm4310_ctrl", __VA_ARGS__)
 #define SRV_DM4310_CTRL_LOG_I(...) LOG_I("srv_dm4310_ctrl", __VA_ARGS__)
-#define SRV_DM4310_CTRL_LOG_D(...) LOG_D("srv_dm4310_ctrl", __VA_ARGS__)
+#define SRV_DM4310_CTRL_LOG_D(...) ((void)0) // LOG_D("srv_dm4310_ctrl", __VA_ARGS__)
 #else
 #define SRV_DM4310_CTRL_LOG_E(...) ((void)0)
 #define SRV_DM4310_CTRL_LOG_W(...) ((void)0)
@@ -43,7 +45,7 @@
 /* Private constants ---------------------------------------------------------*/
 
 /** @brief MIT 默认刚度/阻尼（合适初值，可按需调整） */
-#define SRV_DM4310_DEFAULT_KP (10.0f)
+#define SRV_DM4310_DEFAULT_KP (2.50f)
 #define SRV_DM4310_DEFAULT_KD (0.5f)
 
 /** @brief 扭矩给定限幅 (±N·m)，保护电机/负载 */
@@ -65,7 +67,13 @@
 #define SRV_DM4310_INIT_ENABLE_DELAY_MS (1500U)
 
 /** @brief 使能帧发出后到开始控制帧的延时 (ms) */
-#define SRV_DM4310_ENABLE_CTRL_DELAY_MS (500U)
+#define SRV_DM4310_ENABLE_CTRL_DELAY_MS (250U)
+
+/** @brief 电机在线守护：喂狗超时时间 (ms)，超时判定电机离线 */
+#define SRV_DM4310_DAEMON_TIMEOUT_MS (500U)
+
+/** @brief 电机在线守护：初始化等待时间 (ms)，期间不判离线 */
+#define SRV_DM4310_DAEMON_INIT_WAIT_MS (2000U)
 
 /* Private variables ---------------------------------------------------------*/
 
@@ -73,7 +81,10 @@ static fsm_t s_fsm;
 static fsm_handler_t s_handlers[SRV_DM4310_STATE_MAX];
 static fsm_guard_t s_transitions[SRV_DM4310_STATE_MAX * SRV_DM4310_STATE_MAX];
 static const char* s_state_names[SRV_DM4310_STATE_MAX] = {
-    "UNINIT", "INIT", "ENABLED", "DISABLED",
+    "UNINIT",
+    "INIT",
+    "ENABLED",
+    "DISABLED",
 };
 
 static motor_t s_motor[MOTOR_NUM];
@@ -87,6 +98,12 @@ static uint32_t s_tx_log_ts; /**< 上次 TX 数据日志时间戳 (ms) */
 static uint32_t s_tx_err_log_ts; /**< 上次 TX 失败日志时间戳 (ms) */
 static uint32_t s_ctrl_send_ts; /**< 上次 MIT 控制帧发送时间戳 (ms) */
 static uint32_t s_init_entry_ts; /**< 进入 INIT 状态时间戳 (ms) */
+
+/** @brief 电机在线守护实例数组（每电机一个，反馈喂狗） */
+static daemon_context_t s_motor_daemon[MOTOR_NUM];
+
+/** @brief 电机守护名称表（静态存储，daemon 仅浅拷贝 name 指针） */
+static char s_motor_daemon_name[MOTOR_NUM][16];
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -102,6 +119,8 @@ static void dm4310_on_entry(fsm_t* ctx, fsm_state_t state);
 
 static void srv_dm4310_can_send(uint16_t id, const uint8_t* data, uint8_t len);
 
+static void dm4310_daemon_offline_cb(void* owner_ptr);
+
 /* Exported functions --------------------------------------------------------*/
 
 void srv_dm4310_ctrl_init(void)
@@ -112,6 +131,21 @@ void srv_dm4310_ctrl_init(void)
 
     /* 注册 CAN 发送回调（桥接到 drv_can 队列发送，与驱动解耦） */
     dm4310_can_send_register(srv_dm4310_can_send);
+
+    /* 注册每个电机的在线守护（反馈帧喂狗，超时触发离线回调） */
+    for (motor_num_t i = MOTOR_1; i < MOTOR_NUM; i++) {
+        (void)snprintf(s_motor_daemon_name[i], sizeof(s_motor_daemon_name[i]),
+            "dm4310_motor_%d", (int)i + 1);
+
+        const daemon_config_t daemon_cfg = {
+            .name = s_motor_daemon_name[i],
+            .owner_ptr = (void*)(uintptr_t)i,
+            .offline_cb = dm4310_daemon_offline_cb,
+            .reload_timeout_ms = SRV_DM4310_DAEMON_TIMEOUT_MS,
+            .init_wait_time_ms = SRV_DM4310_DAEMON_INIT_WAIT_MS,
+        };
+        (void)daemon_register_static(&daemon_cfg, &s_motor_daemon[i]);
+    }
 
     /* FSM 配置：全连通转换，状态副作用在 entry 回调 */
     memset(s_handlers, 0, sizeof(s_handlers));
@@ -145,7 +179,7 @@ void srv_dm4310_ctrl_init(void)
     SRV_DM4310_CTRL_LOG_I("DM4310 服务初始化完成 (ID=0x%02X, MIT)",
         (unsigned)s_motor[MOTOR_1].id);
 
-        delay_ms(2000);
+    delay_ms(2000);
 }
 
 srv_dm4310_state_t srv_dm4310_ctrl_get_state(void)
@@ -218,8 +252,12 @@ void srv_dm4310_ctrl_pos_step(float delta_pos)
     }
 
     s_motor[MOTOR_1].cmd.pos_set += delta_pos;
+
+    /* 位置钳位，防止累积超调 */
+    s_motor[MOTOR_1].cmd.pos_set = constrainf(s_motor[MOTOR_1].cmd.pos_set, P_MIN, P_MAX);
+
     dm4310_set(&s_motor[MOTOR_1]);
-    dm4310_ctrl_send(&s_motor[MOTOR_1]);
+    srv_dm4310_ctrl_send();
 
     SRV_DM4310_CTRL_LOG_I("位置微调 %+.2f rad → 当前给定 %.2f rad",
         (float)delta_pos, (float)s_motor[MOTOR_1].ctrl.pos_set);
@@ -231,12 +269,14 @@ void srv_dm4310_ctrl_set_target(float pos, float vel, float kp, float kd, float 
         return;
     }
 
-    /* 扭矩限幅 ±SRV_DM4310_TORQUE_LIMIT_NM */
-    if (tor > SRV_DM4310_TORQUE_LIMIT_NM) {
-        tor = SRV_DM4310_TORQUE_LIMIT_NM;
-    } else if (tor < -SRV_DM4310_TORQUE_LIMIT_NM) {
-        tor = -SRV_DM4310_TORQUE_LIMIT_NM;
-    }
+    /* 各参数按量程钳位，防止超调/非法给定（util_math constrainf） */
+    pos = constrainf(pos, P_MIN, P_MAX);
+    vel = constrainf(vel, V_MIN, V_MAX);
+    kp = constrainf(kp, KP_MIN, KP_MAX);
+    kd = constrainf(kd, KD_MIN, KD_MAX);
+
+    /* 扭矩限幅 ±SRV_DM4310_TORQUE_LIMIT_NM（更严于 T_MAX） */
+    tor = constrainf(tor, -SRV_DM4310_TORQUE_LIMIT_NM, SRV_DM4310_TORQUE_LIMIT_NM);
 
     s_motor[MOTOR_1].cmd.pos_set = pos;
     s_motor[MOTOR_1].cmd.vel_set = vel;
@@ -245,6 +285,7 @@ void srv_dm4310_ctrl_set_target(float pos, float vel, float kp, float kd, float 
     s_motor[MOTOR_1].cmd.tor_set = tor;
 
     dm4310_set(&s_motor[MOTOR_1]);
+    srv_dm4310_ctrl_send();
 }
 
 void srv_dm4310_ctrl_send(void)
@@ -279,6 +320,9 @@ void srv_dm4310_ctrl_feed(const drv_can_msg_t* msg)
         if (msg->id == (uint32_t)s_motor[i].id) {
             dm4310_fbdata(&s_motor[i], (uint8_t*)msg->data);
 
+            /* 收到有效反馈 → 喂狗（电机在线） */
+            daemon_reload(&s_motor_daemon[i]);
+
             /* RX 数据日志（限频） */
             const uint32_t now_ms = millis();
             if ((uint32_t)(now_ms - s_rx_log_ts) >= SRV_DM4310_RX_LOG_PERIOD_MS) {
@@ -295,9 +339,9 @@ void srv_dm4310_ctrl_feed(const drv_can_msg_t* msg)
     }
 }
 
-motor_t* srv_dm4310_ctrl_get_motor(void)
+motor_t* srv_dm4310_ctrl_get_motor(motor_num_t motor_id)
 {
-    return &s_motor[MOTOR_1];
+    return &s_motor[motor_id];
 }
 
 /* Private functions ---------------------------------------------------------*/
@@ -404,6 +448,27 @@ static void dm4310_on_entry(fsm_t* ctx, fsm_state_t state)
     }
 
     SRV_DM4310_CTRL_LOG_I("状态切换 → %s", fsm_name(ctx, state));
+}
+
+/* ===== 电机在线守护回调 ===== */
+
+/**
+ * @brief 电机在线状态变化回调（daemon 检测到上线/掉线跳变时触发）
+ * @param owner_ptr 电机索引（motor_num_t，注册时传入）
+ */
+static void dm4310_daemon_offline_cb(void* owner_ptr)
+{
+    const uint32_t idx = (uint32_t)(uintptr_t)owner_ptr;
+    if (idx >= MOTOR_NUM) {
+        return;
+    }
+
+    if (daemon_is_online(&s_motor_daemon[idx])) {
+        SRV_DM4310_CTRL_LOG_I("电机%u 上线 (恢复反馈)", (unsigned)idx + 1U);
+    } else {
+        SRV_DM4310_CTRL_LOG_E("电机%u 掉线！(%ums 内未收到反馈，检查 CAN 总线/电机供电)",
+            (unsigned)idx + 1U, (unsigned)SRV_DM4310_DAEMON_TIMEOUT_MS);
+    }
 }
 
 /**

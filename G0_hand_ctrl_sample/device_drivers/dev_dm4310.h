@@ -42,9 +42,9 @@ typedef struct {
     int t_int;
     int kp_int;
     int kd_int;
-    float pos;
-    float vel;
-    float tor;
+    float pos; // 单位rad
+    float vel; // 单位rad/s
+    float tor; // n.m
     float Kp;
     float Kd;
     float Tmos;

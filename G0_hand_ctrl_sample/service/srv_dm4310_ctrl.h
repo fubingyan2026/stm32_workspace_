@@ -24,7 +24,7 @@ extern "C" {
 /* Exported constants --------------------------------------------------------*/
 
 /** @brief 位置微调步长 (rad)，按键单击一次的变化量 */
-#define SRV_DM4310_POS_STEP_RAD (0.1f)
+#define SRV_DM4310_POS_STEP_RAD (0.25f)
 
 /**
  * @brief 电机枚举（当前仅使用 MOTOR_1，保留供后续扩展）
@@ -32,8 +32,6 @@ extern "C" {
  */
 typedef enum {
     MOTOR_1 = 0, /**< 1 号电机（当前启用） */
-    MOTOR_2,     /**< 2 号电机（预留） */
-    MOTOR_3,     /**< 3 号电机（预留） */
     MOTOR_NUM,   /**< 电机总数 */
 } motor_num_t;
 
@@ -106,7 +104,7 @@ void srv_dm4310_ctrl_feed(const drv_can_msg_t* msg);
  * @brief 获取电机最新反馈
  * @return motor_t* 电机句柄（含 para 反馈字段），始终非空
  */
-motor_t* srv_dm4310_ctrl_get_motor(void);
+motor_t* srv_dm4310_ctrl_get_motor(motor_num_t motor_id);
 
 #ifdef __cplusplus
 }
