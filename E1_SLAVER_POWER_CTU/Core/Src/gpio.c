@@ -51,20 +51,20 @@ void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, DC_DC_EN_Pin|ISO_EN_12V_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, DC_DC_EN_Pin|LSD1_IN_Pin|LSD2_IN_Pin|ISO_EN_12V_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(RS485_EN_GPIO_Port, RS485_EN_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : DC_DC_EN_Pin ISO_EN_12V_Pin */
-  GPIO_InitStruct.Pin = DC_DC_EN_Pin|ISO_EN_12V_Pin;
+  /*Configure GPIO pins : DC_DC_EN_Pin LSD1_IN_Pin LSD2_IN_Pin ISO_EN_12V_Pin */
+  GPIO_InitStruct.Pin = DC_DC_EN_Pin|LSD1_IN_Pin|LSD2_IN_Pin|ISO_EN_12V_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : EXT_PCOOG_24V_Pin LSD1_IN_Pin LSD2_IN_Pin ISO_PGOOD_12V_Pin */
-  GPIO_InitStruct.Pin = EXT_PCOOG_24V_Pin|LSD1_IN_Pin|LSD2_IN_Pin|ISO_PGOOD_12V_Pin;
+  /*Configure GPIO pins : EXT_PCOOG_24V_Pin ISO_PGOOD_12V_Pin */
+  GPIO_InitStruct.Pin = EXT_PCOOG_24V_Pin|ISO_PGOOD_12V_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
