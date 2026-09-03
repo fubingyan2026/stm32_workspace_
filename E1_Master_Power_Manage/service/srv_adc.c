@@ -62,6 +62,17 @@
  *        仅当偏差处于中间区间（两路既不一致也不互补）才判冗余通道失效/线缆异常 */
 #define SRV_ADC_ESTOP_REDUND_TOL_RAW (256U)
 
+/** @brief E-STOP 冗余故障去抖时间 (ms)：偏差连续落入中间区间的持续时间超过该值才告警。
+ *        滤波后通道切换时差值会短暂扫过中间区间（约 40~50ms），去抖可消除此类瞬时误报 */
+#define SRV_ADC_ESTOP_FAULT_DEBOUNCE_MS (100U)
+
+/** @brief E-STOP 冗余故障去抖帧数（step 以 100Hz 周期运行，10ms/帧） */
+#define SRV_ADC_ESTOP_FAULT_DEBOUNCE_FRAMES \
+    ((SRV_ADC_ESTOP_FAULT_DEBOUNCE_MS * ADC_SAMPLE_RATE_HZ) / 1000U)
+
+/** @brief E-STOP 通道数（S1~S4） */
+#define SRV_ADC_ESTOP_NUM (4U)
+
 /* 外部电压分压比 */
 #define ADC_SCALE_VIN (31.0f)
 #define ADC_SCALE_MOTOR_POWER (31.0f)
@@ -137,6 +148,9 @@ static uint32_t s_tele_log_ts;
 /** @brief 告警日志时间戳 (ms) */
 static uint32_t s_warn_log_ts;
 
+/** @brief E-STOP 冗余故障去抖计数（每通道一帧计数，达 SRV_ADC_ESTOP_FAULT_DEBOUNCE_FRAMES 触发一次告警） */
+static uint16_t s_estop_redund_fault_cnt[SRV_ADC_ESTOP_NUM];
+
 /** @brief 内部温度传感器出厂校准值（芯片固定，初始化时读取一次） */
 static uint16_t s_ts_cal1;
 static uint16_t s_ts_cal2;
@@ -150,6 +164,10 @@ static uint16_t s_ain_raw[SRV_ADC_AIN_NUM];
 
 /** @brief 服务初始化完成标志（未初始化前禁止出队，防越权读取） */
 static bool s_initialized;
+
+/** @brief 已发布至少一帧换算快照标志（srv_adc_step 首次出队换算后才置位，
+ *        用于区分“尚无快照”与“全部通道断开”两个都返回 0 的情形） */
+static bool s_data_ready;
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -182,6 +200,8 @@ void srv_adc_init(void)
     s_ain_mux_sel = 0; /* 尚无快照，置无效通道 */
     s_ain_cycle = SRV_ADC_AIN_CH_MIN; /* 从 Y1 起轮转 */
     memset(s_ain_raw, 0, sizeof(s_ain_raw));
+    memset(s_estop_redund_fault_cnt, 0, sizeof(s_estop_redund_fault_cnt));
+    s_data_ready = false;
 
     /* 内部温度传感器出厂校准值：芯片固定，仅初始化读取一次（无效值由 calc_mcu_temp 兜底） */
     s_ts_cal1 = *TS_CAL1_ADDR;
@@ -310,24 +330,32 @@ void srv_adc_step(void)
         /* E-STOP 双通道冗余校验：两路为互补冗余，正常仅两种情形——
          *   · 偏差 ≈ 0     （两路一致，同为高或同为低）
          *   · 偏差 ≈ ±4095 （两路互补，一高一低）
-         * 偏差落入中间区间即判冗余通道失效/线缆异常。 */
-        #define SRV_ADC_ESTOP_CHK(name, a1, a2) \
+         * 偏差落入中间区间即判冗余通道失效/线缆异常。
+         * 两路均经 PT1 滤波，按键切换瞬间差值会连续扫过中间区间约 40~50ms，
+         * 故需连续去抖 SRV_ADC_ESTOP_FAULT_DEBOUNCE_MS 才真正告警（每次故障区间仅报一次）。 */
+        #define SRV_ADC_ESTOP_CHK(idx, name, a1, a2) \
             do { \
                 const int _d = (int)(a1) - (int)(a2); \
                 const int _ad = (_d < 0) ? -_d : _d; \
                 const int _tol = (int)SRV_ADC_ESTOP_REDUND_TOL_RAW; \
                 const int _full = (int)SRV_ADC_RAW_MAX; \
-                const bool _normal = (_ad <= _tol) \
-                    || (_ad >= _full - _tol); \
-                if (!_normal) { \
-                    SRV_ADC_LOG_E("急停冗余通道偏差异常 " name ": ADC1=%u ADC2=%u 偏差=%+d (正常应≈0或≈±%u)", \
-                        (unsigned)(a1), (unsigned)(a2), _d, (unsigned)SRV_ADC_RAW_MAX); \
+                const bool _abn = !((_ad <= _tol) || (_ad >= _full - _tol)); \
+                if (_abn) { \
+                    if (s_estop_redund_fault_cnt[idx] < SRV_ADC_ESTOP_FAULT_DEBOUNCE_FRAMES) { \
+                        s_estop_redund_fault_cnt[idx]++; \
+                        if (s_estop_redund_fault_cnt[idx] == SRV_ADC_ESTOP_FAULT_DEBOUNCE_FRAMES) { \
+                            SRV_ADC_LOG_E("急停冗余通道偏差异常 " name ": ADC1=%u ADC2=%u 偏差=%+d (正常应≈0或≈±%u)", \
+                                (unsigned)(a1), (unsigned)(a2), _d, (unsigned)SRV_ADC_RAW_MAX); \
+                        } \
+                    } \
+                } else { \
+                    s_estop_redund_fault_cnt[idx] = 0; \
                 } \
             } while (0)
-        SRV_ADC_ESTOP_CHK("S1", s.e_stop1_adc1, s.e_stop1_adc2);
-        SRV_ADC_ESTOP_CHK("S2", s.e_stop2_adc1, s.e_stop2_adc2);
-        SRV_ADC_ESTOP_CHK("S3", s.e_stop3_adc1, s.e_stop3_adc2);
-        SRV_ADC_ESTOP_CHK("S4", s.e_stop4_adc1, s.e_stop4_adc2);
+        SRV_ADC_ESTOP_CHK(0, "S1", s.e_stop1_adc1, s.e_stop1_adc2);
+        SRV_ADC_ESTOP_CHK(1, "S2", s.e_stop2_adc1, s.e_stop2_adc2);
+        SRV_ADC_ESTOP_CHK(2, "S3", s.e_stop3_adc1, s.e_stop3_adc2);
+        SRV_ADC_ESTOP_CHK(3, "S4", s.e_stop4_adc1, s.e_stop4_adc2);
         #undef SRV_ADC_ESTOP_CHK
 
         /* 换算状态观测：VDDA/NTC1/NTC2/MCU 温度计算是否异常 */
@@ -336,6 +364,7 @@ void srv_adc_step(void)
         //     calc_status_str(s.ntc2_status), calc_status_str(s.mcu_temp_status));
     }
 
+    s_data_ready = true;
     msg_fifo_push(&s_fifo, &s);
 }
 
@@ -366,6 +395,36 @@ uint8_t srv_adc_read_ain(void)
     if (s.a_in3_io_raw >= SRV_ADC_AIN_HIGH_RAW)
         mask |= (1U << 2);
     return mask;
+}
+
+uint8_t srv_adc_estop_closed_mask(void)
+{
+    srv_adc_data_t s;
+    if (!s_data_ready || !srv_adc_get_latest(&s)) {
+        return 0; /* 尚未发布快照/未初始化 → 无有效判定，全部判断开 */
+    }
+
+    /* 闭合 = 两路滤波后原始值偏差 ≤ 冗余容差（ADC1 与 ADC2 接近，触点/线缆短接） */
+    uint8_t mask = 0;
+    #define SRV_ADC_ESTOP_CLOSED(bit, a1, a2) \
+        do { \
+            const int _d = (int)(a1) - (int)(a2); \
+            const int _ad = (_d < 0) ? -_d : _d; \
+            if (_ad <= (int)SRV_ADC_ESTOP_REDUND_TOL_RAW) { \
+                mask |= (1U << (bit)); \
+            } \
+        } while (0)
+    SRV_ADC_ESTOP_CLOSED(0, s.e_stop1_adc1, s.e_stop1_adc2);
+    SRV_ADC_ESTOP_CLOSED(1, s.e_stop2_adc1, s.e_stop2_adc2);
+    SRV_ADC_ESTOP_CLOSED(2, s.e_stop3_adc1, s.e_stop3_adc2);
+    SRV_ADC_ESTOP_CLOSED(3, s.e_stop4_adc1, s.e_stop4_adc2);
+    #undef SRV_ADC_ESTOP_CLOSED
+    return mask;
+}
+
+bool srv_adc_estop_valid(void)
+{
+    return s_initialized && s_data_ready;
 }
 
 /* Private functions ---------------------------------------------------------*/

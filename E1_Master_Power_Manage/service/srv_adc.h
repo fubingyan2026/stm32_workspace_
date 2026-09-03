@@ -19,6 +19,14 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
+/* Exported constants --------------------------------------------------------*/
+
+/** @brief 4 路急停冗余 ADC 通道(S1~S4)全部闭合时的掩码 */
+#define SRV_ADC_ESTOP_ALL_CLOSED_MASK (0x0FU)
+
+/** @brief 急停冗余 ADC 通道数 (S1~S4) */
+#define SRV_ADC_ESTOP_CH_NUM (4U)
+
 /**
  * @brief ADC 物理量换算返回状态
  *
@@ -109,6 +117,28 @@ bool srv_adc_get_latest(srv_adc_data_t* sample);
  * @return 位掩码：bit0=A_IN1_IO，bit1=A_IN2_IO，bit2=A_IN3_IO；srv_adc 未初始化或尚无快照时返回 0
  */
 uint8_t srv_adc_read_ain(void);
+
+/**
+ * @brief 读取急停冗余 ADC 通道闭合状态（S1~S4）
+ *
+ * 每路急停开关经两路冗余 ADC（滤波后 12-bit 原始值）采样，闭合判定为两路原始值
+ * 偏差小于等于冗余容差（ADC1 与 ADC2 值比较接近，开关触点/线缆短接）；
+ * 急停按下时两路一高一低互补，偏差 ≈ ±4095，判为断开。
+ *
+ * @return 位掩码：bit0~bit3 分别对应 S1~S4（置 1=闭合，0=断开）；
+ *         srv_adc 未初始化或尚无快照时返回 0
+ */
+uint8_t srv_adc_estop_closed_mask(void);
+
+/**
+ * @brief 查询急停冗余 ADC 采样是否已有效（至少发布一帧快照）
+ *
+ * 用于与 srv_adc_estop_closed_mask() 配合：mask 返回 0 可能是“全部断开”，
+ * 也可能是“尚无快照”，调用方需先经本函数确认采样数据有效后再判读。
+ *
+ * @return true=急停冗余 ADC 采样有效；false=未初始化或尚无快照
+ */
+bool srv_adc_estop_valid(void);
 
 #ifdef __cplusplus
 }

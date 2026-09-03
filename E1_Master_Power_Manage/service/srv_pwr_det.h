@@ -33,7 +33,8 @@ typedef struct {
     bool hsd_fault; /**< 高边驱动故障汇总 */
     bool dbr_ocp; /**< 制动电阻过流标志 */
     bool motor_chg_ocp; /**< 电机充电过流标志 */
-    bool estop_on; /**< 急停触发状态 */
+    bool estop_on; /**< 有效急停触发状态：数字 E_STOP_ON 按下 且 冗余 ADC 检出至少一路断开（双确认 AND） */
+    bool estop_inconsistent; /**< 急停双判据不一致异常：数字按下但冗余 ADC 全部闭合，或冗余检出断开但数字未按下 */
 } srv_pwr_det_status_t;
 
 /* Exported functions prototypes ---------------------------------------------*/

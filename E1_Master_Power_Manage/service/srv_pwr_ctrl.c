@@ -86,7 +86,7 @@
 #define PWR_PRECHARGE_COLD_RATIO_PERMILLE (100U)
 
 /** @brief 初始电压跟随开关：1=按初始 bus/vin 比值跳过前序阶段（预偏置），0=恒冷机全流程 */
-#define PWR_PRECHARGE_PREBIAS_EN (0U)
+#define PWR_PRECHARGE_PREBIAS_EN (1U)
 /** @brief 提前转稳态优化开关：1=输出≥输入母线 95% 即转稳态，0=固定跑满 500ms */
 #define PWR_PRECHARGE_EARLY_STEADY_EN (0U)
 /** @brief 提前转稳态电压比例（95%） */

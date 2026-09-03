@@ -12,6 +12,7 @@
 #include "drv_status.h"
 #include "drv_systick.h"
 #include "log.h"
+#include "srv_adc.h"
 
 /* 模块日志开关 ----------------------------------------------------------------*/
 
@@ -101,12 +102,27 @@ void srv_pwr_det_read(srv_pwr_det_status_t* status)
     status->hsd_fault = (sta >> DRV_STATUS_HSD_FAULT) & 1;
     status->dbr_ocp = (sta >> DRV_STATUS_DBR_OCP_FLAG) & 1;
     status->motor_chg_ocp = (sta >> DRV_STATUS_MOTOR_CHG_OCP) & 1;
-    status->estop_on = (sta >> DRV_STATUS_E_STOP_ON) & 1;
+
+    /* 有效急停 = 数字 E_STOP_ON 按下 且 冗余 ADC 检出至少一路断开（双确认 AND）：
+     * 数字按下但冗余 ADC 仍全部闭合 → 判为线缆/信号异常（estop_inconsistent），不触发断电；
+     * 冗余 ADC 尚无有效快照时不置有效急停，避免滤波未就绪阶段的误判。 */
+    const bool estop_digital = ((sta >> DRV_STATUS_E_STOP_ON) & 1U) != 0;
+    const bool estop_adc_valid = srv_adc_estop_valid();
+    const uint8_t estop_closed = estop_adc_valid ? srv_adc_estop_closed_mask() : 0U;
+    const bool estop_redund_open = estop_adc_valid && (estop_closed != SRV_ADC_ESTOP_ALL_CLOSED_MASK);
+    status->estop_on = estop_digital && estop_redund_open;
+    status->estop_inconsistent = estop_adc_valid && (estop_digital != estop_redund_open);
 
     /* 状态遥测日志（限频 1s：10ms 轮询防刷屏） */
     const uint32_t now_ms = millis();
     if ((uint32_t)(now_ms - s_pwr_det_log_ts) >= SRV_PWR_DET_LOG_PERIOD_MS) {
         s_pwr_det_log_ts = now_ms;
+
+        if (status->estop_inconsistent) {
+            SRV_PWR_DET_LOG_E("急停判据不一致: 数字按下=%u 冗余闭合掩码=0x%02X (异常，不触发断电，检查线缆/按钮)",
+                (unsigned)estop_digital, (unsigned)estop_closed);
+        }
+
         SRV_PWR_DET_LOG_D("电源故障状态(0代表无故障): 12V=%u 24V=%u 工控24V=%u 辅助=%u 电机=%u | HSD故障=%u DBR过流=%u 电充过流=%u 急停=%u",
             (unsigned)status->ext_12v_ok, (unsigned)status->ext_24v_ok,
             (unsigned)status->comp_24v_ok, (unsigned)status->aux_power_ok,
