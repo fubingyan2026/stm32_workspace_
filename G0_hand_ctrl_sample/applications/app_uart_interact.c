@@ -50,10 +50,14 @@
 /** @brief 双键组合长按时间 (ms)：KEY1+KEY2 同时按住触发电机保存零点 */
 #define APP_UART_COMBO_SAVE_ZERO_MS (3000U)
 
+/** @brief 反馈上报失败日志限频窗口 (ms) */
+#define APP_UART_FEEDBACK_ERR_LOG_PERIOD_MS (1000U)
+
 /* Private variables ---------------------------------------------------------*/
 
 static uint32_t s_last_heartbeat_ms;
 static uint32_t s_last_motor_print_ms;
+static uint32_t s_last_feedback_err_log;
 static uint16_t s_heartbeat_tick;
 static uint32_t s_combo_press_ts; /**< 双键同时按住起始时间戳 (0=未同时按下) */
 static bool s_combo_triggered; /**< 组合长按已触发标志（防重复触发） */
@@ -166,8 +170,8 @@ static void app_uart_rx_cmd_cb(uint8_t cmd, const uint8_t* data, uint8_t data_le
         break;
 
     default:
-        APP_UART_INTERACT_LOG_D("收到未处理命令 cmd=0x%02X data_len=%u",
-            (unsigned)cmd, (unsigned)data_len);
+        // APP_UART_INTERACT_LOG_D("收到未处理命令 cmd=0x%02X data_len=%u",
+        //     (unsigned)cmd, (unsigned)data_len);
         break;
     }
 }
@@ -205,7 +209,12 @@ static void app_uart_motor_send_feedback(void)
     const srv_uart_tx_cmd_error_t err = srv_uart_tx_cmd_send(APP_UART_CMD_MOTOR_FEEDBACK_REPORT, payload,
         APP_UART_MOTOR_FEEDBACK_PAYLOAD_LEN);
     if (err != SRV_UART_TX_CMD_OK) {
-        APP_UART_INTERACT_LOG_W("电机反馈上报失败: %d", (int)err);
+        /* 高频请求反馈下 TX 队列可能短暂占满，限频告警避免刷屏 */
+        const uint32_t now_ms = millis();
+        if ((uint32_t)(now_ms - s_last_feedback_err_log) >= APP_UART_FEEDBACK_ERR_LOG_PERIOD_MS) {
+            s_last_feedback_err_log = now_ms;
+            APP_UART_INTERACT_LOG_W("电机反馈上报失败: %d", (int)err);
+        }
     }
 }
 

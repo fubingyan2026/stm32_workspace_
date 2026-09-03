@@ -25,7 +25,7 @@
 #define SRV_UART_TX_CMD_LOG_E(...) LOG_E("srv_uart_tx_cmd", __VA_ARGS__)
 #define SRV_UART_TX_CMD_LOG_W(...) LOG_W("srv_uart_tx_cmd", __VA_ARGS__)
 #define SRV_UART_TX_CMD_LOG_I(...) LOG_I("srv_uart_tx_cmd", __VA_ARGS__)
-#define SRV_UART_TX_CMD_LOG_D(...) ((void)0)//LOG_D("srv_uart_tx_cmd", __VA_ARGS__)
+#define SRV_UART_TX_CMD_LOG_D(...) ((void)0) // LOG_D("srv_uart_tx_cmd", __VA_ARGS__)
 #else
 #define SRV_UART_TX_CMD_LOG_E(...) ((void)0)
 #define SRV_UART_TX_CMD_LOG_W(...) ((void)0)
@@ -112,6 +112,11 @@ srv_uart_tx_cmd_error_t srv_uart_tx_cmd_send(uint8_t cmd, const uint8_t* data,
     if (uart_err == DRV_UART_ERROR_TX_BUSY) {
         return SRV_UART_TX_CMD_ERROR_TX_BUSY;
     }
+
+    if (uart_err == DRV_UART_ERROR_TX_QUEUE_FULL) {
+        return SRV_UART_TX_CMD_ERROR_QUEUE_FULL;
+    }
+    
     if (uart_err != DRV_UART_OK) {
         SRV_UART_TX_CMD_LOG_E("UART 发送失败: %d", (int)uart_err);
         return SRV_UART_TX_CMD_ERROR_INTERNAL;

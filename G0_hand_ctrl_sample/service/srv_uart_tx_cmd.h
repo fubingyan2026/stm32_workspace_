@@ -42,6 +42,7 @@ typedef enum {
     SRV_UART_TX_CMD_ERROR_UNINITIALIZED, /**< 未初始化 */
     SRV_UART_TX_CMD_ERROR_INVALID_PARAM, /**< 无效参数（负载超长等） */
     SRV_UART_TX_CMD_ERROR_TX_BUSY, /**< TX DMA 忙 */
+    SRV_UART_TX_CMD_ERROR_QUEUE_FULL,
     SRV_UART_TX_CMD_ERROR_INTERNAL, /**< 内部错误（打包失败等） */
 } srv_uart_tx_cmd_error_t;
 

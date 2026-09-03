@@ -63,7 +63,7 @@
 #define SRV_DM4310_TX_ERR_LOG_PERIOD_MS (1000U)
 
 /** @brief 实时 MIT 控制帧发送周期 (ms)：ENABLED 状态下限频发送 */
-#define SRV_DM4310_CTRL_SEND_PERIOD_MS (100U)
+#define SRV_DM4310_CTRL_SEND_PERIOD_MS (10U)
 
 /** @brief 初始化到使能命令的等待延时 (ms)：等待电机/总线稳定 */
 #define SRV_DM4310_INIT_ENABLE_DELAY_MS (1500U)

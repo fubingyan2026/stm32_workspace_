@@ -63,17 +63,17 @@ typedef struct {
 } drv_uart_tx_frame_t;
 
 typedef struct {
-    UART_HandleTypeDef* huart;          /**< HAL UART 句柄 */
-    uint8_t             rx_buf[DRV_UART_RX_BUF_SIZE]; /**< RX DMA circular 缓冲（与 kfifo 共用） */
-    uint8_t             tx_dma_buf[DRV_UART_TX_MAX_FRAME_LEN]; /**< TX DMA 缓冲（持久，防 DMA 读被覆盖） */
-    kfifo_t             rx_fifo;        /**< 接收 kfifo（环形缓冲，SPSC：ISR 写指针/主循环读） */
-    msg_fifo_t          tx_fifo;        /**< 发送缓冲队列（帧级，忙时入队不丢帧） */
-    uint8_t             tx_fifo_buf[DRV_UART_TX_QUEUE_DEPTH * sizeof(drv_uart_tx_frame_t)];
-    bool                tx_busy;        /**< TX DMA 传输中 */
-    bool                initialized;    /**< 初始化标志 */
-    uint32_t            err_count;      /**< 日志聚合窗口内错误累计次数 */
-    uint32_t            err_flags;      /**< 日志聚合窗口内错误标志并集 */
-    uint32_t            err_last_log;   /**< 上次错误日志时间戳 (ms) */
+    UART_HandleTypeDef* huart; /**< HAL UART 句柄 */
+    uint8_t rx_buf[DRV_UART_RX_BUF_SIZE]; /**< RX DMA circular 缓冲（与 kfifo 共用） */
+    uint8_t tx_dma_buf[DRV_UART_TX_MAX_FRAME_LEN]; /**< TX DMA 缓冲（持久，防 DMA 读被覆盖） */
+    kfifo_t rx_fifo; /**< 接收 kfifo（环形缓冲，SPSC：ISR 写指针/主循环读） */
+    msg_fifo_t tx_fifo; /**< 发送缓冲队列（帧级，忙时入队不丢帧） */
+    uint8_t tx_fifo_buf[DRV_UART_TX_QUEUE_DEPTH * sizeof(drv_uart_tx_frame_t)];
+    bool tx_busy; /**< TX DMA 传输中 */
+    bool initialized; /**< 初始化标志 */
+    uint32_t err_count; /**< 日志聚合窗口内错误累计次数 */
+    uint32_t err_flags; /**< 日志聚合窗口内错误标志并集 */
+    uint32_t err_last_log; /**< 上次错误日志时间戳 (ms) */
 } drv_uart_inst_t;
 
 /* Private variables ---------------------------------------------------------*/
@@ -271,9 +271,12 @@ drv_uart_error_t drv_uart_send(drv_uart_channel_t ch, const uint8_t* data, uint3
         && msg_fifo_empty(&inst->tx_fifo)) {
         memcpy(inst->tx_dma_buf, data, len);
         if (HAL_UART_Transmit_DMA(inst->huart, inst->tx_dma_buf,
-                (uint16_t)len) == HAL_OK) {
+                (uint16_t)len)
+            == HAL_OK) {
             inst->tx_busy = true;
             return DRV_UART_OK;
+        } else {
+            return DRV_UART_ERROR_TX_BUSY;
         }
     }
 
@@ -283,7 +286,7 @@ drv_uart_error_t drv_uart_send(drv_uart_channel_t ch, const uint8_t* data, uint3
     memcpy(frame.data, data, len);
 
     if (!msg_fifo_push(&inst->tx_fifo, &frame)) {
-        return DRV_UART_ERROR_TX_BUSY; /* 队列满才丢帧 */
+        return DRV_UART_ERROR_TX_QUEUE_FULL; /* 队列满，帧被丢弃 */
     }
 
     return DRV_UART_OK;
@@ -318,7 +321,8 @@ void drv_uart_tx_flush(drv_uart_channel_t ch)
         memcpy(inst->tx_dma_buf, frame.data, frame.len);
 
         if (HAL_UART_Transmit_DMA(inst->huart, inst->tx_dma_buf,
-                frame.len) == HAL_OK) {
+                frame.len)
+            == HAL_OK) {
             inst->tx_busy = true;
             break; /* 等 TxCplt 清忙后下轮再发下一帧 */
         }

@@ -34,8 +34,8 @@ extern "C" {
 /** @brief TX 单帧最大长度（容纳 UART 命令协议最大帧 269B + 余量） */
 #define DRV_UART_TX_MAX_FRAME_LEN (70U)
 
-/** @brief TX 缓冲队列深度（帧数），队列满才丢帧 */
-#define DRV_UART_TX_QUEUE_DEPTH (4U)
+/** @brief TX 缓冲队列深度（帧数），队列满才丢帧（高频反馈场景需足够大） */
+#define DRV_UART_TX_QUEUE_DEPTH (16U)
 
 /* Exported types ------------------------------------------------------------*/
 
@@ -58,7 +58,8 @@ typedef enum {
     DRV_UART_OK = 0, /**< 操作成功 */
     DRV_UART_ERROR_NULL_PTR, /**< 空指针错误 */
     DRV_UART_ERROR_UNINITIALIZED, /**< 未初始化 */
-    DRV_UART_ERROR_TX_BUSY, /**< TX DMA 忙 */
+    DRV_UART_ERROR_TX_BUSY, /**< TX DMA 忙（正在发送，应稍后重试） */
+    DRV_UART_ERROR_TX_QUEUE_FULL, /**< TX 缓冲队列已满（帧被丢弃） */
     DRV_UART_ERROR_INVALID_PARAM, /**< 无效参数 */
 } drv_uart_error_t;
 

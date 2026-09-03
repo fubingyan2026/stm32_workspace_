@@ -43,13 +43,16 @@ static const uint8_t s_footer[] = { '\n' };
 /** @brief 从 drv_uart 读取数据的临时缓冲 */
 #define SRV_UART_RX_CMD_READ_BUF_SIZE (32U)
 
+/** @brief 单次 step 最多解析的帧数（防止单次调用占用主循环过长） */
+#define SRV_UART_RX_CMD_MAX_PARSE_PER_STEP (4U)
+
 /** @brief 错误日志限频窗口 (ms) */
 #define SRV_UART_RX_CMD_ERR_LOG_PERIOD_MS (1000U)
 
 /* Private variables ---------------------------------------------------------*/
 
 static protocol_parser_context_t s_parser;
-static uint8_t s_input_buf[512]; /**< parser 输入 kfifo 缓冲（2 的幂） */
+static uint8_t s_input_buf[1024]; /**< parser 输入 kfifo 缓冲（2 的幂） */
 static uint8_t s_output_buf[SRV_UART_RX_CMD_MAX_FRAME + 4U]; /**< parser 输出帧缓冲 */
 static srv_uart_rx_cmd_cb_t s_rx_cb;
 static uint32_t s_rx_count; /**< 已收完整命令帧计数 */
@@ -111,29 +114,32 @@ void srv_uart_rx_cmd_step(void)
         n -= rd;
     }
 
-    /* 2) 解析完整帧并分派回调 */
+    /* 2) 解析完整帧并分派回调：单次调用最多解析 MAX_PARSE_PER_STEP 帧，
+       剩余帧由下个周期继续处理（配合 uart_cmd_task 周期轮询，避免死循环） */
     uint16_t frame_len = 0;
     uint8_t* frame = NULL;
+    uint32_t parsed = 0;
 
-    for (;;) {
-        const protocol_parser_error_t err =
-            protocol_parser_parse(&s_parser, &frame_len, &frame);
+    while (parsed < SRV_UART_RX_CMD_MAX_PARSE_PER_STEP) {
+        const protocol_parser_error_t err = protocol_parser_parse(&s_parser, &frame_len, &frame);
 
         if (err == PROTOCOL_PARSER_OK) {
             /* 帧校验：结构合法性（frame[0] 帧头 / frame[len-1] 帧尾 / data_len 一致） */
             if (frame == NULL || frame_len < 5U
                 || frame[0] != 'z' || frame[frame_len - 1] != '\n') {
                 rx_log_error("非法帧结构", (int32_t)err);
+                parsed++;
                 continue;
             }
-
             const uint8_t data_len = frame[2];
             if (data_len != (frame_len - 5U)) {
                 rx_log_error("data_len 不一致", (int32_t)err);
+                parsed++;
                 continue;
             }
 
             s_rx_count++;
+            parsed++;
 
             if (s_rx_cb) {
                 s_rx_cb(frame[1], &frame[3], data_len);
@@ -150,6 +156,7 @@ void srv_uart_rx_cmd_step(void)
         /* 其他错误（CHECKSUM/FOOTER_MISMATCH/HEADER_MISMATCH 等）：
          * parser 已自行跳过垃圾字节，限频告警后继续 */
         rx_log_error("解析错误", (int32_t)err);
+        parsed++;
     }
 }
 
