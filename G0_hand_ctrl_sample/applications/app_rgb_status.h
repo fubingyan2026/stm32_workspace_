@@ -80,6 +80,14 @@ bool app_rgb_status_set_state(app_rgb_channel_t ch, srv_signal_state_t state);
 bool app_rgb_status_set_blink(app_rgb_channel_t ch, uint16_t cycle_ms,
     uint16_t wait_ms, uint16_t counts);
 
+/**
+ * @brief 设置呼吸并强制立即开始（先重置呼吸计时/相位，再切 BREATHING）
+ * @param ch       LED 通道
+ * @param cycle_ms 呼吸周期(ms)，0 表示使用当前值
+ * @return true 成功；false 参数非法或未初始化
+ */
+bool app_rgb_status_set_breath(app_rgb_channel_t ch, uint16_t cycle_ms);
+
 #ifdef __cplusplus
 }
 #endif

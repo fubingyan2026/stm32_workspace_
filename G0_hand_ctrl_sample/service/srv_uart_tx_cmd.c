@@ -130,6 +130,28 @@ srv_uart_tx_cmd_error_t srv_uart_tx_cmd_send(uint8_t cmd, const uint8_t* data,
 
 /* Private functions ---------------------------------------------------------*/
 
+const char* srv_uart_tx_cmd_err_str(srv_uart_tx_cmd_error_t err)
+{
+    switch (err) {
+    case SRV_UART_TX_CMD_OK:
+        return "OK";
+    case SRV_UART_TX_CMD_ERROR_NULL_PTR:
+        return "NULL_PTR";
+    case SRV_UART_TX_CMD_ERROR_UNINITIALIZED:
+        return "UNINITIALIZED";
+    case SRV_UART_TX_CMD_ERROR_INVALID_PARAM:
+        return "INVALID_PARAM";
+    case SRV_UART_TX_CMD_ERROR_TX_BUSY:
+        return "TX_BUSY";
+    case SRV_UART_TX_CMD_ERROR_QUEUE_FULL:
+        return "QUEUE_FULL";
+    case SRV_UART_TX_CMD_ERROR_INTERNAL:
+        return "INTERNAL";
+    default:
+        return "UNKNOWN";
+    }
+}
+
 /**
  * @brief 帧长度字段回填回调
  * @note  由 protocol_packer 在 data 拷贝后调用；payload_len 参数为传入 pack 的

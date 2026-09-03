@@ -40,6 +40,15 @@ extern "C" {
 /** @brief 电机反馈上报帧（载荷=21B：state(1) + pos/vel/tor/Tmos/Tcoil 各 4B float LE） */
 #define APP_UART_CMD_MOTOR_FEEDBACK_REPORT (0x04U)
 
+/** @brief LED 控制命令（载荷=2+：ch(1) + action(1) [+ 参数]，见 app_rgb_status.h） */
+#define APP_UART_CMD_LED_CTRL (0x05U)
+
+/* LED 控制 action */
+#define APP_UART_LED_ACTION_OFF (0x00U) /**< 关闭 */
+#define APP_UART_LED_ACTION_ON (0x01U) /**< 常亮 */
+#define APP_UART_LED_ACTION_BLINK (0x02U) /**< 闪烁（后随 2B 间隔 ms 小端） */
+#define APP_UART_LED_ACTION_BREATH (0x03U) /**< 呼吸 */
+
 /* Exported functions prototypes ---------------------------------------------*/
 
 /**

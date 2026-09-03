@@ -17,10 +17,10 @@
 #include "app_uart_interact.h"
 #include "can_task.h"
 #include "daemon_task.h"
-#include "efuse_task.h"
 #include "drv_log_uart.h"
 #include "drv_systick.h"
 #include "drv_uart.h"
+#include "efuse_task.h"
 #include "key_task.h"
 #include "led_task.h"
 #include "log.h"
@@ -67,6 +67,8 @@ int app_main(void)
     for (;;) {
         sw_timer_tick(millis());
         sw_timer_task();
+        /* 排空 TX 缓冲队列到 DMA（忙时入队的帧在此发出，保证不丢失） */
+        // drv_uart_tx_flush(DRV_UART_CH_2);
     }
 
     return 0;

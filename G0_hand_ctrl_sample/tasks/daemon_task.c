@@ -81,7 +81,7 @@ static void daemon_print_frequencies(void)
     clist_for_each_entry(ctx, head, node)
     {
         const float freq_x10 = daemon_get_feed_frequency(ctx);
-        LOG_I("daemon_task", "%s: %s (喂狗 %.3fHz)",
+        LOG_D("daemon_task", "%s: %s (喂狗 %.3fHz)",
             daemon_get_name(ctx),
             daemon_is_online(ctx) ? "在线" : "掉线",
             freq_x10);

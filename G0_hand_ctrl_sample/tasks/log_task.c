@@ -85,7 +85,7 @@ void log_task_init(void)
         .get_timestamp_cb = millis,
     };
     log_init(&log_cfg);
-    log_set_level(LOG_LEVEL_DEBUG);
+    log_set_level(LOG_LEVEL_INFO);
 
     /* 日志串口（USART2 DMA）驱动初始化：本任务是 drv_log_uart 的唯一消费者，
      * 由 log_task 自行完成初始化，避免各 app_main（App/Boot 多工程）遗漏。

@@ -21,6 +21,15 @@ CMD_KEY_EVENT = 0x01            # G0 -> 上位机  按键事件 payload=2B [key_
 CMD_MOTOR_SET_TARGET = 0x02     # 上位机 -> G0  电机目标 payload=20B 5xfloat LE
 CMD_MOTOR_REQ_FEEDBACK = 0x03   # 上位机 -> G0  请求反馈 payload=0
 CMD_MOTOR_FEEDBACK_REPORT = 0x04  # G0 -> 上位机 反馈上报 payload=21B [state][5xfloat]
+CMD_LED_CTRL = 0x05             # 上位机 -> G0  LED 控制 payload=[ch][action](+2B interval)
+
+# ---- LED 控制 action ----
+LED_ACTION_OFF = 0x00
+LED_ACTION_ON = 0x01
+LED_ACTION_BLINK = 0x02
+LED_ACTION_BREATH = 0x03
+
+LED_NAME = {0: "蓝", 1: "绿", 2: "红"}
 
 # ---- 电机目标量程 ----
 POS_MIN, POS_MAX = 0.0, 0.464
@@ -144,3 +153,18 @@ def build_motor_target(pos: float, vel: float, kp: float, kd: float, tor: float)
 def build_req_feedback() -> bytes:
     """构建 0x03 请求反馈帧"""
     return build_frame(CMD_MOTOR_REQ_FEEDBACK)
+
+
+def build_led_ctrl(ch: int, action: int, interval_ms: int = 0) -> bytes:
+    """构建 0x05 LED 控制帧
+
+    payload = [ch][action]([interval_lo][interval_hi])，interval 仅 BLINK 使用
+    """
+    if ch < 0 or ch > 2:
+        ch = 0
+    if action == LED_ACTION_BLINK:
+        interval_ms = int(min(max(interval_ms, 0), 65535))
+        payload = bytes([ch, action, interval_ms & 0xFF, (interval_ms >> 8) & 0xFF])
+    else:
+        payload = bytes([ch, action])
+    return build_frame(CMD_LED_CTRL, payload)

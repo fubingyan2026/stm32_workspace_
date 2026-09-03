@@ -379,7 +379,13 @@ void srv_signal_set_state(srv_signal_handle_t* instance, srv_signal_state_t stat
         return;
 
     SRV_SIGNAL_LOG_D("SIG[%s] 收到状态命令: %u", instance->config.name, (unsigned)state);
+
+    /* 入队命令并保留当前呼吸参数：避免纯状态切换把呼吸 min/max 清成 0
+       （cmd 其余字段为 0，而 process 用 <0xFFFF 判断会误覆盖） */
     srv_signal_cmd_t cmd = { .set_state = state };
+    cmd.breath_cycle_ms = instance->breath_cycle_ms;
+    cmd.breath_min_duty = instance->breath_min_duty;
+    cmd.breath_max_duty = instance->breath_max_duty;
     msg_fifo_push(&instance->cmd_fifo, &cmd);
 }
 

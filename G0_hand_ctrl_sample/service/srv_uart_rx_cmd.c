@@ -44,10 +44,7 @@ static const uint8_t s_footer[] = { '\n' };
 #define SRV_UART_RX_CMD_READ_BUF_SIZE (32U)
 
 /** @brief 单次 step 最多解析的帧数（防止单次调用占用主循环过长） */
-#define SRV_UART_RX_CMD_MAX_PARSE_PER_STEP (4U)
-
-/** @brief 错误日志限频窗口 (ms) */
-#define SRV_UART_RX_CMD_ERR_LOG_PERIOD_MS (1000U)
+#define SRV_UART_RX_CMD_MAX_PARSE_PER_STEP (8U)
 
 /* Private variables ---------------------------------------------------------*/
 
@@ -56,7 +53,6 @@ static uint8_t s_input_buf[1024]; /**< parser 输入 kfifo 缓冲（2 的幂） 
 static uint8_t s_output_buf[SRV_UART_RX_CMD_MAX_FRAME + 4U]; /**< parser 输出帧缓冲 */
 static srv_uart_rx_cmd_cb_t s_rx_cb;
 static uint32_t s_rx_count; /**< 已收完整命令帧计数 */
-static uint32_t s_last_err_log; /**< 上次错误日志时间戳 */
 static bool s_initialized;
 
 /* Private function prototypes -----------------------------------------------*/
@@ -73,7 +69,6 @@ void srv_uart_rx_cmd_init(srv_uart_rx_cmd_cb_t callback)
 {
     s_rx_cb = callback;
     s_rx_count = 0;
-    s_last_err_log = 0;
 
     const protocol_parser_config_t cfg = {
         .name = "srv_uart_rx_cmd",
@@ -209,8 +204,5 @@ static protocol_parser_error_t rx_check_cb(uint8_t* buffer, uint16_t len)
 
 static void rx_log_error(const char* tag, int32_t err)
 {
-    if ((uint32_t)(HAL_GetTick() - s_last_err_log) >= SRV_UART_RX_CMD_ERR_LOG_PERIOD_MS) {
-        s_last_err_log = HAL_GetTick();
-        SRV_UART_RX_CMD_LOG_W("%s: err=%d", tag, (int)err);
-    }
+    SRV_UART_RX_CMD_LOG_W("%s: err=%d", tag, (int)err);
 }

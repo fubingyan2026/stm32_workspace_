@@ -23,7 +23,9 @@ from PySide6.QtWidgets import (
 from g0_protocol import (
     CMD_HEARTBEAT, CMD_KEY_EVENT, CMD_MOTOR_FEEDBACK_REPORT,
     MOTOR_STATE_TEXT, KEY_EVENT_TEXT, KEY_NAME,
-    FrameParser, build_motor_target, build_req_feedback, unpack_float_le,
+    LED_ACTION_OFF, LED_ACTION_ON, LED_ACTION_BLINK, LED_ACTION_BREATH,
+    FrameParser, build_motor_target, build_req_feedback, build_led_ctrl,
+    unpack_float_le,
     POS_MIN, POS_MAX, VEL_MIN, VEL_MAX, KP_MIN, KP_MAX, KD_MIN, KD_MAX,
     TOR_MIN, TOR_MAX,
 )
@@ -73,7 +75,7 @@ class SerialWorker(QThread):
     status_changed = Signal(str, bool)  # (文本, 是否错误)
     log_line = Signal(str, str)       # (文本, 级别: info/warn/tx)
 
-    def __init__(self, port: str, baud: int = 115200, parent=None) -> None:
+    def __init__(self, port: str, baud: int = 1000000, parent=None) -> None:
         super().__init__(parent)
         self._port = port
         self._baud = baud
@@ -208,9 +210,9 @@ class MainWindow(QMainWindow):
 
         conn.addWidget(QLabel("波特率:"))
         self.baud_combo = QComboBox()
-        for b in (115200,1000000,2000000):
+        for b in (1000000,2000000):
             self.baud_combo.addItem(f"{b}", b)
-        self.baud_combo.setCurrentText("115200")
+        self.baud_combo.setCurrentText("1000000")
         conn.addWidget(self.baud_combo)
 
         self.refresh_btn = QPushButton("刷新")
@@ -233,6 +235,7 @@ class MainWindow(QMainWindow):
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 8, 0)
         left_layout.addWidget(self._build_control_box())
+        left_layout.addWidget(self._build_led_box())
         left_layout.addWidget(self._build_feedback_box())
         left_layout.addStretch(1)
 
@@ -291,7 +294,7 @@ class MainWindow(QMainWindow):
 
         # 自动周期请求反馈
         self.auto_fb_check = QCheckBox("自动请求反馈")
-        self.auto_fb_spin = self._mk_spin(5, 1000, 5, 200, 0)
+        self.auto_fb_spin = self._mk_spin(1, 1000, 1, 100, 0)
         self.auto_fb_spin.setSuffix(" ms")
         self.auto_fb_check.toggled.connect(self._on_auto_fb_toggled)
         self.auto_fb_spin.valueChanged.connect(self._on_auto_fb_period)
@@ -310,6 +313,37 @@ class MainWindow(QMainWindow):
 
         grid.addLayout(fb_row, len(rows), 0, 1, 3)
         grid.addLayout(btn_row, len(rows) + 1, 0, 1, 3)
+        return box
+
+    def _build_led_box(self) -> QGroupBox:
+        box = QGroupBox("LED 控制")
+        grid = QGridLayout(box)
+
+        self.led_ch_combo = QComboBox()
+        self.led_ch_combo.addItem("蓝色", 0)
+        self.led_ch_combo.addItem("绿色", 1)
+        self.led_ch_combo.addItem("红色", 2)
+
+        self.led_action_combo = QComboBox()
+        self.led_action_combo.addItem("关闭", LED_ACTION_OFF)
+        self.led_action_combo.addItem("常亮", LED_ACTION_ON)
+        self.led_action_combo.addItem("闪烁", LED_ACTION_BLINK)
+        self.led_action_combo.addItem("呼吸", LED_ACTION_BREATH)
+        self.led_action_combo.currentIndexChanged.connect(self._on_led_action)
+
+        self.led_interval_spin = self._mk_spin(50, 2000, 50, 500, 0)
+        self.led_interval_spin.setSuffix(" ms")
+
+        self.led_send_btn = QPushButton("发送 LED 控制")
+        self.led_send_btn.clicked.connect(self._send_led_ctrl)
+
+        grid.addWidget(QLabel("通道:"), 0, 0)
+        grid.addWidget(self.led_ch_combo, 0, 1)
+        grid.addWidget(QLabel("动作:"), 1, 0)
+        grid.addWidget(self.led_action_combo, 1, 1)
+        grid.addWidget(QLabel("间隔:"), 2, 0)
+        grid.addWidget(self.led_interval_spin, 2, 1)
+        grid.addWidget(self.led_send_btn, 3, 0, 1, 2)
         return box
 
     def _build_feedback_box(self) -> QGroupBox:
@@ -437,15 +471,34 @@ class MainWindow(QMainWindow):
         if checked:
             if self._auto_fb_timer is None:
                 self._auto_fb_timer = QTimer(self)
-                self._auto_fb_timer.timeout.connect(self._send_req_feedback)
+                self._auto_fb_timer.timeout.connect(self._on_auto_fb_timeout)
             self._auto_fb_timer.start(int(self.auto_fb_spin.value()))
         else:
             if self._auto_fb_timer is not None:
                 self._auto_fb_timer.stop()
 
+    def _on_auto_fb_timeout(self) -> None:
+        # 发送一帧后立即重新计时（单次定时器），避免 Qt 低精度下回调堆积连发
+        self._send_req_feedback()
+        if self.auto_fb_check.isChecked():
+            self._auto_fb_timer.start(int(self.auto_fb_spin.value()))
+
     def _on_auto_fb_period(self, value: float) -> None:
         if self.auto_fb_check.isChecked() and self._auto_fb_timer is not None:
             self._auto_fb_timer.start(int(value))
+
+    def _on_led_action(self, index: int) -> None:
+        self.led_interval_spin.setEnabled(
+            self.led_action_combo.itemData(index) == LED_ACTION_BLINK
+        )
+
+    def _send_led_ctrl(self) -> None:
+        if not self._ensure_ready():
+            return
+        action = self.led_action_combo.currentData()
+        interval = int(self.led_interval_spin.value()) if action == LED_ACTION_BLINK else 0
+        frame = build_led_ctrl(self.led_ch_combo.currentData(), action, interval)
+        self._worker.send(frame)  # type: ignore[union-attr]
 
     def _ensure_ready(self) -> bool:
         if not self._worker or not self._worker.isRunning():

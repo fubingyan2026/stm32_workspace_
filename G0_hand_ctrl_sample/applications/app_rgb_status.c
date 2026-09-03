@@ -166,6 +166,30 @@ bool app_rgb_status_set_blink(app_rgb_channel_t ch, uint16_t cycle_ms,
     return true;
 }
 
+bool app_rgb_status_set_breath(app_rgb_channel_t ch, uint16_t cycle_ms)
+{
+    if (ch >= APP_RGB_CH_NUM || !s_initialized || !s_led[ch]) {
+        return false;
+    }
+
+    srv_signal_handle_t* h = s_led[ch];
+
+    /* 直接重置句柄呼吸状态：确保进入 BREATHING 后立即按新相位输出，
+       避免此前 BLINK/OFF 残留 last_breath_time 导致首个 step 不刷新 */
+    if (cycle_ms > 0U) {
+        h->breath_cycle_ms = cycle_ms;
+        h->breath_step_ms = cycle_ms / 66U;
+        if (h->breath_step_ms < 10U) {
+            h->breath_step_ms = 10U;
+        }
+    }
+    h->last_breath_time = millis() - h->breath_step_ms; /* 进入即满足首个 step */
+    h->breath_cycle = 0U;
+
+    srv_signal_set_state(h, SRV_SIGNAL_STATE_BREATHING);
+    return true;
+}
+
 /* Private functions ---------------------------------------------------------*/
 
 static void led_blue_write(uint16_t value)

@@ -9,6 +9,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "app_uart_interact.h"
 
+#include "app_rgb_status.h"
 #include "drv_key.h"
 #include "drv_systick.h"
 #include "key_base.h"
@@ -50,14 +51,14 @@
 /** @brief 双键组合长按时间 (ms)：KEY1+KEY2 同时按住触发电机保存零点 */
 #define APP_UART_COMBO_SAVE_ZERO_MS (3000U)
 
-/** @brief 反馈上报失败日志限频窗口 (ms) */
-#define APP_UART_FEEDBACK_ERR_LOG_PERIOD_MS (1000U)
+/** @brief 电机反馈请求最小回复间隔 (ms)：丢弃窗口内重复请求，防止 TX 打满 */
+#define APP_UART_FEEDBACK_REPLY_MIN_MS (2U)
 
 /* Private variables ---------------------------------------------------------*/
 
 static uint32_t s_last_heartbeat_ms;
 static uint32_t s_last_motor_print_ms;
-static uint32_t s_last_feedback_err_log;
+static uint32_t s_last_feedback_reply_ms;
 static uint16_t s_heartbeat_tick;
 static uint32_t s_combo_press_ts; /**< 双键同时按住起始时间戳 (0=未同时按下) */
 static bool s_combo_triggered; /**< 组合长按已触发标志（防重复触发） */
@@ -76,6 +77,8 @@ static void app_uart_motor_send_feedback(void);
 
 static void app_uart_motor_print_status(void);
 
+static void app_uart_led_handle_cmd(const uint8_t* data, uint8_t data_len);
+
 static void app_uart_combo_save_zero_check(void);
 
 /* Exported functions --------------------------------------------------------*/
@@ -87,6 +90,7 @@ void app_uart_interact_init(void)
     srv_key_register_event_cb(app_uart_key_event_cb);
 
     s_last_heartbeat_ms = millis();
+    s_last_feedback_reply_ms = 0;
     s_heartbeat_tick = 0;
 
     APP_UART_INTERACT_LOG_I("UART 交互应用初始化完成");
@@ -119,24 +123,24 @@ static void app_uart_key_event_cb(const char* name, key_base_event_t event)
     }
 
     /* 按下事件：KEY1 位置增加，KEY2 位置减小 */
-    if (event == KEY_BASE_EVENT_PRESS) {
-        const uint8_t idx = app_uart_key_index(name);
-        if (idx == 0U) {
-            srv_dm4310_ctrl_pos_step(SRV_DM4310_POS_STEP_RAD);
-        } else if (idx == 1U) {
-            srv_dm4310_ctrl_pos_step(-SRV_DM4310_POS_STEP_RAD);
-        }
-    }
+    // if (event == KEY_BASE_EVENT_PRESS) {
+    //     const uint8_t idx = app_uart_key_index(name);
+    //     if (idx == 0U) {
+    //         srv_dm4310_ctrl_pos_step(SRV_DM4310_POS_STEP_RAD);
+    //     } else if (idx == 1U) {
+    //         srv_dm4310_ctrl_pos_step(-SRV_DM4310_POS_STEP_RAD);
+    //     }
+    // }
 
     uint8_t payload[APP_UART_KEY_EVENT_PAYLOAD_LEN];
     payload[0] = app_uart_key_index(name);
     payload[1] = (uint8_t)event;
 
-    const srv_uart_tx_cmd_error_t err =
-        srv_uart_tx_cmd_send(APP_UART_CMD_KEY_EVENT, payload, APP_UART_KEY_EVENT_PAYLOAD_LEN);
+    const srv_uart_tx_cmd_error_t err = srv_uart_tx_cmd_send(APP_UART_CMD_KEY_EVENT, payload, APP_UART_KEY_EVENT_PAYLOAD_LEN);
     if (err != SRV_UART_TX_CMD_OK) {
-        APP_UART_INTERACT_LOG_W("按键事件上报失败: %d (key=%s event=%u)",
-            (int)err, name ? name : "?", (unsigned)event);
+        APP_UART_INTERACT_LOG_W("按键事件上报失败: %d (%s) key=%s event=%u",
+            (int)err, srv_uart_tx_cmd_err_str(err),
+            name ? name : "?", (unsigned)event);
     }
 }
 
@@ -169,9 +173,13 @@ static void app_uart_rx_cmd_cb(uint8_t cmd, const uint8_t* data, uint8_t data_le
         app_uart_motor_send_feedback();
         break;
 
+    case APP_UART_CMD_LED_CTRL:
+        app_uart_led_handle_cmd(data, data_len);
+        break;
+
     default:
-        // APP_UART_INTERACT_LOG_D("收到未处理命令 cmd=0x%02X data_len=%u",
-        //     (unsigned)cmd, (unsigned)data_len);
+        APP_UART_INTERACT_LOG_D("收到未处理命令 cmd=0x%02X data_len=%u",
+            (unsigned)cmd, (unsigned)data_len);
         break;
     }
 }
@@ -193,6 +201,13 @@ static void app_uart_send_heartbeat(void)
 
 static void app_uart_motor_send_feedback(void)
 {
+    /* 回复节流：请求反馈最小间隔 5ms（上限 200 帧/s），丢弃窗口内重复请求，
+       避免启动/高频请求瞬间把 TX 队列打满；上位机 5ms+ 周期请求不受影响 */
+    const uint32_t now_ms = millis();
+    if ((uint32_t)(now_ms - s_last_feedback_reply_ms) < APP_UART_FEEDBACK_REPLY_MIN_MS) {
+        return;
+    }
+
     motor_t* motor = srv_dm4310_ctrl_get_motor(MOTOR_1);
     if (motor == NULL) {
         return;
@@ -208,13 +223,10 @@ static void app_uart_motor_send_feedback(void)
 
     const srv_uart_tx_cmd_error_t err = srv_uart_tx_cmd_send(APP_UART_CMD_MOTOR_FEEDBACK_REPORT, payload,
         APP_UART_MOTOR_FEEDBACK_PAYLOAD_LEN);
-    if (err != SRV_UART_TX_CMD_OK) {
-        /* 高频请求反馈下 TX 队列可能短暂占满，限频告警避免刷屏 */
-        const uint32_t now_ms = millis();
-        if ((uint32_t)(now_ms - s_last_feedback_err_log) >= APP_UART_FEEDBACK_ERR_LOG_PERIOD_MS) {
-            s_last_feedback_err_log = now_ms;
-            APP_UART_INTERACT_LOG_W("电机反馈上报失败: %d", (int)err);
-        }
+    if (err == SRV_UART_TX_CMD_OK) {
+        s_last_feedback_reply_ms = now_ms;
+    } else {
+        APP_UART_INTERACT_LOG_W("电机反馈上报失败:(%s)", srv_uart_tx_cmd_err_str(err));
     }
 }
 
@@ -225,23 +237,77 @@ static void app_uart_motor_print_status(void)
         return;
     }
 
-    const motor_fbpara_t* fb = &motor->para;
+    // const motor_fbpara_t* fb = &motor->para;
 
-    /* state 单独一帧，打印数值 + 含义 */
-    static const char* const state_desc[] = {
-        "失能", "使能", "电机侧未识别", "输出轴未识别",
-        "未知", "读取编码器错误", "未知", "读取编码器错误",
-        "超压", "欠压", "过电流", "MOS过温",
-        "电机线圈过温", "通讯丢失", "未知", "过载",
-    };
-    const uint8_t st = (uint8_t)(fb->state & 0x0F);
-    const char* desc = (st < 16U) ? state_desc[st] : "未知";
+    // /* state 单独一帧，打印数值 + 含义 */
+    // static const char* const state_desc[] = {
+    //     "失能", "使能", "电机侧未识别", "输出轴未识别",
+    //     "未知", "读取编码器错误", "未知", "读取编码器错误",
+    //     "超压", "欠压", "过电流", "MOS过温",
+    //     "电机线圈过温", "通讯丢失", "未知", "过载",
+    // };
+    // const uint8_t st = (uint8_t)(fb->state & 0x0F);
+    // const char* desc = (st < 16U) ? state_desc[st] : "未知";
 
-    APP_UART_INTERACT_LOG_I("电机状态 state=%d (%s)", (int)fb->state, desc);
+    // APP_UART_INTERACT_LOG_I("电机状态 state=%d (%s)", (int)fb->state, desc);
 
-    /* 物理量单独一帧 */
-    APP_UART_INTERACT_LOG_I("电机反馈 pos=%.3f vel=%.3f tor=%.3f Tmos=%.3f Tcoil=%.3f",
-        fb->pos, fb->vel, fb->tor, fb->Tmos, fb->Tcoil);
+    // /* 物理量单独一帧 */
+    // APP_UART_INTERACT_LOG_I("电机反馈 pos=%.3f vel=%.3f tor=%.3f Tmos=%.3f Tcoil=%.3f",
+    //     fb->pos, fb->vel, fb->tor, fb->Tmos, fb->Tcoil);
+}
+
+/* ===== LED 控制命令 ===== */
+
+/**
+ * @brief 处理 LED 控制命令
+ * @param data     负载：ch(1) + action(1) [+ action 参数]
+ * @param data_len 负载长度
+ * @note  action: OFF/ON/BREATH 无参数；BLINK 后随 2B 间隔 ms（小端）
+ */
+static void app_uart_led_handle_cmd(const uint8_t* data, uint8_t data_len)
+{
+    if (data == NULL || data_len < 2U) {
+        APP_UART_INTERACT_LOG_W("LED 控制命令负载不足 (%u)", (unsigned)data_len);
+        return;
+    }
+
+    const uint8_t ch = data[0];
+    const uint8_t action = data[1];
+    if (ch >= APP_RGB_CH_NUM) {
+        APP_UART_INTERACT_LOG_W("LED 控制命令非法通道: %u", (unsigned)ch);
+        return;
+    }
+
+    switch (action) {
+    case APP_UART_LED_ACTION_OFF:
+        (void)app_rgb_status_set_state((app_rgb_channel_t)ch, SRV_SIGNAL_STATE_OFF);
+        break;
+
+    case APP_UART_LED_ACTION_ON:
+        (void)app_rgb_status_set_state((app_rgb_channel_t)ch, SRV_SIGNAL_STATE_ON);
+        break;
+
+    case APP_UART_LED_ACTION_BLINK:
+        if (data_len < 4U) {
+            APP_UART_INTERACT_LOG_W("LED 闪烁命令负载不足 (%u)", (unsigned)data_len);
+            break;
+        }
+        {
+            const uint16_t interval_ms = (uint16_t)(data[2] | ((uint16_t)data[3] << 8));
+            (void)app_rgb_status_set_blink((app_rgb_channel_t)ch,
+                interval_ms, 0U, 0U);
+        }
+        break;
+
+    case APP_UART_LED_ACTION_BREATH:
+        /* 显式重置呼吸计时/相位后切换，保证从 ON/OFF/BLINK 切回立即呼吸 */
+        (void)app_rgb_status_set_breath((app_rgb_channel_t)ch, 0U);
+        break;
+
+    default:
+        APP_UART_INTERACT_LOG_W("LED 控制命令非法 action: %u", (unsigned)action);
+        break;
+    }
 }
 
 /**

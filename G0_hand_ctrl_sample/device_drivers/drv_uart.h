@@ -35,7 +35,7 @@ extern "C" {
 #define DRV_UART_TX_MAX_FRAME_LEN (70U)
 
 /** @brief TX 缓冲队列深度（帧数），队列满才丢帧（高频反馈场景需足够大） */
-#define DRV_UART_TX_QUEUE_DEPTH (16U)
+#define DRV_UART_TX_QUEUE_DEPTH (32U)
 
 /* Exported types ------------------------------------------------------------*/
 

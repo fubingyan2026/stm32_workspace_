@@ -32,6 +32,7 @@
 |`0x02`|上位机 → G0|电机目标设定|`20`|
 |`0x03`|上位机 → G0|请求电机反馈|`0`|
 |`0x04`|G0 → 上位机|电机反馈上报|`21`|
+|`0x05`|上位机 → G0|LED 控制|`2` 或 `4`|
 
 ### 2\.2 核心结构体字段表
 
@@ -187,6 +188,39 @@
 |`0x0D`|通讯丢失|
 |`0x0E`|过载|
 
+### 4.6 `0x05` LED 控制（上位机 → G0）
+
+**关闭 / 常亮 / 呼吸**（载荷 `2` 字节）：
+
+| Byte 0 | Byte 1 | Byte 2 | Byte 3 | Byte 4 | Byte 5 |
+|--------|--------|--------|--------|--------|--------|
+| `0x7A` | `0x05` | `0x02` | `ch` | `action` | `crc` | `0x0A` |
+
+**闪烁**（载荷 `4` 字节，含间隔参数）：
+
+| Byte 0 | Byte 1 | Byte 2 | Byte 3 | Byte 4 | Byte 5 | Byte 6 | Byte 7 |
+|--------|--------|--------|--------|--------|--------|--------|--------|
+| `0x7A` | `0x05` | `0x04` | `ch` | `action` | 间隔 LSB | 间隔 MSB | `crc` | `0x0A` |
+
+字段说明表：
+
+| 字段 | 偏移 | 长度 | 说明 |
+|------|------|------|------|
+| `cmd` | Byte 1 | `1` | 固定 `0x05` |
+| `data_len` | Byte 2 | `1` | `0x02`（OFF/ON/BREATH）或 `0x04`（BLINK） |
+| `ch` | Byte 3 | `1` | `uint8_t` 通道：`0`=蓝（TIM1_CH1/PA8），`1`=绿（TIM4_CH1/PB6），`2`=红（TIM4_CH2/PB7） |
+| `action` | Byte 4 | `1` | 动作，见下表 |
+| 间隔 | Byte 5~6 | `2` | `uint16_t` 小端，仅 `BLINK` 时有效，闪烁间隔 ms |
+
+`action` 取值表：
+
+| 值 | 枚举成员 | 动作 |
+|:---:|---------|------|
+| `0x00` | `APP_UART_LED_ACTION_OFF` | 关闭 |
+| `0x01` | `APP_UART_LED_ACTION_ON` | 常亮 |
+| `0x02` | `APP_UART_LED_ACTION_BLINK` | 闪烁（间隔见 Byte5~6） |
+| `0x03` | `APP_UART_LED_ACTION_BREATH` | 呼吸 |
+
 ---
 
 ## 5\. 超时与错误处理
@@ -246,6 +280,8 @@
 |3|Host → G0|`0x7A 0x02 0x14 <pos> <vel> <kp> <kd> <tor> <crc> 0x0A`|电机目标|
 |4|Host → G0|`0x7A 0x03 0x00 <crc> 0x0A`|请求反馈|
 |5|G0 → Host|`0x7A 0x04 0x15 <state> <pos> <vel> <tor> <Tmos> <Tcoil> <crc> 0x0A`|反馈上报|
+|6|Host → G0|`0x7A 0x05 0x02 <ch> <action> <crc> 0x0A`|LED 控制（OFF/ON/BREATH）|
+|7|Host → G0|`0x7A 0x05 0x04 <ch> <action> <int_lo> <int_hi> <crc> 0x0A`|LED 闪烁控制|
 
 ### 关键宏与常量表
 
@@ -256,6 +292,11 @@
 |`APP_UART_CMD_MOTOR_SET_TARGET`|`0x02`|电机目标命令|
 |`APP_UART_CMD_MOTOR_REQ_FEEDBACK`|`0x03`|请求反馈命令|
 |`APP_UART_CMD_MOTOR_FEEDBACK_REPORT`|`0x04`|反馈上报命令|
+|`APP_UART_CMD_LED_CTRL`|`0x05`|LED 控制命令|
+|`APP_UART_LED_ACTION_OFF`|`0x00`|LED 关闭|
+|`APP_UART_LED_ACTION_ON`|`0x01`|LED 常亮|
+|`APP_UART_LED_ACTION_BLINK`|`0x02`|LED 闪烁|
+|`APP_UART_LED_ACTION_BREATH`|`0x03`|LED 呼吸|
 |`SRV_UART_TX_CMD_MAX_PAYLOAD`|`255`|最大载荷长度|
 |`SRV_UART_TX_CMD_MAX_FRAME`|`260`|最大帧长|
 |`SRV_DM4310_POS_STEP_RAD`|`0.1f`|按键位置微调步长|
