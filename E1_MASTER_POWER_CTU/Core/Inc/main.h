@@ -67,8 +67,10 @@ void Error_Handler(void);
 #define VIN_ADC_GPIO_Port GPIOC
 #define FAN0_FG_IO_Pin GPIO_PIN_0
 #define FAN0_FG_IO_GPIO_Port GPIOA
+#define FAN0_FG_IO_EXTI_IRQn EXTI0_IRQn
 #define FAN1_FG_IO_Pin GPIO_PIN_1
 #define FAN1_FG_IO_GPIO_Port GPIOA
+#define FAN1_FG_IO_EXTI_IRQn EXTI1_IRQn
 #define CD4051B_A_Pin GPIO_PIN_4
 #define CD4051B_A_GPIO_Port GPIOA
 #define CD4051B_B_Pin GPIO_PIN_5
