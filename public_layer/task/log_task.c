@@ -76,8 +76,7 @@ typedef enum {
 
 static uint8_t s_tx_buf[LOG_TASK_TX_BUF_SIZE];
 static sw_timer_t s_log_timer;
-static log_task_output_t s_output_mode =
-    LOG_TASK_DEFAULT_OUTPUT_RTT ? LOG_OUTPUT_RTT : LOG_OUTPUT_UART;
+static log_task_output_t s_output_mode = LOG_OUTPUT_UART;
 
 #if LOG_TASK_ENABLE_CONSOLE_CMD
 /** @brief 控制台命令行累积缓冲（主循环从 drv_log_uart kfifo 读取后填充） */
@@ -115,14 +114,19 @@ void log_task_init(void)
      * 由 log_task 自行完成初始化，避免各 app_main（App/Boot 多工程）遗漏。
      * 需放在 log_init 之后：drv_log_uart_init() 内部的“初始化完成”日志
      * 经 log 缓冲输出，若先于 log_init 调用会被静默丢弃。 */
-    (void)drv_log_uart_init();
+    if (s_output_mode == LOG_OUTPUT_UART) {
+        (void)drv_log_uart_init();
+    }
+
+    /* SEGGER RTT 初始化（无论当前模式，预初始化以便随时切换） */
+    if (s_output_mode == LOG_OUTPUT_RTT) {
+        SEGGER_RTT_Init();
+    }
 
 #if !defined(E1_BUILD_BOOT)
     /* ── 日志 Flash 落盘驱动（有新增记录且到限流间隔时写入） ── */
     // srv_log_flash_init();
 #endif
-    /* SEGGER RTT 初始化（无论当前模式，预初始化以便随时切换） */
-    SEGGER_RTT_Init();
 
     /* 启动 sw_timer 驱动 TX 发送 */
     const sw_timer_config_t timer_cfg = {
