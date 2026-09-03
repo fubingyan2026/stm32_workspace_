@@ -3,7 +3,7 @@
  * @author  maximillian
  * @version V1.0.0
  * @date    2026-08-05
- * @brief   WS2812B 灯带效果服务 — 彗星流光演示
+ * @brief   WS2812B 灯带服务 — RGB 由 CAN 指令控制（彗星动画默认关闭）
  *
  * service 层提供灯带效果逻辑（色相流转 + 彗星拖尾），直调 drv_ws2812b。
  * 不管理 sw_timer，由 task 层定期调用 srv_ws2812b_step()。
@@ -28,7 +28,7 @@ extern "C" {
 int srv_ws2812b_init(void);
 
 /**
- * @brief 周期步进：刷新彗星流光动画
+ * @brief 周期步进：仅自动动画开启时刷新彗星流光（默认关闭，RGB 由 CAN 指令控制）
  * @param elapsed_ms 距上次调用的毫秒数（动画按时间累计，与 tick 周期无关）
  */
 void srv_ws2812b_step(uint16_t elapsed_ms);
@@ -40,7 +40,7 @@ void srv_ws2812b_step(uint16_t elapsed_ms);
 void srv_ws2812b_set_auto(bool on);
 
 /**
- * @brief 设置单个 LED 颜色（0x004 CAN RGB 输出控制帧）
+ * @brief 设置单个 LED 颜色（0x001 控制帧 LED RGB 字段）
  * @param index LED 索引：0-31=通道1(RGB1/SPI1), 32-63=通道2(RGB2/SPI3)
  * @param r,g,b RGB 亮度 (0-255)
  * @return 0=成功；非 0=索引越界（超过对应通道 LED 数）

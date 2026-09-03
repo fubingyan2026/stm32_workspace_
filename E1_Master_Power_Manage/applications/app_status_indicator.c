@@ -42,8 +42,6 @@
 #define APP_IND_ESTOP_BLINK_WAIT_MS (100U)
 #define APP_IND_CRITICAL_BLINK_CYCLE_MS (300U) /**< 关键电源轨故障：慢闪 */
 #define APP_IND_CRITICAL_BLINK_WAIT_MS (300U)
-#define APP_IND_OFFLINE_BLINK_CYCLE_MS (500U) /**< 子设备离线：中速闪烁 */
-#define APP_IND_OFFLINE_BLINK_WAIT_MS (500U)
 
 /* Private types -------------------------------------------------------------*/
 
@@ -52,8 +50,7 @@
  */
 typedef enum {
     APP_IND_LEVEL_NORMAL = 0, /**< 正常运行 */
-    APP_IND_LEVEL_WARNING, /**< 警告：次级轨/HSD-LSD/风扇/NTC/电池温度 */
-    APP_IND_LEVEL_DEVICE_OFFLINE, /**< 子设备离线 */
+    APP_IND_LEVEL_WARNING, /**< 警告：次级轨/HSD/风扇 */
     APP_IND_LEVEL_CRITICAL, /**< 关键电源轨故障 */
     APP_IND_LEVEL_ESTOP, /**< 急停 / 故障锁存 */
     APP_IND_LEVEL_COUNT,
@@ -134,30 +131,15 @@ static app_ind_level_t ind_evaluate(const srv_can_mst_status_frame_t* st)
     }
 
     /* P1 关键电源轨故障 */
-    if (st->bits.err_vin || st->bits.err_vin_dcdc || st->bits.err_power
-        || st->bits.err_motor || st->bits.err_chg_out || st->bits.err_dbr
-        || st->bits.seq_vin_fault || st->bits.seq_chg_fault
-        || st->bits.seq_motor_fault) {
+    if (st->bits.err_aux_power || st->bits.err_motor_power
+        || st->bits.err_chg_out || st->bits.err_dbr) {
         return APP_IND_LEVEL_CRITICAL;
     }
 
-    /* P2 子设备离线（双电池板 / 副电源板） */
-    if (!st->bits.device_online_slaver || !st->bits.device_online_dual) {
-        return APP_IND_LEVEL_DEVICE_OFFLINE;
-    }
-
-    /* P3 警告：次级电源轨 / 输出轨 / HSD-LSD / 风扇 / NTC / 电池温度 */
-    if (st->bits.err_12v_int || st->bits.err_5v_int || st->bits.err_12v_ext
-        || st->bits.err_24v_ext || st->bits.err_12v_user || st->bits.err_24v_user
-        || st->bits.err_24v_comp || st->bits.err_hsd1_12v
-        || st->bits.err_hsd2_12v || st->bits.err_hsd3_12v
-        || st->bits.err_hsd1_24v || st->bits.err_hsd2_24v
-        || st->bits.err_hsd3_24v || st->bits.err_lsd1_24v
-        || st->bits.err_lsd2_24v || st->bits.err_fan0 || st->bits.err_fan1
-        || st->bits.err_ntc0 || st->bits.err_ntc1 || st->bits.err_ntc2
-        || st->bits.err_ntc3 || st->bits.err_ntc4 || st->bits.err_ntc5
-        || st->bits.err_ntc6 || st->bits.err_ntc7
-        || st->bits.battery_temp_error) {
+    /* P2 警告：外部输出轨 / HSD / 风扇 */
+    if (st->bits.err_12v_ext || st->bits.err_24v_ext
+        || st->bits.err_24v_computer || st->bits.err_hsd_fault
+        || st->bits.err_fan0 || st->bits.err_fan1) {
         return APP_IND_LEVEL_WARNING;
     }
 
@@ -183,12 +165,6 @@ static void ind_apply(app_ind_level_t level)
         ind_set_blink(s_red, APP_IND_CRITICAL_BLINK_CYCLE_MS, APP_IND_CRITICAL_BLINK_WAIT_MS);
         ind_set_state(s_red, SRV_SIGNAL_STATE_BLINK_CODE);
         ind_set_state(s_blue, SRV_SIGNAL_STATE_OFF);
-        break;
-
-    case APP_IND_LEVEL_DEVICE_OFFLINE:
-        ind_set_blink(s_red, APP_IND_OFFLINE_BLINK_CYCLE_MS, APP_IND_OFFLINE_BLINK_WAIT_MS);
-        ind_set_state(s_red, SRV_SIGNAL_STATE_BLINK_CODE);
-        ind_set_state(s_blue, SRV_SIGNAL_STATE_BREATHING);
         break;
 
     case APP_IND_LEVEL_WARNING:

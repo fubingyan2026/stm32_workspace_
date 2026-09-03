@@ -6,7 +6,7 @@
 
 /**
  * @file    can_task.h
- * @brief   CAN 通信任务 — 主机上报 + 从板控制 + RX 接收
+ * @brief   CAN 通信任务 — 主机上报 + RX 接收
  */
 
 #ifndef CAN_TASK_H
@@ -15,7 +15,6 @@
 #include <stdint.h>
 
 #include "srv_can_mst.h"
-#include "srv_can_slv.h"
 
 #ifdef __cplusplus
 extern "C" {

@@ -45,6 +45,10 @@
 #define PWR_MOTOR_HANDOVER_PCT (98U)
 /** @brief MOTOR 移交超时兜底 (ms)：母线未抬到阈值也强制关闭预充电 */
 #define PWR_MOTOR_HANDOVER_TIMEOUT_MS (200U)
+/** 电机放电默认时间(ms) */
+#define PWR_MOTOR_RAIL_DBR_LSD_TIME_MS (3000U)
+/** 电机放电到的截至电压(mv) */
+#define PWR_MOTOR_RAIL_DBR_LSD_VOLTAGE_MV (5000U)
 
 /* ── 预充电软启动参数（详见 docs/motor_power_charge_step.md） ── */
 /** @brief 阶段一：EN 保持低电平清除 OCP 锁存的时长 (ms) */
@@ -127,8 +131,9 @@ typedef struct {
     bool power_on_requested;
     uint16_t steady_ms;
     bool precharge_off_done; /**< MOTOR 态是否已完成预充电移交关闭 */
-    bool aux_en;   /**< AUX_POWER_EN 驱动状态（PGD 判定门控） */
+    bool aux_en; /**< AUX_POWER_EN 驱动状态（PGD 判定门控） */
     bool motor_en; /**< MOTOR_POWER_EN 驱动状态（PGD 判定门控） */
+    bool motor_rail_dbr_lsd_en; /**< RAIL_DBR_LSD_EN 电机制动电阻驱动状态） */
 } power_ctrl_ctx_t;
 
 /** @brief 预充电 FSM 上下文（单实例静态） */
@@ -185,6 +190,7 @@ static fsm_state_t pwr_state_precharge(fsm_t* ctx);
 static fsm_state_t pwr_state_motor(fsm_t* ctx);
 static fsm_state_t pwr_state_done(fsm_t* ctx);
 static void pwr_entry_cb(fsm_t* ctx, fsm_state_t state);
+static void pwr_exit_cb(fsm_t* ctx, fsm_state_t state);
 
 static void precharge_init(void);
 static void precharge_step(uint16_t elapsed_ms);
@@ -228,7 +234,7 @@ void srv_pwr_ctrl_init(void)
         .transitions = s_pwr_transitions,
         .state_count = PWR_STATE_COUNT,
         .entry_cb = pwr_entry_cb,
-        .exit_cb = NULL,
+        .exit_cb = pwr_exit_cb,
         .state_names = s_pwr_state_names,
         .user_data = &s_ctx,
     };
@@ -237,6 +243,9 @@ void srv_pwr_ctrl_init(void)
     fsm_init(&s_fsm, PWR_STATE_IDLE, &config);
 
     precharge_init();
+
+    drv_power_set(DRV_POWER_RAIL_DC_DC_EN, true);
+    drv_power_set(DRV_POWER_RAIL_AUX_EN, true);
 
     SRV_PWR_CTRL_LOG_I("电源控制服务初始化完成 (电源FSM %u 状态 + 预充电FSM %u 状态)",
         (unsigned)PWR_STATE_COUNT, (unsigned)PRECHARGE_STATE_COUNT);
@@ -250,8 +259,6 @@ void srv_pwr_ctrl_step(uint16_t elapsed_ms)
     /* 2. 电源 FSM 步进 */
     s_ctx.steady_ms += elapsed_ms;
     fsm_step(&s_fsm);
-
-    // drv_power_set(DRV_POWER_RAIL_DC_DC_EN, true);
 }
 
 void srv_pwr_ctrl_request_on(void)
@@ -269,16 +276,23 @@ void srv_pwr_ctrl_emergency_off(void)
         s_ctx.steady_ms = 0;
         s_ctx.aux_en = false;
         s_ctx.motor_en = false;
+        s_ctx.motor_rail_dbr_lsd_en = true;
 
         fsm_goto(&s_fsm, PWR_STATE_IDLE);
 
-        for (uint32_t i = 0; i <= DRV_POWER_RAIL_DBR_LSD_EN; i++) {
+        for (uint32_t i = 0; i < DRV_POWER_RAIL_DBR_LSD_EN; i++) {
+            if (i == DRV_POWER_RAIL_AUX_EN) {
+                continue;
+            }
             drv_power_set((drv_power_rail_t)i, false);
         }
+
+        drv_power_set(DRV_POWER_RAIL_DBR_LSD_EN, true);
 
         /* 急停时预充电 EN/PWM 立即关断 */
         precharge_reset();
         SRV_PWR_CTRL_LOG_E("紧急断电触发: 全部电源轨关闭");
+        SRV_PWR_CTRL_LOG_I("制动电阻开启");
     }
 }
 
@@ -297,11 +311,35 @@ bool srv_pwr_ctrl_is_motor_enabled(void)
     return s_ctx.motor_en;
 }
 
+uint8_t srv_pwr_ctrl_get_precharge_fault(void)
+{
+    return (uint8_t)s_precharge.fault;
+}
+
 /* Private functions ---------------------------------------------------------*/
 
 static fsm_state_t pwr_state_idle(fsm_t* ctx)
 {
     power_ctrl_ctx_t* p = (power_ctrl_ctx_t*)fsm_user_data(ctx);
+    static uint16_t reset_motor_rail_dbr_lsd_en_cnt = 0;
+
+    if ((s_precharge.last_motor_bus_mv < PWR_MOTOR_RAIL_DBR_LSD_VOLTAGE_MV)
+        && p->motor_rail_dbr_lsd_en) {
+        p->motor_rail_dbr_lsd_en = false;
+        drv_power_set(DRV_POWER_RAIL_DBR_LSD_EN, false);
+        SRV_PWR_CTRL_LOG_I("电压已放到阈值,制动电阻关闭,放电时间:%dms", reset_motor_rail_dbr_lsd_en_cnt);
+        reset_motor_rail_dbr_lsd_en_cnt = 0;
+    }
+
+    if (p->motor_rail_dbr_lsd_en) {
+        if (reset_motor_rail_dbr_lsd_en_cnt++ > PWR_MOTOR_RAIL_DBR_LSD_TIME_MS) {
+            reset_motor_rail_dbr_lsd_en_cnt = 0;
+            p->motor_rail_dbr_lsd_en = false;
+            drv_power_set(DRV_POWER_RAIL_DBR_LSD_EN, false);
+            SRV_PWR_CTRL_LOG_I("放电时间(%dms)完成,制动电阻关闭", PWR_MOTOR_RAIL_DBR_LSD_TIME_MS);
+        }
+    }
+
     return p->power_on_requested ? PWR_STATE_AUX : PWR_STATE_IDLE;
 }
 
@@ -369,7 +407,8 @@ static fsm_state_t pwr_state_motor(fsm_t* ctx)
 
     /* 移交完成且母线稳定后进入 DONE */
     return (p->precharge_off_done && p->steady_ms >= STEADY_TIME_MS)
-        ? PWR_STATE_DONE : PWR_STATE_MOTOR;
+        ? PWR_STATE_DONE
+        : PWR_STATE_MOTOR;
 }
 
 static fsm_state_t pwr_state_done(fsm_t* ctx)
@@ -391,23 +430,46 @@ static void pwr_entry_cb(fsm_t* ctx, fsm_state_t state)
     switch (state) {
     case PWR_STATE_AUX:
         p->aux_en = true;
-        drv_power_set(DRV_POWER_RAIL_DC_DC_EN, true);
         drv_power_set(DRV_POWER_RAIL_AUX_EN, true);
+        drv_power_set(DRV_POWER_RAIL_DBR_LSD_EN, false);
+
         break;
     case PWR_STATE_PRECHARGE:
         /* 启动预充电软启动（内部先复位清锁存再 start） */
         precharge_begin();
-        drv_power_set(DRV_POWER_RAIL_HSD1_12V_DIAG, true);
-        drv_power_set(DRV_POWER_RAIL_HSD1_24V_DIAG, true);
-        drv_power_set(DRV_POWER_RAIL_HSD2_24V_DIAG, true);
+        
         break;
     case PWR_STATE_MOTOR:
         p->precharge_off_done = false;
         p->motor_en = true;
         drv_power_set(DRV_POWER_RAIL_MOTOR_EN, true);
-        drv_power_set(DRV_POWER_RAIL_HSD1_12V, true);
-        drv_power_set(DRV_POWER_RAIL_HSD1_24V, true);
-        drv_power_set(DRV_POWER_RAIL_HSD2_24V, true);
+        // drv_power_set(DRV_POWER_RAIL_HSD1_12V, true);
+        // drv_power_set(DRV_POWER_RAIL_HSD1_24V, true);
+        // drv_power_set(DRV_POWER_RAIL_HSD2_24V, true);
+
+        /* 预充电保持导通，等母线抬到接近 VIN 后再关闭（见 pwr_state_motor） */
+        break;
+    default:
+        break;
+    }
+}
+
+static void pwr_exit_cb(fsm_t* ctx, fsm_state_t state)
+{
+    power_ctrl_ctx_t* p = (power_ctrl_ctx_t*)fsm_user_data(ctx);
+    (void)p;
+    /* 仅在状态进入时打印（FSM 转换边沿），覆盖 IDLE/AUX/PRECHARGE/MOTOR/DONE */
+    SRV_PWR_CTRL_LOG_I("电源 FSM 退出状态: %s", s_pwr_state_names[state]);
+
+    switch (state) {
+    case PWR_STATE_AUX:
+
+        break;
+    case PWR_STATE_PRECHARGE:
+
+        break;
+    case PWR_STATE_MOTOR:
+
         /* 预充电保持导通，等母线抬到接近 VIN 后再关闭（见 pwr_state_motor） */
         break;
     default:
