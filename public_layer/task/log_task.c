@@ -76,7 +76,7 @@ typedef enum {
 
 static uint8_t s_tx_buf[LOG_TASK_TX_BUF_SIZE];
 static sw_timer_t s_log_timer;
-static log_task_output_t s_output_mode = LOG_OUTPUT_UART;
+static const log_task_output_t s_output_mode = LOG_OUTPUT_RTT;
 
 #if LOG_TASK_ENABLE_CONSOLE_CMD
 /** @brief 控制台命令行累积缓冲（主循环从 drv_log_uart kfifo 读取后填充） */

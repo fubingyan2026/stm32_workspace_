@@ -141,7 +141,7 @@ void srv_mz_sensor_step(void)
     if (s_zero_pending && !s_inflight) {
         s_zero_pending = false;
         s_mode = SRV_MZ_SENSOR_MODE_ZERO;
-        srv_mz_sensor_send_frame(0x10U);
+        // srv_mz_sensor_send_frame(0x10U);
         return;
     }
 

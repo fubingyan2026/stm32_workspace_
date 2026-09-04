@@ -33,15 +33,20 @@ typedef enum {
  * @brief 按键事件枚举
  */
 typedef enum {
-    KEY_BASE_EVENT_DOWN = 0, /**< 按下 */
+
+    KEY_BASE_EVENT_PRESS = 0, /**< 全部按下事件 */
+    KEY_BASE_EVENT_RELEASE, /**< 全部松开事件 */
+
+    KEY_BASE_EVENT_LONG_WAIT_PRESS, /**< 长按等待 */
+    KEY_BASE_EVENT_DOWN, /**< 短按松开 */
     KEY_BASE_EVENT_CLICK, /**< 点击 */
     KEY_BASE_EVENT_ONE_CLICK, /**< 单击 */
     KEY_BASE_EVENT_DOUBLE_CLICK, /**< 双击 */
     KEY_BASE_EVENT_TRIPLE_CLICK, /**< 三连击 */
     KEY_BASE_EVENT_REPEAT_CLICK, /**< 重复点击 */
-    KEY_BASE_EVENT_LONG_WAIT_PRESS, /**< 长按等待 */
     KEY_BASE_EVENT_LONG_HOLD, /**< 长按保持 */
     KEY_BASE_EVENT_LONG_HOLD_RELEASE, /**< 长按释放 */
+
     KEY_BASE_EVENT_MAX, /**< 守卫值，必须放在最后 */
 } key_base_event_t;
 
@@ -145,6 +150,8 @@ struct key_base_context {
         [KEY_BASE_EVENT_LONG_WAIT_PRESS] = "LONG_WAIT_PRESS",     \
         [KEY_BASE_EVENT_LONG_HOLD] = "LONG_HOLD",                 \
         [KEY_BASE_EVENT_LONG_HOLD_RELEASE] = "LONG_HOLD_RELEASE", \
+        [KEY_BASE_EVENT_PRESS] = "KEY_BASE_EVENT_PRESS",          \
+        [KEY_BASE_EVENT_RELEASE] = "KEY_BASE_EVENT_RELEASE",      \
     }
 
 /* Exported functions prototypes ---------------------------------------------*/

@@ -38,7 +38,7 @@
 
 /* Private constants ---------------------------------------------------------*/
 
-#define SRV_UART_HOST_FRAME_LEN 256U /**< 帧总长（字节） */
+#define SRV_UART_HOST_FRAME_LEN 64U /**< 帧总长（字节） */
 #define SRV_UART_HOST_HEAD_LEN 4U /**< 帧头长度（55 AA 00 14） */
 #define SRV_UART_HOST_CRC_LEN 4U /**< 校验码长度（低 2 字节有效） */
 #define SRV_UART_HOST_PAYLOAD_LEN (SRV_UART_HOST_FRAME_LEN - SRV_UART_HOST_HEAD_LEN - SRV_UART_HOST_CRC_LEN)
@@ -74,7 +74,7 @@ static const uint8_t s_frame_header[SRV_UART_HOST_HEAD_LEN] = { 0x55, 0xAA, 0x00
 #define SRV_UART_HOST_STREAM_MAX_MS 1000U
 
 /** @brief 应答 TX 队列长度：多个应答背靠背生成时排队发送，避免 DMA 忙时丢帧 */
-#define SRV_UART_HOST_TX_QUEUE_LEN 8U
+#define SRV_UART_HOST_TX_QUEUE_LEN 32U
 
 /* Private variables ---------------------------------------------------------*/
 

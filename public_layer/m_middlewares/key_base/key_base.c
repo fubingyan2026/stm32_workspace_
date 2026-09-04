@@ -20,8 +20,8 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "key_base.h"
-#include "string.h"
 #include "log.h"
+#include "string.h"
 /* Private constants ---------------------------------------------------------*/
 
 #define KEY_BASE_DEBOUNCE_TIME_MS 50
@@ -315,6 +315,10 @@ static void key_base_fsm_step(key_base_context_t* ctx,
 
     if (ctx->last_pin_state != ctx->pin_state) {
         if (ctx->pin_state == KEY_BASE_PIN_STATE_PRESS) {
+            
+            ctx->key_event = KEY_BASE_EVENT_PRESS;
+            ctx->config.event_callback(ctx->key_event, ctx);
+
             if (key_base_time_slice(ctx->timer, ctx->release_time)
                 >= effective_long_press_time) {
                 ctx->key_event = KEY_BASE_EVENT_LONG_WAIT_PRESS;
@@ -325,6 +329,10 @@ static void key_base_fsm_step(key_base_context_t* ctx,
             }
         } else {
             ctx->release_time = ctx->timer;
+
+            ctx->key_event = KEY_BASE_EVENT_RELEASE;
+            ctx->config.event_callback(ctx->key_event, ctx);
+
             if (ctx->long_hold_state) {
                 ctx->long_hold_state = false;
                 ctx->key_event = KEY_BASE_EVENT_LONG_HOLD_RELEASE;

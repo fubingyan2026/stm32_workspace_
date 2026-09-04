@@ -249,4 +249,39 @@ static inline bool utils_saturate_vector_2d(float* x, float* y, float max)
     return retval;
 }
 
+/* ===================== 通用边沿检测（E1_PRO 追加） ===================== */
+
+/**
+ * @brief 数字信号边沿检测状态
+ * @note  valid=0 表示尚未建立基线；首次 utils_edge_detect() 仅建基线并返回 NONE
+ */
+typedef struct {
+    bool prev;  /**< 上一次采样值 */
+    bool valid; /**< 基线已建立标志 */
+} utils_edge_det_t;
+
+/**
+ * @brief 边沿事件
+ */
+typedef enum {
+    UTILS_EDGE_NONE = 0, /**< 无变化（或尚未建立基线） */
+    UTILS_EDGE_RISING,   /**< 上升沿：0 → 1 */
+    UTILS_EDGE_FALLING,  /**< 下降沿：1 → 0 */
+} utils_edge_t;
+
+/**
+ * @brief 复位边沿检测状态（清除基线，下次采样重新建立基线）
+ * @param det 边沿检测状态指针（不可为 NULL）
+ */
+void utils_edge_det_init(utils_edge_det_t* det);
+
+/**
+ * @brief 周期采样并返回边沿事件（通用，供轮询类输入复用）
+ * @param det    边沿检测状态指针（不可为 NULL）
+ * @param sample 本次采样电平（true=高/有效, false=低/无效）
+ * @return UTILS_EDGE_RISING 上升沿 / UTILS_EDGE_FALLING 下降沿 / UTILS_EDGE_NONE 无变化或未建基线
+ * @note  首次调用只建立基线返回 NONE；之后每次调用比较本次与上次采样值
+ */
+utils_edge_t utils_edge_detect(utils_edge_det_t* det, bool sample);
+
 #endif /* UTILS_MATH_H_ */

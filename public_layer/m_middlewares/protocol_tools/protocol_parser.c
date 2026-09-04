@@ -389,9 +389,11 @@ protocol_parser_error_t protocol_parser_parse(protocol_parser_context_t* ctx,
             *p_out_data = ctx->config.output_buffer;
             return PROTOCOL_PARSER_OK;
         }
-        if (ctx->config.header_len == 0) {
-            kfifo_skip(&ctx->fifo, 1);
-        }
+        /* CHECKSUM 校验失败：该坏帧已完整接收（footer 已匹配、长度自洽），
+           整帧丢弃并复位帧头，从帧尾后继续同步，避免反复解析同一坏帧导致死锁 */
+        ctx->header_matched = false;
+        ctx->last_log_time = 0;
+        kfifo_skip(&ctx->fifo, payload_len);
         return PROTOCOL_PARSER_ERROR_CHECKSUM;
     }
 
