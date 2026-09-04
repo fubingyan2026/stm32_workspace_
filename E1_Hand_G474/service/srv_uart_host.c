@@ -38,7 +38,7 @@
 
 /* Private constants ---------------------------------------------------------*/
 
-#define SRV_UART_HOST_FRAME_LEN 2560U /**< 帧总长（字节） */
+#define SRV_UART_HOST_FRAME_LEN 256U /**< 帧总长（字节） */
 #define SRV_UART_HOST_HEAD_LEN 4U /**< 帧头长度（55 AA 00 14） */
 #define SRV_UART_HOST_CRC_LEN 4U /**< 校验码长度（低 2 字节有效） */
 #define SRV_UART_HOST_PAYLOAD_LEN (SRV_UART_HOST_FRAME_LEN - SRV_UART_HOST_HEAD_LEN - SRV_UART_HOST_CRC_LEN)
@@ -49,7 +49,7 @@ static const uint8_t s_frame_header[SRV_UART_HOST_HEAD_LEN] = { 0x55, 0xAA, 0x00
 /** @brief 解析器输入 kfifo 缓冲（2 的幂）。
  *        原 64B 只能装 3 帧，主机突发时 protocol_parser_feed 溢出会整包 reset 丢数据；
  *        加大到 256B（12 帧），消除突发丢帧 */
-#define SRV_UART_HOST_PARSER_IN_LEN (1024 * 8U)
+#define SRV_UART_HOST_PARSER_IN_LEN (1024 * 4U)
 
 /** @brief 命令 can_id（主机→设备） */
 #define SRV_UART_HOST_CID_MIT_CTRL 0x000001D0U
