@@ -26,7 +26,7 @@ extern "C" {
 /* Exported constants --------------------------------------------------------*/
 
 /** @brief 最大可变长负载长度（data_len 为 1 字节，上限 255） */
-#define SRV_UART_TX_CMD_MAX_PAYLOAD (64U)
+#define SRV_UART_TX_CMD_MAX_PAYLOAD (32U)
 
 /** @brief 最大帧长度 = payload + 5（头1 + cmd1 + len1 + payload + crc1 + 尾1） */
 #define SRV_UART_TX_CMD_MAX_FRAME (SRV_UART_TX_CMD_MAX_PAYLOAD + 5U)

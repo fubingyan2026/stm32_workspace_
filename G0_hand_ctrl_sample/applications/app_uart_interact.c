@@ -52,7 +52,7 @@
 #define APP_UART_COMBO_SAVE_ZERO_MS (3000U)
 
 /** @brief 电机反馈请求最小回复间隔 (ms)：丢弃窗口内重复请求，防止 TX 打满 */
-#define APP_UART_FEEDBACK_REPLY_MIN_MS (2U)
+#define APP_UART_FEEDBACK_REPLY_MIN_MS (1U)
 
 /* Private variables ---------------------------------------------------------*/
 

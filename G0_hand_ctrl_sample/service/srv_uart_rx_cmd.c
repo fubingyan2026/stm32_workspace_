@@ -10,6 +10,7 @@
 #include "srv_uart_rx_cmd.h"
 
 #include "crc.h"
+#include "daemon.h"
 #include "drv_uart.h"
 #include "log.h"
 #include "main.h"
@@ -46,6 +47,12 @@ static const uint8_t s_footer[] = { '\n' };
 /** @brief 单次 step 最多解析的帧数（防止单次调用占用主循环过长） */
 #define SRV_UART_RX_CMD_MAX_PARSE_PER_STEP (8U)
 
+/** @brief UART RX 守护：无解析成功帧判定离线超时 (ms) */
+#define SRV_UART_RX_CMD_DAEMON_TIMEOUT_MS (3000U)
+
+/** @brief UART RX 守护：初始化等待 (ms)，期间不判离线 */
+#define SRV_UART_RX_CMD_DAEMON_INIT_WAIT_MS (1000U)
+
 /* Private variables ---------------------------------------------------------*/
 
 static protocol_parser_context_t s_parser;
@@ -55,6 +62,9 @@ static srv_uart_rx_cmd_cb_t s_rx_cb;
 static uint32_t s_rx_count; /**< 已收完整命令帧计数 */
 static bool s_initialized;
 
+/** @brief UART RX 解析成功帧在线守护实例 */
+static daemon_context_t s_rx_daemon;
+
 /* Private function prototypes -----------------------------------------------*/
 
 static uint16_t rx_get_len_cb(uint8_t* buffer, uint16_t len);
@@ -62,6 +72,8 @@ static uint16_t rx_get_len_cb(uint8_t* buffer, uint16_t len);
 static protocol_parser_error_t rx_check_cb(uint8_t* buffer, uint16_t len);
 
 static void rx_log_error(const char* tag, int32_t err);
+
+static void rx_daemon_offline_cb(void* owner_ptr);
 
 /* Exported functions --------------------------------------------------------*/
 
@@ -85,6 +97,17 @@ void srv_uart_rx_cmd_init(srv_uart_rx_cmd_cb_t callback)
     };
 
     (void)protocol_parser_init(&s_parser, &cfg);
+
+    /* 注册 UART RX 解析成功帧在线守护（daemon_init 需先调用） */
+    const daemon_config_t daemon_cfg = {
+        .name = "uart_rx",
+        .owner_ptr = NULL,
+        .offline_cb = rx_daemon_offline_cb,
+        .reload_timeout_ms = SRV_UART_RX_CMD_DAEMON_TIMEOUT_MS,
+        .init_wait_time_ms = SRV_UART_RX_CMD_DAEMON_INIT_WAIT_MS,
+    };
+    (void)daemon_register_static(&daemon_cfg, &s_rx_daemon);
+
     s_initialized = true;
 
     SRV_UART_RX_CMD_LOG_I("UART 命令接收服务初始化完成");
@@ -135,6 +158,9 @@ void srv_uart_rx_cmd_step(void)
 
             s_rx_count++;
             parsed++;
+
+            /* 收到解析成功帧 → 喂狗（在线守护，供 daemon_task 统计频率） */
+            daemon_reload(&s_rx_daemon);
 
             if (s_rx_cb) {
                 s_rx_cb(frame[1], &frame[3], data_len);
@@ -205,4 +231,14 @@ static protocol_parser_error_t rx_check_cb(uint8_t* buffer, uint16_t len)
 static void rx_log_error(const char* tag, int32_t err)
 {
     SRV_UART_RX_CMD_LOG_W("%s: err=%d", tag, (int)err);
+}
+
+/**
+ * @brief UART RX 守护离线回调（超时无解析成功帧时触发，多为上位机停止发送）
+ */
+static void rx_daemon_offline_cb(void* owner_ptr)
+{
+    (void)owner_ptr;
+    SRV_UART_RX_CMD_LOG_W("UART 长时间无收到解析成功帧 (%ums)",
+        (unsigned)SRV_UART_RX_CMD_DAEMON_TIMEOUT_MS);
 }

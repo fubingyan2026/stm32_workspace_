@@ -1,0 +1,30 @@
+
+
+GraphedExpression="(s_rx_daemon).feed_frequency", Color=#e56a6f
+OpenDocument="drv_uart.c", FilePath="C:/Users/32457/Desktop/stm32_workspace_/G0_hand_ctrl_sample/device_drivers/drv_uart.c", Line=142
+OpenDocument="srv_uart_rx_cmd.c", FilePath="C:/Users/32457/Desktop/stm32_workspace_/G0_hand_ctrl_sample/service/srv_uart_rx_cmd.c", Line=108
+OpenDocument="app_uart_interact.c", FilePath="C:/Users/32457/Desktop/stm32_workspace_/G0_hand_ctrl_sample/applications/app_uart_interact.c", Line=0
+OpenDocument="daemon_task.c", FilePath="C:/Users/32457/Desktop/stm32_workspace_/G0_hand_ctrl_sample/tasks/daemon_task.c", Line=43
+OpenDocument="main.c", FilePath="C:/Users/32457/Desktop/stm32_workspace_/G0_hand_ctrl_sample/Core/Src/main.c", Line=55
+OpenToolbar="Debug", Floating=0, x=0, y=0
+OpenWindow="Source Files", DockArea=LEFT, x=0, y=0, w=773, h=510, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Disassembly", DockArea=RIGHT, x=0, y=0, w=1239, h=209, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Break & Tracepoints", DockArea=LEFT, x=0, y=1, w=773, h=254, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, VectorCatchIndexMask=63
+OpenWindow="Memory 1", DockArea=BOTTOM, x=2, y=0, w=1239, h=481, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, EditorAddress=0x1C120
+OpenWindow="Watched Data 1", DockArea=LEFT, x=0, y=2, w=773, h=449, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Terminal", DockArea=BOTTOM, x=0, y=0, w=843, h=481, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Data Sampling", DockArea=RIGHT, x=0, y=1, w=1239, h=381, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, VisibleTab=0, UniformSampleSpacing=1
+OpenWindow="Timeline", DockArea=RIGHT, x=0, y=2, w=1239, h=623, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=1, DataPaneShown=1, PowerPaneShown=0, CodePaneShown=0, PinCursor="Cursor Movable", TimePerDiv="1 s / Div", TimeStampFormat="Time", DataGraphDrawAsPoints=0, DataGraphLegendShown=1, DataGraphUniformSampleSpacing=1, DataGraphLegendPosition="735;0", DataGraphShowNamesAtCursor=0, PowerGraphDrawAsPoints=0, PowerGraphLegendShown=0, PowerGraphAvgFilterTime=Off, PowerGraphAvgFilterLen=Off, PowerGraphUniformSampleSpacing=0, PowerGraphLegendPosition="1125;0", CodeGraphLegendShown=0, CodeGraphLegendPosition="1053;0"
+OpenWindow="Console", DockArea=BOTTOM, x=1, y=0, w=988, h=481, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+SmartViewPlugin="", Page="", Toolbar="Hidden", Window="SmartView 1"
+TableHeader="Source Files", SortCol="File", SortOrder="ASCENDING", VisibleCols=["File";"Status";"Size";"#Insts";"Path"], ColWidths=[361;116;100;116;1389]
+TableHeader="Data Sampling Table", SortCol="None", SortOrder="ASCENDING", VisibleCols=["Index";"Time";" (s_rx_daemon).feed_frequency"], ColWidths=[100;100;100]
+TableHeader="Data Sampling Setup", SortCol="# Changes", SortOrder="ASCENDING", VisibleCols=["Expression";"Type";"Value";"Min";"Max";"Average";"# Changes";"Min. Change";"Max. Change"], ColWidths=[160;100;144;100;100;144;149;171;171]
+TableHeader="Power Sampling", SortCol="None", SortOrder="ASCENDING", VisibleCols=["Index";"Time";"Ch 0"], ColWidths=[100;100;100]
+TableHeader="Watched Data 1", SortCol="Expression", SortOrder="ASCENDING", VisibleCols=["Expression";"Value";"Size";"Refresh"], ColWidths=[245;138;137;253]
+TableHeader="RegisterSelectionDialog", SortCol="None", SortOrder="ASCENDING", VisibleCols=[], ColWidths=[]
+TableHeader="TargetExceptionDialog", SortCol="Name", SortOrder="ASCENDING", VisibleCols=["Name";"Value";"Address";"Description"], ColWidths=[200;100;100;320]
+TableHeader="Vector Catches", SortCol="", SortOrder="ASCENDING", VisibleCols=["";"Vector Catch";"Description"], ColWidths=[50;300;500]
+TableHeader="Break & Tracepoints", SortCol="", SortOrder="ASCENDING", VisibleCols=["";"Type";"Location";"Extras"], ColWidths=[100;100;138;435]
+WatchedExpression="s_rx_daemon", Window=Watched Data 1
+WatchedExpression="s_inst", Window=Watched Data 1

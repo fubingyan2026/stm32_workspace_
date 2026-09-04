@@ -7,8 +7,10 @@
 
 from __future__ import annotations
 
+import ctypes
 import queue
 import sys
+import time
 from dataclasses import dataclass, field
 
 import serial
@@ -21,7 +23,8 @@ from PySide6.QtWidgets import (
 )
 
 from g0_protocol import (
-    CMD_HEARTBEAT, CMD_KEY_EVENT, CMD_MOTOR_FEEDBACK_REPORT,
+    CMD_HEARTBEAT, CMD_KEY_EVENT, CMD_MOTOR_REQ_FEEDBACK,
+    CMD_MOTOR_FEEDBACK_REPORT,
     MOTOR_STATE_TEXT, KEY_EVENT_TEXT, KEY_NAME,
     LED_ACTION_OFF, LED_ACTION_ON, LED_ACTION_BLINK, LED_ACTION_BREATH,
     FrameParser, build_motor_target, build_req_feedback, build_led_ctrl,
@@ -83,12 +86,19 @@ class SerialWorker(QThread):
         self._parser = FrameParser()
         self._running = False
         self._tx_queue: queue.Queue[bytes] = queue.Queue()
+        self._auto_fb_period_ms = 0.0   # 0=关闭自动请求反馈
+        self._auto_fb_next = 0.0        # 下次发送时刻 (perf_counter)
+
+    def set_auto_feedback(self, period_ms: float) -> None:
+        """设置自动请求反馈周期（ms），0=关闭；工作线程内精确节拍发送"""
+        self._auto_fb_period_ms = float(period_ms)
+        self._auto_fb_next = time.perf_counter() + self._auto_fb_period_ms / 1000.0
 
     def run(self) -> None:
         try:
             self._serial = serial.Serial(
                 self._port, self._baud,
-                timeout=0.05, write_timeout=0.5,
+                timeout=0, write_timeout=0.5,
             )
         except Exception as exc:  # noqa: BLE001
             self.status_changed.emit(f"连接失败: {exc}", True)
@@ -98,20 +108,35 @@ class SerialWorker(QThread):
         self._running = True
 
         while self._running:
-            # 发送队列由本线程统一处理（跨线程直接写串口会与 read 竞争导致死锁）
+            # 高精度节拍：独立于 RX 读取，基于 perf_counter 精确到点触发
+            if self._auto_fb_period_ms > 0.0:
+                now = time.perf_counter()
+                if now >= self._auto_fb_next:
+                    # 吞吐跟不上时跳过补偿，避免突发连发
+                    self._auto_fb_next = now + self._auto_fb_period_ms / 1000.0
+                    if self._auto_fb_next < now:
+                        self._auto_fb_next = now + self._auto_fb_period_ms / 1000.0
+                    self._tx_queue.put(build_req_feedback())
+
+            # 发送队列由本线程统一处理
             self._flush_tx_queue()
 
+            # 非阻塞读取：in_waiting 轮询，避免 read(timeout) 的阻塞抖动拖慢节拍
             try:
-                data = self._serial.read(256)
+                n = self._serial.in_waiting
             except Exception as exc:  # noqa: BLE001
                 self.status_changed.emit(f"串口错误: {exc}", True)
                 break
-            if not data:
-                continue
-            for frame in self._parser.feed(data):
-                ev = self._decode_frame(frame)
-                if ev:
-                    self.frame_received.emit(ev)
+            if n > 0:
+                data = self._serial.read(n)
+                if data:
+                    for frame in self._parser.feed(data):
+                        ev = self._decode_frame(frame)
+                        if ev:
+                            self.frame_received.emit(ev)
+            else:
+                # 空转极小等待，保持 ~0.5ms 循环粒度（timeBeginPeriod(1) 后精度足够）
+                time.sleep(0.0005)
 
         try:
             if self._serial:
@@ -129,7 +154,9 @@ class SerialWorker(QThread):
                 return
             try:
                 self._serial.write(data)  # type: ignore[union-attr]
-                self.log_line.emit(data.hex(" ").upper(), "tx")
+                # 0x03 请求反馈帧高频产生，不逐帧写日志避免刷屏
+                if not (len(data) >= 4 and data[1] == CMD_MOTOR_REQ_FEEDBACK):
+                    self.log_line.emit(data.hex(" ").upper(), "tx")
             except Exception as exc:  # noqa: BLE001
                 self.status_changed.emit(f"发送失败: {exc}", True)
                 return
@@ -186,8 +213,14 @@ class MainWindow(QMainWindow):
         self.resize(860, 640)
 
         self._worker: SerialWorker | None = None
-        self._auto_fb_timer: QTimer | None = None
+        self._rx_frame_count = 0
+        self._rx_freq_timer: QTimer | None = None
         self._build_ui()
+
+        # 每秒刷新一次接收帧率
+        self._rx_freq_timer = QTimer(self)
+        self._rx_freq_timer.timeout.connect(self._update_rx_freq)
+        self._rx_freq_timer.start(1000)
 
     # ---- UI ----
     def _build_ui(self) -> None:
@@ -237,6 +270,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self._build_control_box())
         left_layout.addWidget(self._build_led_box())
         left_layout.addWidget(self._build_feedback_box())
+        left_layout.addWidget(self._build_key_box())
         left_layout.addStretch(1)
 
         right = QWidget()
@@ -298,9 +332,12 @@ class MainWindow(QMainWindow):
         self.auto_fb_spin.setSuffix(" ms")
         self.auto_fb_check.toggled.connect(self._on_auto_fb_toggled)
         self.auto_fb_spin.valueChanged.connect(self._on_auto_fb_period)
+        self.rx_freq_label = QLabel("接收 0 Hz")
+        self.rx_freq_label.setObjectName("dim")
         fb_row = QHBoxLayout()
         fb_row.addWidget(self.auto_fb_check)
         fb_row.addWidget(self.auto_fb_spin)
+        fb_row.addWidget(self.rx_freq_label)
         fb_row.addStretch(1)
 
         btn_row = QHBoxLayout()
@@ -371,14 +408,36 @@ class MainWindow(QMainWindow):
         grid.addWidget(self.temp_val, 4, 1, 1, 2)
         return box
 
+    def _build_key_box(self) -> QGroupBox:
+        box = QGroupBox("按键状态")
+        grid = QGridLayout(box)
+        self.key1_label = QLabel("松开")
+        self.key1_label.setAlignment(Qt.AlignCenter)
+        self.key2_label = QLabel("松开")
+        self.key2_label.setAlignment(Qt.AlignCenter)
+        grid.addWidget(QLabel("KEY1:"), 0, 0)
+        grid.addWidget(self.key1_label, 0, 1)
+        grid.addWidget(QLabel("KEY2:"), 1, 0)
+        grid.addWidget(self.key2_label, 1, 1)
+        return box
+
     def _build_log_box(self) -> QGroupBox:
         box = QGroupBox("通信日志")
         layout = QVBoxLayout(box)
+        top = QHBoxLayout()
+        top.addStretch(1)
+        self.log_clear_btn = QPushButton("清空日志")
+        self.log_clear_btn.clicked.connect(self._clear_log)
+        top.addWidget(self.log_clear_btn)
+        layout.addLayout(top)
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(2000)
         layout.addWidget(self.log_view)
         return box
+
+    def _clear_log(self) -> None:
+        self.log_view.clear()
 
     @staticmethod
     def _mk_spin(lo: float, hi: float, step: float, val: float, dec: int) -> QDoubleSpinBox:
@@ -402,13 +461,13 @@ class MainWindow(QMainWindow):
 
     def _toggle_connect(self) -> None:
         if self._worker and self._worker.isRunning():
-            if self._auto_fb_timer is not None:
-                self._auto_fb_timer.stop()
             self.auto_fb_check.setChecked(False)
             self._worker.stop()
             self._worker = None
             self.connect_btn.setText("连接")
             self.status_label.setText("未连接")
+            self._rx_frame_count = 0
+            self.rx_freq_label.setText("接收 0 Hz")
             return
 
         text = self.port_combo.currentText()
@@ -425,6 +484,10 @@ class MainWindow(QMainWindow):
         self._worker.log_line.connect(lambda msg, lvl: self._log(msg, lvl))
         self._worker.start()
         self.connect_btn.setText("断开")
+
+        # 若已勾选自动请求反馈，连接后启动
+        if self.auto_fb_check.isChecked():
+            self._worker.set_auto_feedback(int(self.auto_fb_spin.value()))
 
     # ---- 发送 ----
     def _on_pos_slider(self, value: int) -> None:
@@ -468,24 +531,14 @@ class MainWindow(QMainWindow):
         self._worker.send(build_req_feedback())  # type: ignore[union-attr]
 
     def _on_auto_fb_toggled(self, checked: bool) -> None:
-        if checked:
-            if self._auto_fb_timer is None:
-                self._auto_fb_timer = QTimer(self)
-                self._auto_fb_timer.timeout.connect(self._on_auto_fb_timeout)
-            self._auto_fb_timer.start(int(self.auto_fb_spin.value()))
-        else:
-            if self._auto_fb_timer is not None:
-                self._auto_fb_timer.stop()
-
-    def _on_auto_fb_timeout(self) -> None:
-        # 发送一帧后立即重新计时（单次定时器），避免 Qt 低精度下回调堆积连发
-        self._send_req_feedback()
-        if self.auto_fb_check.isChecked():
-            self._auto_fb_timer.start(int(self.auto_fb_spin.value()))
+        if self._worker is not None and self._worker.isRunning():
+            self._worker.set_auto_feedback(
+                int(self.auto_fb_spin.value()) if checked else 0.0)
 
     def _on_auto_fb_period(self, value: float) -> None:
-        if self.auto_fb_check.isChecked() and self._auto_fb_timer is not None:
-            self._auto_fb_timer.start(int(value))
+        if (self.auto_fb_check.isChecked()
+                and self._worker is not None and self._worker.isRunning()):
+            self._worker.set_auto_feedback(float(value))
 
     def _on_led_action(self, index: int) -> None:
         self.led_interval_spin.setEnabled(
@@ -510,12 +563,36 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _on_frame(self, ev: object) -> None:
         event = ev  # SerialWorker.RxEvent
-        self._log(event.text, "info")
+        self._rx_frame_count += 1
 
         if event.kind == "feedback":
+            # 高频反馈帧不逐条写日志（避免 GUI 卡顿），仅更新数值显示
             self._update_feedback(event.text)
-        elif event.kind == "heartbeat":
-            self._log(f"   [心跳] {event.text}", "info")
+        else:
+            self._log(event.text, "info")
+            if event.kind == "heartbeat":
+                self._log(f"   [心跳] {event.text}", "info")
+            elif event.kind == "key":
+                self._update_key(event.payload)
+
+    def _update_key(self, payload: bytes) -> None:
+        if len(payload) < 2:
+            return
+        idx = payload[0]
+        pressed = bool(payload[1] == 0x00)  # KEY_BASE_EVENT_PRESS
+        style_on = "background-color: #7EC8A0; color: white; font-weight: bold;"
+        style_off = "background-color: #E4DED4; color: #9E9E9E;"
+        if idx == 0:
+            self.key1_label.setText("按下" if pressed else "松开")
+            self.key1_label.setStyleSheet(style_on if pressed else style_off)
+        elif idx == 1:
+            self.key2_label.setText("按下" if pressed else "松开")
+            self.key2_label.setStyleSheet(style_on if pressed else style_off)
+
+    def _update_rx_freq(self) -> None:
+        freq = self._rx_frame_count
+        self._rx_frame_count = 0
+        self.rx_freq_label.setText(f"接收 {freq} Hz")
 
     @Slot(str, bool)
     def _on_status(self, text: str, is_error: bool) -> None:
@@ -559,11 +636,24 @@ def main() -> None:
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
+
+    # 提高 Windows 系统定时器分辨率到 1ms：
+    # pyserial 的 read(timeout) 在 Windows 基于事件等待，默认受 ~15.6ms
+    # 系统时钟限制，会导致自动反馈节拍被钳制在 ~64Hz。timeBeginPeriod(1)
+    # 可让 sleep/串口超时精度达到 1ms，释放 <15ms 的高频发送能力。
+    if sys.platform == "win32":
+        timeBeginPeriod = ctypes.windll.winmm.timeBeginPeriod
+        timeBeginPeriod(1)
+
     app = QApplication(sys.argv)
     app.setStyleSheet(STYLE)
     win = MainWindow()
     win.show()
-    sys.exit(app.exec())
+    try:
+        sys.exit(app.exec())
+    finally:
+        if sys.platform == "win32":
+            ctypes.windll.winmm.timeEndPeriod(1)
 
 
 if __name__ == "__main__":
