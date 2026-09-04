@@ -43,7 +43,7 @@
 
 /** @brief 状态灯呼吸参数 */
 #define LED_STATUS_BREATH_CYCLE_MS (1500U)
-#define LED_STATUS_BREATH_MIN_DUTY (2U)
+#define LED_STATUS_BREATH_MIN_DUTY (5U)
 #define LED_STATUS_BREATH_MAX_DUTY (1023U)
 
 /* Private variables ---------------------------------------------------------*/
@@ -81,7 +81,7 @@ void led_task_init(void)
     /* 状态灯：默认常亮，灯效由 app_status_indicator 按状态驱动 */
     srv_signal_config_t cfg_status = {
         .name = "status",
-        .init_state = SRV_SIGNAL_STATE_ON,
+        .init_state = SRV_SIGNAL_STATE_BREATHING,
         .write_output = led_status_write_output,
         .breath_cycle_ms = LED_STATUS_BREATH_CYCLE_MS,
         .breath_min_duty = LED_STATUS_BREATH_MIN_DUTY,

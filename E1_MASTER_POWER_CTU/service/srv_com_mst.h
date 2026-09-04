@@ -102,7 +102,7 @@ typedef union {
  * @brief 主机控制指令（0x10 控制帧，长度 1）
  */
 typedef struct {
-    uint8_t buzzer_duty; /**< 蜂鸣器占空比 0-100（0=静音, 100=最响/50% 导通） */
+    uint8_t buzzer_duty; /**< 蜂鸣器导通占空比 0-50% (0=静音, 50=最响；驱动会截断超限) */
 } srv_com_mst_ctrl_t;
 
 /**

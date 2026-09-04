@@ -643,3 +643,45 @@ void utils_rotate_vector3(float* input, float* rotation, float* output, bool rev
         output[2] = input[0] * m31 + input[1] * m32 + input[2] * m33;
     }
 }
+
+/* ===================== 通用边沿检测（E1_PRO 追加） ===================== */
+
+/**
+ * @brief 复位边沿检测状态（清除基线）
+ */
+void utils_edge_det_init(utils_edge_det_t* det)
+{
+    if (det == NULL) {
+        return;
+    }
+    det->prev = false;
+    det->valid = false;
+}
+
+/**
+ * @brief 周期采样并返回边沿事件
+ */
+utils_edge_t utils_edge_detect(utils_edge_det_t* det, bool sample)
+{
+    if (det == NULL) {
+        return UTILS_EDGE_NONE;
+    }
+
+    if (!det->valid) {
+        /* 首采：仅建立基线，不判边沿 */
+        det->prev = sample;
+        det->valid = true;
+        return UTILS_EDGE_NONE;
+    }
+
+    const bool was = det->prev;
+    det->prev = sample;
+
+    if (sample && !was) {
+        return UTILS_EDGE_RISING;
+    }
+    if (!sample && was) {
+        return UTILS_EDGE_FALLING;
+    }
+    return UTILS_EDGE_NONE;
+}

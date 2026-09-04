@@ -75,15 +75,14 @@ void drv_buzzer_set(uint8_t duty)
         return;
     }
 
-    if (duty > 100) {
-        DRV_BUZZER_LOG_W("蜂鸣器占空比超限被截断: 输入=%u, 上限=100", (unsigned)duty);
-        duty = 100;
+    if (duty > 50) {
+        duty = 50;
     }
 
     uint32_t arr = __HAL_TIM_GET_AUTORELOAD(BUZZER_HTIM);
-    uint32_t cmp = (uint32_t)duty * (arr + 1) / 200; /* 50% 占空对应最响 */
+    uint32_t cmp = (uint32_t)duty * (arr + 1) / 100; /* duty 即导通占空比% (上限50%) */
 
     __HAL_TIM_SET_COMPARE(BUZZER_HTIM, BUZZER_CH, cmp);
 
-    DRV_BUZZER_LOG_D("蜂鸣器占空比=%u%%", (unsigned)duty);
+    DRV_BUZZER_LOG_D("蜂鸣器导通占空比=%u%%", (unsigned)duty);
 }

@@ -111,8 +111,8 @@ void srv_com_mst_init(const srv_com_mst_config_t* config)
         .input_buffer = s_input_buf,
         .get_len_cb = com_get_len_cb,
         .check_cb = com_check_cb,
-        .header_len = 1,
-        .footer_len = 1,
+        .header_len = sizeof(s_header),
+        .footer_len = sizeof(s_footer),
         .input_buffer_len = (uint16_t)sizeof(s_input_buf),
         .output_buffer_len = (uint16_t)sizeof(s_parse_out),
     };
@@ -126,8 +126,8 @@ void srv_com_mst_init(const srv_com_mst_config_t* config)
         .output_buffer = s_pack_out,
         .checksum_cb = com_checksum_cb,
         .fill_len_cb = com_fill_len_cb,
-        .header_len = 1,
-        .footer_len = 1,
+        .header_len = sizeof(s_header),
+        .footer_len = sizeof(s_footer),
         .checksum_len = 1,
         .output_buffer_len = (uint16_t)sizeof(s_pack_out),
     };

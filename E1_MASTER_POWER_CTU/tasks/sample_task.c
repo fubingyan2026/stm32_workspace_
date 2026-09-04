@@ -34,7 +34,7 @@
 
 /* Private constants ---------------------------------------------------------*/
 
-#define ADC_PERIOD_MS (10U)
+#define ADC_PERIOD_MS (1U)
 
 /* Private variables ---------------------------------------------------------*/
 

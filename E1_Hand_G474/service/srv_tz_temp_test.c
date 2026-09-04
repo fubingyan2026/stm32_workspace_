@@ -59,7 +59,7 @@
 #define SRV_TZ_TEMP_CTRL_MODE_SPEED 0 /**< 速度模式：正转→停→反转→停 定时循环（现有功能） */
 #define SRV_TZ_TEMP_CTRL_MODE_POSITION 1 /**< 位置模式：初始化位置为 0°，中心±pos_amp_turns 往复 */
 #ifndef SRV_TZ_TEMP_CTRL_MODE
-#define SRV_TZ_TEMP_CTRL_MODE SRV_TZ_TEMP_CTRL_MODE_SPEED
+#define SRV_TZ_TEMP_CTRL_MODE SRV_TZ_TEMP_CTRL_MODE_POSITION
 #endif
 
 /* --- 默认配置（srv_tz_temp_test_config_default 用） --- */
@@ -122,7 +122,7 @@
 #define SRV_TZ_TEMP_DEF_POS_MAX_VEL_TPS (4.0f)
 /** @brief 默认速度指令加减速限制（转/s²）：换向/到位时速度指令按该斜率渐变，
  *        避免 换向瞬间速度阶跃（如 +3 转/s 突变 -3 转/s） */
-#define SRV_TZ_TEMP_DEF_POS_ACCEL_TPS2 (8.0f)
+#define SRV_TZ_TEMP_DEF_POS_ACCEL_TPS2 (4.0f)
 /** @brief 默认到位判定阈值（转）：|位置−目标| ≤ 该值视为到位（随后翻转目标） */
 #define SRV_TZ_TEMP_DEF_POS_ARRIVE_THRESH_TURNS (0.01f)
 /** @brief 默认位置到位判定超时 (ms)：超过该时长仍未到位则强制翻转（反馈冻结/到位偏置兜底） */

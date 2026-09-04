@@ -49,8 +49,11 @@
 /** @brief 告警日志限频窗口 (ms) */
 #define SRV_ADC_WARN_LOG_PERIOD_MS (1000U)
 
+/** @brief PT1 低通滤波器（每通道一个，100Hz 截止，抑制 ADC 噪声） */
+#define ADC_FILTER_CUTOFF_HZ (100U)
+
 #define ADC_MAX (4095U)
-#define ADC_SAMPLE_RATE_HZ (100U) /**< 100Hz (10ms period) */
+#define ADC_SAMPLE_RATE_HZ (1000U) /**< 1000Hz (1ms period) */
 
 /** @brief 12-bit ADC 满量程原始值 */
 #define SRV_ADC_RAW_MAX (4095U)
@@ -88,7 +91,7 @@
 
 /** @brief E-STOP 冗余故障去抖时间 (ms)：单路 mux 轮转下冗余节点不同时刷新，
  *        急停切换瞬间偏差会扫过中间区间约一个轮转周期(≈80ms)，去抖需覆盖之 */
-#define SRV_ADC_ESTOP_FAULT_DEBOUNCE_MS (200U)
+#define SRV_ADC_ESTOP_FAULT_DEBOUNCE_MS (500U)
 
 /** @brief E-STOP 冗余故障去抖帧数（step 以 100Hz 周期运行，10ms/帧） */
 #define SRV_ADC_ESTOP_FAULT_DEBOUNCE_FRAMES \
@@ -111,9 +114,6 @@ static msg_fifo_t s_fifo;
 /** @brief 原始快照 FIFO：DMA 中断回调(生产) → srv_adc_step(消费)，锁自由 SPSC */
 static uint8_t s_raw_fifo_buf[ADC_RAW_FIFO_BUF_SIZE];
 static msg_fifo_t s_raw_fifo;
-
-/** @brief PT1 低通滤波器（每通道一个，10Hz 截止，抑制 ADC 噪声） */
-#define ADC_FILTER_CUTOFF_HZ (10U)
 
 static pt1Filter_t s_filters[DRV_ADC_CH_MAX];
 

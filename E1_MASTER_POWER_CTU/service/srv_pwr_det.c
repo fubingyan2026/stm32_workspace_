@@ -12,6 +12,9 @@
 #include "drv_status.h"
 #include "drv_systick.h"
 #include "log.h"
+#include "utils_math.h"
+
+#include <string.h>
 
 /* 模块日志开关 ----------------------------------------------------------------*/
 
@@ -35,6 +38,9 @@
 /** @brief 状态遥测日志限频窗口 (ms)：轮询需限频防刷屏 */
 #define SRV_PWR_DET_LOG_PERIOD_MS (1000U)
 
+/** @brief 常开轨异常持续重报周期 (ms)：异常持续期间每秒打一条错误日志 */
+#define SRV_PWR_DET_RAIL_ERR_REPORT_MS (1000U)
+
 /* Private variables ---------------------------------------------------------*/
 
 static bool s_initialized;
@@ -52,10 +58,29 @@ static const drv_status_signal_t s_fault_signals[] = {
 #define SRV_PWR_DET_FAULT_SIG_NUM \
     (uint32_t)(sizeof(s_fault_signals) / sizeof(s_fault_signals[0]))
 
-/** @brief 上次轮询掩码（用于边沿检测） */
-static uint32_t s_pwr_det_prev_mask;
-/** @brief 首次读取标志：上电初始状态不判边沿，避免误报 */
-static bool s_pwr_det_prev_valid;
+/** @brief 故障信号边沿检测状态（每信号一个，复用共享 utils_edge_detect） */
+static utils_edge_det_t s_fault_edge[SRV_PWR_DET_FAULT_SIG_NUM];
+
+/**
+ * @brief 三路常开轨（异常即打错误日志，边沿 + 持续重报）
+ * @note  与急停不同：这些轨默认常开，PGD=0 判异常；异常期间持续每秒重报
+ */
+static const drv_status_signal_t s_rail_mon_signals[] = {
+    DRV_STATUS_LM5060_PGD, /**< VIN_DC-DC(LM5060) */
+    DRV_STATUS_DC24V_PGD,  /**< DC-DC 24V(MP9931N) */
+    DRV_STATUS_AUX_PGD,    /**< AUX(LM5069) */
+};
+#define SRV_PWR_DET_RAIL_MON_NUM \
+    (uint32_t)(sizeof(s_rail_mon_signals) / sizeof(s_rail_mon_signals[0]))
+
+/** @brief 常开轨异常边沿检测状态（每轨一个） */
+static utils_edge_det_t s_rail_edge[SRV_PWR_DET_RAIL_MON_NUM];
+/** @brief 常开轨异常持续重报时间戳 (ms) */
+static uint32_t s_rail_mon_log_ts;
+
+/* Private function prototypes -----------------------------------------------*/
+
+static void srv_pwr_det_rail_monitor(uint32_t sta);
 
 /* Exported functions --------------------------------------------------------*/
 
@@ -66,7 +91,15 @@ void srv_pwr_det_init(srv_pwr_det_estop_redun_cb_t estop_redun_cb)
 
     s_estop_redun_cb = estop_redun_cb;
     s_initialized = true;
-    s_pwr_det_prev_valid = false;
+
+    /* 边沿检测状态建基线由 utils_edge_detect 首次调用完成，这里显式复位以清晰 */
+    for (uint32_t i = 0; i < SRV_PWR_DET_FAULT_SIG_NUM; i++) {
+        utils_edge_det_init(&s_fault_edge[i]);
+    }
+    for (uint32_t i = 0; i < SRV_PWR_DET_RAIL_MON_NUM; i++) {
+        utils_edge_det_init(&s_rail_edge[i]);
+    }
+    s_rail_mon_log_ts = 0;
 
     SRV_PWR_DET_LOG_I("电源状态监控服务初始化完成 (冗余回调已注入=%d)",
         (int)(estop_redun_cb != NULL));
@@ -80,24 +113,27 @@ void srv_pwr_det_read(srv_pwr_det_status_t* status)
 
     uint32_t sta = s_initialized ? drv_status_read_all() : 0;
 
-    /* 故障信号边沿检测：仅状态变化时打印，避免轮询刷屏 */
-    if (s_pwr_det_prev_valid) {
-        for (uint32_t i = 0; i < SRV_PWR_DET_FAULT_SIG_NUM; i++) {
-            const drv_status_signal_t sig = s_fault_signals[i];
-            const uint32_t bit = 1UL << (uint32_t)sig;
-            const bool now_set = (sta & bit) != 0;
-            const bool was_set = (s_pwr_det_prev_mask & bit) != 0;
-            if (now_set && !was_set) {
-                SRV_PWR_DET_LOG_E("数字侧急停输入断言: %s (是否形成有效急停还取决于冗余侧)",
-                    drv_status_name(sig));
-            } else if (!now_set && was_set) {
-                SRV_PWR_DET_LOG_I("数字侧急停输入清除: %s", drv_status_name(sig));
-            }
+    /* 三路常开轨异常监控：PGD 丢失即打错误日志（边沿 + 持续重报） */
+    srv_pwr_det_rail_monitor(sta);
+
+    /* 故障信号边沿检测（共享 utils_edge_detect）：仅状态变化时打印，避免轮询刷屏 */
+    for (uint32_t i = 0; i < SRV_PWR_DET_FAULT_SIG_NUM; i++) {
+        const drv_status_signal_t sig = s_fault_signals[i];
+        const uint32_t bit = 1UL << (uint32_t)sig;
+        const bool now_set = (sta & bit) != 0;
+
+        switch (utils_edge_detect(&s_fault_edge[i], now_set)) {
+        case UTILS_EDGE_RISING:
+            SRV_PWR_DET_LOG_E("数字侧急停输入断言: %s (是否形成有效急停还取决于冗余侧)",
+                drv_status_name(sig));
+            break;
+        case UTILS_EDGE_FALLING:
+            SRV_PWR_DET_LOG_I("数字侧急停输入清除: %s", drv_status_name(sig));
+            break;
+        default:
+            break;
         }
-    } else {
-        s_pwr_det_prev_valid = true;
     }
-    s_pwr_det_prev_mask = sta;
 
     status->lm5060_ok = ((sta >> DRV_STATUS_LM5060_PGD) & 1U) != 0;
     status->dc24v_ok = ((sta >> DRV_STATUS_DC24V_PGD) & 1U) != 0;
@@ -137,5 +173,66 @@ void srv_pwr_det_read(srv_pwr_det_status_t* status)
             (unsigned)status->lm5060_ok, (unsigned)status->dc24v_ok,
             (unsigned)status->p12v_ok, (unsigned)status->aux_power_ok,
             (unsigned)status->motor_power_ok, (unsigned)status->estop_on);
+    }
+}
+
+/* Private functions ---------------------------------------------------------*/
+
+/**
+ * @brief 三路常开轨 PGD 异常监控
+ * @param sta drv_status_read_all() 原始位掩码
+ * @note  由 srv_pwr_det_read() 每次轮询调用：
+ *   - 异常出现边沿 → 立即打一条错误日志
+ *   - 异常持续期间 → 每 SRV_PWR_DET_RAIL_ERR_REPORT_MS(1s) 聚合重报一条错误日志
+ *   - 恢复边沿 → 打一条信息日志
+ */
+static void srv_pwr_det_rail_monitor(uint32_t sta)
+{
+    if (!s_initialized) {
+        return;
+    }
+
+    bool any_abn = false;
+
+    for (uint32_t i = 0; i < SRV_PWR_DET_RAIL_MON_NUM; i++) {
+        const drv_status_signal_t sig = s_rail_mon_signals[i];
+        const bool abn = ((sta >> sig) & 1U) == 0U; /* PGOOD 低电平=异常 */
+
+        /* 边沿检测复用共享 utils_edge_detect（首采建基线，不误报） */
+        switch (utils_edge_detect(&s_rail_edge[i], abn)) {
+        case UTILS_EDGE_RISING:
+            SRV_PWR_DET_LOG_E("常开轨异常: %s PGD 丢失 (pgd=0)", drv_status_name(sig));
+            break;
+        case UTILS_EDGE_FALLING:
+            SRV_PWR_DET_LOG_I("常开轨恢复: %s PGD 就绪", drv_status_name(sig));
+            break;
+        default:
+            break;
+        }
+
+        any_abn |= abn;
+    }
+
+    /* 异常持续期间聚合重报（1s 一次，逐路列出当前异常轨） */
+    if (any_abn) {
+        const uint32_t now_ms = millis();
+        if ((uint32_t)(now_ms - s_rail_mon_log_ts) >= SRV_PWR_DET_RAIL_ERR_REPORT_MS) {
+            s_rail_mon_log_ts = now_ms;
+
+            char rail_list[64] = { 0 };
+            for (uint32_t i = 0; i < SRV_PWR_DET_RAIL_MON_NUM; i++) {
+                const drv_status_signal_t sig = s_rail_mon_signals[i];
+                if (((sta >> sig) & 1U) == 0U) {
+                    if (rail_list[0] != '\0') {
+                        (void)strncat(rail_list, ", ", sizeof(rail_list) - 1U);
+                    }
+                    (void)strncat(rail_list, drv_status_name(sig),
+                        sizeof(rail_list) - strlen(rail_list) - 1U);
+                }
+            }
+            SRV_PWR_DET_LOG_E("常开电源轨异常持续中: %s (PGD=0)", rail_list);
+        }
+    } else {
+        s_rail_mon_log_ts = 0;
     }
 }

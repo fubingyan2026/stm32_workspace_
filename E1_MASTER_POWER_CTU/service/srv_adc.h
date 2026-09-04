@@ -94,6 +94,11 @@ uint16_t srv_adc_mux_raw(uint8_t ch);
  * 判定（沿用 F407 双通道冗余）：
  *   - 两节点采样偏差 ≤ 容差（电平一致，触点闭合）→ 该回路 bit=1（闭合）
  *   - 偏差远离 0（冗余互补，急停按下断开）或处于中间区间（线缆异常）→ bit=0
+ *
+ * 因 mux 逐通道轮询（整轮约 80ms）且节点成对但非同时采样，瞬时判定存在滞后/抖动，
+ * 本返回值经过内部“判稳时间窗”（SRV_ADC_ESTOP_JUDGE_WINDOW_MS，默认 50ms）过滤：
+ * 瞬时状态须持续该窗口才翻转，返回的是判稳后的闭合掩码。
+ *
  * @return 4 位闭合掩码（E_STOP1=bit0 ... E_STOP4=bit3；全闭合常量定义于消费方
  *         srv_pwr_det：SRV_PWR_DET_ESTOP_ALL_CLOSED_MASK）
  */

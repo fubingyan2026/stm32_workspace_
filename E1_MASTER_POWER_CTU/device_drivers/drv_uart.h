@@ -109,6 +109,14 @@ uint32_t drv_uart_tx_pending(drv_uart_channel_t ch);
 drv_uart_error_t drv_uart_register_tx_cplt_hook(drv_uart_channel_t ch,
     drv_uart_tx_cplt_hook_t hook);
 
+/**
+ * @brief 等待 USART TX 移位寄存器清空（TC 置位，有界自旋）
+ * @param ch 通道号
+ * @return true=TC 已置位（最后字节已完全发出）；false=达内部保护次数仍未置位
+ * @note  半双工（RS485）释放总线方向前调用；ISR/主循环上下文均可，等待为微秒级
+ */
+bool drv_uart_tx_shift_wait(drv_uart_channel_t ch);
+
 /* --- RX（DMA circular + IDLE 中断 → kfifo 环形缓冲） --- */
 
 /**

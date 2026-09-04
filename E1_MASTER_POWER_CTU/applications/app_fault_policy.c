@@ -13,6 +13,7 @@
 #include "srv_fan_ctrl.h"
 #include "srv_pwr_ctrl.h"
 #include "srv_pwr_det.h"
+#include "utils_math.h"
 
 /* 模块日志开关 ----------------------------------------------------------------*/
 
@@ -35,6 +36,9 @@
 
 static bool s_tripped; /**< 保护锁存标志 */
 
+/** @brief 急停释放沿检测状态（复用共享 utils_edge_detect） */
+static utils_edge_det_t s_estop_edge;
+
 /* Private function prototypes -----------------------------------------------*/
 
 /** @brief 判定关键电源故障（可调策略：哪些条件必须立即断电） */
@@ -48,6 +52,7 @@ static void fault_policy_log_reasons(const srv_pwr_det_status_t* st);
 void app_fault_policy_init(void)
 {
     s_tripped = false;
+    utils_edge_det_init(&s_estop_edge);
     srv_pwr_det_status_t st;
     srv_pwr_det_read(&st);
     if (!st.estop_on) {
@@ -60,7 +65,6 @@ void app_fault_policy_step(uint16_t elapsed_ms)
 {
     (void)elapsed_ms;
 
-    static bool last_estop_on = 0;
     srv_pwr_det_status_t st;
     srv_pwr_det_read(&st);
 
@@ -72,15 +76,14 @@ void app_fault_policy_step(uint16_t elapsed_ms)
     /*
      * 触发条件：
      * - E-STOP 按下：无条件触发（安全按钮，与上电状态无关）
-     * - 已上电完成且出现关键电源故障：立即关断
-     * 上电时序过程中的 PGOOD 超时由 srv_pwr_ctrl FSM 内部内联锁处理，
-     * 不在此处重复判定。
+     * - MOTOR 已使能且其 PGD 丢失：立即关断 MOTOR
+     * 三路常开轨（VIN_DC-DC/24V/AUX）的 PGD 仅监测不在此触发。
      */
     const bool powered = srv_pwr_ctrl_is_powered_on();
     if (st.estop_on || (powered && fault_policy_critical(&st))) {
         s_tripped = true;
 
-        /* 1. 紧急断电：关闭全部输出轨并复位 FSM */
+        /* 1. 紧急断电：强制关闭 MOTOR（VIN/24V/AUX 常开轨保持） */
         srv_pwr_ctrl_emergency_off();
 
         /* 2. 风扇满速散热（关闭温控自动，强制最高转速） */
@@ -92,12 +95,10 @@ void app_fault_policy_step(uint16_t elapsed_ms)
         fault_policy_log_reasons(&st);
     }
 
-    if (last_estop_on != st.estop_on) {
-        last_estop_on = st.estop_on;
-        if (!st.estop_on) {
-            app_fault_policy_reset();
-            srv_pwr_ctrl_request_on();
-        }
+    /* 急停释放沿（有效急停 1→0）：解除锁存并重新使能 MOTOR */
+    if (utils_edge_detect(&s_estop_edge, st.estop_on) == UTILS_EDGE_FALLING) {
+        app_fault_policy_reset();
+        srv_pwr_ctrl_request_on();
     }
 }
 
@@ -118,13 +119,10 @@ void app_fault_policy_reset(void)
 
 static bool fault_policy_critical(const srv_pwr_det_status_t* st)
 {
-    /* 关键电源轨使能后 PGD 丢失 → 必须立即断电。
-       12V 轨仅上报不触发（12V Buck 无使能、始终运行，避免输入瞬断导致误关断）。
-       PGD 仅在对应使能已驱动时才判定故障：EN=0 时 PGD 恒低属正常。 */
-    return (srv_pwr_ctrl_is_vin_enabled() && !st->lm5060_ok)
-        || (srv_pwr_ctrl_is_dc24v_enabled() && !st->dc24v_ok)
-        || (srv_pwr_ctrl_is_aux_enabled() && !st->aux_power_ok)
-        || (srv_pwr_ctrl_is_motor_enabled() && !st->motor_power_ok);
+    /* MOTOR 使能后其 PGD 丢失 → 立即断电（独立受控轨，见 srv_pwr_ctrl 语义）。
+       VIN_DC-DC/24V/AUX 三路常开轨 PGD 仅作状态监测/上报，异常时不触发整机断电，
+       以保证急停对 MOTOR 的控制不受三路健康影响。 */
+    return srv_pwr_ctrl_is_motor_enabled() && !st->motor_power_ok;
 }
 
 static void fault_policy_log_reasons(const srv_pwr_det_status_t* st)
@@ -132,16 +130,8 @@ static void fault_policy_log_reasons(const srv_pwr_det_status_t* st)
     if (st->estop_on) {
         APP_FAULT_POLICY_LOG_W("  [原因] E-STOP 急停触发");
     }
-    if (srv_pwr_ctrl_is_vin_enabled() && !st->lm5060_ok) {
-        APP_FAULT_POLICY_LOG_E("  [原因] VIN_DC-DC(LM5060) PGD 丢失 (lm5060_pgd=0)");
-    }
-    if (srv_pwr_ctrl_is_dc24v_enabled() && !st->dc24v_ok) {
-        APP_FAULT_POLICY_LOG_E("  [原因] DC-DC 24V PGD 丢失 (dc24v_pgd=0)");
-    }
-    if (srv_pwr_ctrl_is_aux_enabled() && !st->aux_power_ok) {
-        APP_FAULT_POLICY_LOG_E("  [原因] AUX_POWER PGD 丢失 (aux_pgd=0)");
-    }
     if (srv_pwr_ctrl_is_motor_enabled() && !st->motor_power_ok) {
         APP_FAULT_POLICY_LOG_E("  [原因] MOTOR_POWER PGD 丢失 (motor_pgd=0)");
     }
+    /* 三路常开轨 (VIN_DC-DC/24V/AUX) PGD=0 的持续错误日志由 srv_pwr_det 统一输出，此处不重复 */
 }

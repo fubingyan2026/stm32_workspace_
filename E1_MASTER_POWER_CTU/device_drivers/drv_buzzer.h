@@ -34,7 +34,8 @@ void drv_buzzer_deinit(void);
 
 /**
  * @brief 设置蜂鸣器占空比
- * @param duty 0-100（0=静音，100=最响）
+ * @param duty 0-50，为导通占空比百分比（0=静音；50=最响，即 50% 导通上限，
+ *             超过 50 会被驱动截断到 50）
  */
 void drv_buzzer_set(uint8_t duty);
 

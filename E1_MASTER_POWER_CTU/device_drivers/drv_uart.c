@@ -28,7 +28,7 @@
 /* 模块日志开关 ----------------------------------------------------------------*/
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
-#define UART_LOG_ENABLE 0
+#define UART_LOG_ENABLE 1
 
 #if UART_LOG_ENABLE
 #define UART_LOG_E(...) LOG_E("drv_uart", __VA_ARGS__)
@@ -49,6 +49,9 @@
 
 /** @brief 错误日志聚合窗口 (ms)：窗口内的错误只在首次打印，附累计次数 */
 #define DRV_UART_ERR_LOG_PERIOD_MS (1000U)
+
+/** @brief TC 等待保护次数（TX 移位寄存器清空有界自旋，见 drv_uart_tx_shift_wait） */
+#define DRV_UART_TX_TC_GUARD_LOOPS (1000U)
 
 /* Private types -------------------------------------------------------------*/
 
@@ -176,18 +179,20 @@ drv_uart_error_t drv_uart_recover(drv_uart_channel_t ch)
     }
 
     const uint32_t err = HAL_UART_GetError(inst->huart);
-    const HAL_UART_StateTypeDef state = HAL_UART_GetState(inst->huart);
+    /* 注意：HAL_UART_GetState() 返回 gState|RxState 组合值，TX 忙时(BUSY_TX)
+       会让组合结果 != BUSY_RX 导致误判。这里只用 RxState 独立判断接收状态。 */
+    const HAL_UART_StateTypeDef rx_state = (HAL_UART_StateTypeDef)inst->huart->RxState;
 
     /* 无错误且 RX 正在运行（DMA circular 正常工作中）→ 无需恢复 */
-    if (err == HAL_UART_ERROR_NONE && state == HAL_UART_STATE_BUSY_RX) {
+    if (err == HAL_UART_ERROR_NONE && rx_state == HAL_UART_STATE_BUSY_RX) {
         return DRV_UART_OK;
     }
 
-    UART_LOG_W("ch%u recover: err=0x%08lX state=%d，重置接收链路",
-        (unsigned)ch + 1U, (unsigned long)err, (int)state);
+    UART_LOG_W("ch%u recover: err=0x%08lX rx_state=%d，重置接收链路",
+        (unsigned)ch + 1U, (unsigned long)err, (int)rx_state);
 
     /* 中止当前接收（阻塞式，释放 DMA + 清 RX 状态，IDLE 中断一并关闭） */
-    if (state != HAL_UART_STATE_READY) {
+    if (rx_state != HAL_UART_STATE_READY) {
         (void)HAL_UART_AbortReceive(inst->huart);
     }
 
@@ -272,12 +277,14 @@ void drv_uart_tx_flush(drv_uart_channel_t ch)
 
     drv_uart_inst_t* inst = &s_inst[ch];
 
-    while (inst->huart->gState == HAL_UART_STATE_READY
+    /* 主循环驱动：DMA 空闲且有帧时启动，TxCplt 清忙后由本函数下轮续发。
+       单次调用仅发一帧即返回，避免长时间占用主循环（帧间隔由调用周期保证）。 */
+    if (inst->huart->gState == HAL_UART_STATE_READY
         && !inst->tx_busy
         && !msg_fifo_empty(&inst->tx_fifo)) {
         drv_uart_tx_frame_t frame;
         if (!msg_fifo_pop(&inst->tx_fifo, &frame)) {
-            break;
+            return;
         }
 
         /* 拷贝到持久 DMA 缓冲再启动发送，防止队列后续入队覆盖 DMA 读区域 */
@@ -287,11 +294,10 @@ void drv_uart_tx_flush(drv_uart_channel_t ch)
                 frame.len)
             == HAL_OK) {
             inst->tx_busy = true;
-            break; /* 等 TxCplt 清忙后下轮再发下一帧 */
+        } else {
+            /* DMA 启动失败：放回队列由下轮重试 */
+            (void)msg_fifo_push(&inst->tx_fifo, &frame);
         }
-        /* DMA 启动失败：放回队列头部由下轮重试 */
-        (void)msg_fifo_push(&inst->tx_fifo, &frame);
-        break;
     }
 }
 
@@ -318,6 +324,23 @@ drv_uart_error_t drv_uart_register_tx_cplt_hook(drv_uart_channel_t ch,
 
     s_inst[ch].tx_cplt_hook = hook;
     return DRV_UART_OK;
+}
+
+bool drv_uart_tx_shift_wait(drv_uart_channel_t ch)
+{
+    if (ch >= DRV_UART_CH_NUM || !s_inst[ch].initialized
+        || s_inst[ch].huart == NULL) {
+        return true; /* 无有效实例：无字节在发，视作已就绪 */
+    }
+
+    UART_HandleTypeDef* huart = s_inst[ch].huart;
+    uint32_t guard = DRV_UART_TX_TC_GUARD_LOOPS;
+    while ((huart->Instance->SR & USART_SR_TC) == 0U) {
+        if (--guard == 0U) {
+            return false; /* 超时（异常场景），由调用方决定后续处理 */
+        }
+    }
+    return true;
 }
 
 /* --- RX（DMA circular + IDLE → kfifo 环形缓冲） --- */
