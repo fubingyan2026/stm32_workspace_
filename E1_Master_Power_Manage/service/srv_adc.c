@@ -65,7 +65,7 @@
 /* 外部电压分压比 */
 #define ADC_SCALE_VIN (31.0f)
 #define ADC_SCALE_MOTOR_POWER (31.0f)
-#define ADC_SCALE_AUX_POWER (11.0f)
+#define ADC_SCALE_AUX_POWER (31.0f)
 
 /* VREFINT 校准 (ST 出厂校准值 @3.3V/30°C，地址 0x1FFF7A2A) */
 #ifndef VREFINT_CAL_ADDR
