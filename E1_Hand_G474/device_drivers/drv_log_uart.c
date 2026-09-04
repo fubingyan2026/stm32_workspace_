@@ -45,7 +45,7 @@
 
 /** @brief DMA circular 接收缓冲区大小（字节，必须为 2 的幂）。
  *        1M 波特率下 512B ≈ 5ms 数据（约 25 帧），留足突发余量 */
-#define DRV_LOG_UART_RX_CIRC_BUF_SIZE (1024U*4)
+#define DRV_LOG_UART_RX_CIRC_BUF_SIZE (1024U)
 
 /** @brief 日志串口 HAL 句柄（来自 CubeMX usart.c: USART1） */
 #define LOG_HUART (&huart1)
