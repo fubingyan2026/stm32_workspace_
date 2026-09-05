@@ -7,9 +7,9 @@
  * @attention
  *
  * 配置表内置在 drv_power.c 中，外部只需调用 init。
- * 副电源模块使能输出为 4 路（均高有效）：
+ * 副电源模块使能输出为 4 路（ISO_EN_12V 为低有效使能，其余高有效）：
  *   - DC_DC_EN    (LM5146  24V/6A 降压电源使能, PA0)
- *   - ISO_EN_12V  (URB2412S 隔离 12V 模块使能, PA4)
+ *   - ISO_EN_12V  (URB2412S 隔离 12V 模块使能, PA4, 拉低使能)
  *   - LSD1_IN     (ZXMS6004FF 低边开关 1 驱动, PA2)
  *   - LSD2_IN     (ZXMS6004FF 低边开关 2 驱动, PA3)
  */

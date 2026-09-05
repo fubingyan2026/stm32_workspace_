@@ -7,6 +7,7 @@
 - 电源输出远程指令 + 门控保护（`srv_pwr_ctrl`，1ms 步进）：24V DC-DC(LM5146) / 12V_ISO(URB2412S) / LSD1/LSD2(ZXMS6004FF 低边开关) 四路输出，PGOOD/节点电压门控 + 使能超时 + 运行期丢失去抖（100ms 防误关断）→ 故障锁存
 - 母线监控：AUX/MOTOR 48V 输入电压、LSD1/LSD2 输出节点电压（ADC1 DMA + VREFINT 校准，分压 ×23/×23/×11/×11）；母线级 AUX 缺失保护（`app_fault_policy`）
 - RS485 通信（USART3，主机查询应答式）：z 帧 `[z][cmd][len][payload][CRC8][\n]`，解析/打包用 `protocol_parser`/`protocol_packer`，详见 [docs/protocol_slaver_485.md](docs/protocol_slaver_485.md)
+- 上位机（`host/`，PySide6 + pyserial）：状态/电压/温度查询、四路输出控制 + 补光亮度、清故障锁存、自动轮询；协议与固件 `srv_com_slv` 对齐
 - 补光灯 PWM（TIM4_CH3 → PT4115 DIM，20kHz，0~1000‰ 亮度）；单颗蓝色状态灯（TIM4_CH1 + `app_status_indicator` + `srv_signal` 灯效）
 - 日志：USART1 TX DMA（本地 `tasks/log_task.*`）
 
@@ -32,6 +33,7 @@ service/        srv_adc / srv_com_slv / srv_pwr_ctrl / srv_pwr_det
 device_drivers/ drv_adc / drv_uart / dev_rs485 / drv_pwm / drv_power / drv_status /
                 drv_led / drv_log_uart / drv_systick
 docs/           hardware_pin.md（硬件） / protocol_slaver_485.md（485 协议）
+host/           上位机（slv_host.py + slv_protocol.py，python slv_host.py 运行）
 ```
 
 ## 版本记录

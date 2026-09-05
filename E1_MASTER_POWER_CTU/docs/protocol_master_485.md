@@ -66,7 +66,7 @@
 | | 2 | `err_24v` | 24V 降压电源异常（DC_DC_24V_PGOOD） |
 | | 3 | `err_vin_dcdc` | VIN_DC-DC 前端异常（LM5060_PGOOD） |
 | | 4 | `err_aux_power` | 辅助电源异常（AUX PGD） |
-| | 5 | `err_motor_power` | 电机电源异常（MOTOR PGD） |
+| | 5 | `err_motor_power` | 电机电源异常（急停未按下 且 MOTOR_PGD=0） |
 | | 6-7 | 保留 | 恒 0 |
 | 1 | 0 | `err_fan0` | 风扇0 异常 |
 | | 1 | `err_fan1` | 风扇1 异常 |

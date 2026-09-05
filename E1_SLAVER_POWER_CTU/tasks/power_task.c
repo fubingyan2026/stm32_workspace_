@@ -6,7 +6,7 @@
 
 /**
  * @file    power_task.c
- * @brief   电源管理任务 — 1ms sw_timer 驱动输出监督 FSM + 母线级故障保护策略
+ * @brief   电源管理任务 — 1ms sw_timer 驱动输出监督 FSM + 母线级故障保护策略 + PGOOD 遥测
  */
 
 #include "power_task.h"
@@ -15,6 +15,7 @@
 #include "log.h"
 #include "srv_adc.h"
 #include "srv_pwr_ctrl.h"
+#include "srv_pwr_det.h"
 #include "sw_timer.h"
 
 /* 模块日志开关 ----------------------------------------------------------------*/
@@ -87,9 +88,11 @@ static void power_timer_cb(void* user_data)
     /* 输出监督 FSM：每拍 1ms 步进 */
     srv_pwr_ctrl_step(TASK_PERIOD_MS);
 
-    /* 母线级故障保护策略：每 10 拍（10ms）执行一次 */
+    /* 母线级故障保护策略 + PGOOD 遥测：每 10 拍（10ms）执行一次 */
     if (++s_sub_tick >= POWER_SUB_DIV) {
         s_sub_tick = 0;
+        srv_pwr_det_status_t det;
+        srv_pwr_det_read(&det);
         app_fault_policy_step(FAULT_POLICY_PERIOD_MS);
     }
 }

@@ -60,6 +60,8 @@ typedef struct {
     uint8_t pgd_ok_steps; /**< 双 PGD 连续有效步数（去抖） */
     uint32_t wait_log_ts; /**< 等待条件日志限频 (ms) */
 
+    bool motor_desired; /**< MOTOR 使能请求（延后设定：上电成功(POWERED)后自动生效） */
+
     /** @brief 各轨当前使能标志 */
     bool vin_on;
     bool dc24v_on;
@@ -166,14 +168,24 @@ void srv_pwr_ctrl_step(uint16_t elapsed_ms)
 
 void srv_pwr_ctrl_motor_set(bool on)
 {
-    s_pc.motor_on = on;
-    drv_power_set(DRV_POWER_RAIL_MOTOR, on);
+    s_pc.motor_desired = on;
 
     if (on) {
-        SRV_PWR_CTRL_LOG_I("MOTOR_POWER_EN 已使能");
-    } else {
-        SRV_PWR_CTRL_LOG_E("MOTOR_POWER_EN 已关闭 (急停/故障)");
+        /* 延后设定：上电流程尚未成功 → 仅记录请求，POWERED 后自动生效 */
+        if (srv_pwr_ctrl_get_state().powered_on) {
+            s_pc.motor_on = true;
+            drv_power_set(DRV_POWER_RAIL_MOTOR, true);
+            SRV_PWR_CTRL_LOG_I("MOTOR_POWER_EN 已使能");
+        } else {
+            SRV_PWR_CTRL_LOG_W("上电流程未完成，MOTOR 使能请求已延后 (POWERED 后自动开启)");
+        }
+        return;
     }
+
+    /* 关断任何时候都立即生效 */
+    s_pc.motor_on = false;
+    drv_power_set(DRV_POWER_RAIL_MOTOR, false);
+    SRV_PWR_CTRL_LOG_E("MOTOR_POWER_EN 已关闭 (急停/故障)");
 }
 
 srv_pwr_ctrl_state_t srv_pwr_ctrl_get_state(void)
@@ -278,7 +290,15 @@ static fsm_state_t pwr_state_en_24v(fsm_t* ctx)
 
 static fsm_state_t pwr_state_powered(fsm_t* ctx)
 {
-    (void)ctx;
+    pwr_ctrl_t* pc = (pwr_ctrl_t*)fsm_user_data(ctx);
+
+    /* 延后使能：上电成功后若有 MOTOR 使能请求则自动开启 */
+    if (pc->motor_desired && !pc->motor_on) {
+        pc->motor_on = true;
+        drv_power_set(DRV_POWER_RAIL_MOTOR, true);
+        SRV_PWR_CTRL_LOG_I("MOTOR_POWER_EN 已使能 (上电成功后延后生效)");
+    }
+
     return PWR_STATE_POWERED;
 }
 

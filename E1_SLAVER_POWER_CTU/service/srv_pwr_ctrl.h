@@ -1,14 +1,17 @@
 /**
  * @file    srv_pwr_ctrl.h
  * @author  maximillian
- * @version V1.0.0
- * @date    2026-09-03
+ * @version V2.0.0
+ * @date    2026-09-05
  * @brief   电源输出监督服务 — 期望输出 + 门控使能 + 故障锁存 FSM (E1_SLAVER_POWER_CTU)
  *
  * 远程指令 + 门控保护模型：外部（485 控制帧）写入期望输出掩码，本服务按电源
  * 依赖逐步使能（DC-DC 24V → 12V_ISO / LSD1 / LSD2），PGOOD/节点电压门控 + 超时 +
  * 运行期丢失去抖（默认 100ms，防误关断）→ 关断并故障锁存；故障位与锁存经状态
  * 接口上报，主机发清除锁存命令后自动按当前期望重试。
+ *
+ * 状态机基于 fsm 库实现（与 E1_MASTER_POWER_CTU 同框架）：4 路输出各持一个独立
+ * fsm_t 实例，状态 OFF/ENABLING/ON/LATCHED，handler 在 task 周期内按拍推进。
  *
  * 母线电压（AUX/MOTOR/LSD1/LSD2 mV）经 task 层注入的读取回调获取（读 srv_adc），
  * service 层之间不直接互调。

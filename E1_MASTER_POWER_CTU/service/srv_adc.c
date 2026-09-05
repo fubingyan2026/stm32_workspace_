@@ -65,11 +65,16 @@
 /* VREFINT 校准：F103 标称 1.20V（ST 出厂校准值地址 0x1FFFF7BA 可选） */
 #define VREFINT_CAL_MV (1200U) /**< 内部参考电压标称值 (mV) */
 
-/* 内部温度传感器校准（F103 高密度 @30°C/110°C） */
-#define TS_CAL1_ADDR ((uint16_t*)0x1FFFF7B8) /**< 30°C 校准值 */
-#define TS_CAL2_ADDR ((uint16_t*)0x1FFFF7C2) /**< 110°C 校准值 */
+/* 内部温度传感器校准（F103 出厂校准缺失时回退典型参数） */
+#define TS_CAL1_ADDR ((uint16_t*)0x1FFFF7B8) /**< 30°C 校准值（部分器件无，读 0xFFFF） */
+#define TS_CAL2_ADDR ((uint16_t*)0x1FFFF7C2) /**< 110°C 校准值（部分器件无，读 0xFFFF） */
 #define TS_CAL1_TEMP (30)
 #define TS_CAL2_TEMP (110)
+
+/** @brief 典型参数（无出厂校准时的兜底，取自 F103 数据手册） */
+#define TS_TYP_V25_MV (1430.0f) /**< 25°C 时传感器典型电压 (mV) */
+#define TS_TYP_SLOPE_MV_PER_DEG (4.3f) /**< 电压-温度斜率 (mV/℃) */
+#define TS_TYP_T25 (25.0f)
 
 /* NTC 参数（B 参数法，R25=10kΩ，B=3950；待实机标定确认） */
 #define NTC_R25_OHM (10000.0f) /**< 25°C 标称阻值 */
@@ -147,7 +152,7 @@ static void adc_sample_cb(drv_adc_inst_t inst);
 static float adc_filtered(drv_adc_channel_t ch, uint16_t raw_value);
 static bool warn_rate_limited(void);
 static srv_adc_calc_status_t calc_vdda_mv(float vrefint_filtered, uint32_t* vdda_mv);
-static srv_adc_calc_status_t calc_mcu_temp(float ts_filtered, int16_t* temp_x100);
+static srv_adc_calc_status_t calc_mcu_temp(float ts_filtered, float vdda_mv, int16_t* temp_x100);
 static srv_adc_calc_status_t ntc_raw_to_temp(uint16_t raw, float vdda_v, int16_t* temp_x100);
 static void estop_redundancy_check(void);
 
@@ -167,9 +172,13 @@ void srv_adc_init(void)
     msg_fifo_init(&s_fifo, s_fifo_buf, ADC_FIFO_BUF_SIZE, sizeof(srv_adc_data_t));
     msg_fifo_init(&s_raw_fifo, s_raw_fifo_buf, ADC_RAW_FIFO_BUF_SIZE, sizeof(srv_adc_raw_t));
 
-    /* 内部温度传感器出厂校准值：芯片固定，仅初始化读取一次（无效值由 calc_mcu_temp 兜底） */
+    /* 内部温度传感器出厂校准值：芯片固定，仅初始化读取一次（无效值回退典型参数） */
     s_ts_cal1 = *TS_CAL1_ADDR;
     s_ts_cal2 = *TS_CAL2_ADDR;
+    if (s_ts_cal1 == 0xFFFF || s_ts_cal2 == 0xFFFF || s_ts_cal2 == s_ts_cal1) {
+        SRV_ADC_LOG_W("内部温度出厂校准缺失 (cal30=0x%04X cal110=0x%04X)，使用典型参数换算",
+            (unsigned)s_ts_cal1, (unsigned)s_ts_cal2);
+    }
 
     /* CD4051B 多路选择器：单通道变量轮转，见 s_mux_ch 说明 */
     drv_cd4051b_init();
@@ -248,7 +257,8 @@ void srv_adc_step(void)
 
     /* ── MCU 内部温度 ── */
     s.mcu_temp_status = calc_mcu_temp(
-        adc_filtered(DRV_ADC_CH_TEMPSENSOR, raw.raw[DRV_ADC_CH_TEMPSENSOR]), &s.mcu_temp_x100);
+        adc_filtered(DRV_ADC_CH_TEMPSENSOR, raw.raw[DRV_ADC_CH_TEMPSENSOR]),
+        (float)vdda_mv, &s.mcu_temp_x100);
 
     /* 遥测日志（任务上下文，限频 1s；温度字段为 ×100 整数，单位 0.01°C） */
     const uint32_t now_ms = millis();
@@ -404,22 +414,39 @@ static srv_adc_calc_status_t calc_vdda_mv(float vrefint_filtered, uint32_t* vdda
 /**
  * @brief 内部温度传感器 → 温度 (°C × 100)
  *
- * 使用 ST 出厂校准值 (30°C / 110°C) 线性插值，采样值按 VDDA 归一化到 3.3V。
+ * 优先使用 ST 出厂校准值 (30°C/110°C) 线性插值；
+ * 无出厂校准（F103 部分器件地址读回 0xFFFF）时回退数据手册典型参数：
+ *   V_sense = raw × VDDA/4095
+ *   T = (V25 − V_sense)/斜率 + 25     （F1 传感器电压随温度升高而下降）
  */
-static srv_adc_calc_status_t calc_mcu_temp(float ts_filtered, int16_t* temp_x100)
+static srv_adc_calc_status_t calc_mcu_temp(float ts_filtered, float vdda_mv, int16_t* temp_x100)
 {
     if (temp_x100 == NULL) {
         return SRV_ADC_CALC_ERR_PARAM;
     }
 
-    if (s_ts_cal1 == 0xFFFF || s_ts_cal2 == 0xFFFF || s_ts_cal2 == s_ts_cal1) {
-        *temp_x100 = 0; /* 校准值无效 → 温度输出 0 */
-        return SRV_ADC_CALC_ERR_CAL;
+    float t;
+
+    if (s_ts_cal1 != 0xFFFF && s_ts_cal2 != 0xFFFF && s_ts_cal2 != s_ts_cal1) {
+        /* 出厂校准两值含斜率符号，raw 低=温度高，直接线性插值即可 */
+        t = (float)TS_CAL1_TEMP
+            + (float)(TS_CAL2_TEMP - TS_CAL1_TEMP) * (ts_filtered - (float)s_ts_cal1)
+                / (float)(s_ts_cal2 - s_ts_cal1);
+    } else {
+        /* 出厂校准缺失 → 典型参数法（注意 F1 为负斜率：V_sense 随温度升高而下降） */
+        if (vdda_mv < 2000.0f) {
+            return SRV_ADC_CALC_ERR_LOW_RAW;
+        }
+        const float v_sense_mv = ts_filtered * vdda_mv / 4095.0f;
+        t = (TS_TYP_V25_MV - v_sense_mv) / TS_TYP_SLOPE_MV_PER_DEG + TS_TYP_T25;
     }
 
-    float t = (float)TS_CAL1_TEMP
-        + (float)(TS_CAL2_TEMP - TS_CAL1_TEMP) * (ts_filtered - (float)s_ts_cal1)
-            / (float)(s_ts_cal2 - s_ts_cal1);
+    if (t < -50.0f) {
+        t = -50.0f;
+    }
+    if (t > 150.0f) {
+        t = 150.0f;
+    }
 
     *temp_x100 = (int16_t)(t * 100.0f);
     return SRV_ADC_CALC_OK;

@@ -69,6 +69,11 @@
 #define TS_CAL1_TEMP (30)
 #define TS_CAL2_TEMP (110)
 
+/** @brief 典型参数（无出厂校准时的兜底，取自 F103 数据手册） */
+#define TS_TYP_V25_MV (1430.0f) /**< 25°C 时传感器典型电压 (mV) */
+#define TS_TYP_SLOPE_MV_PER_DEG (4.3f) /**< 电压-温度斜率 (mV/℃) */
+#define TS_TYP_T25 (25.0f)
+
 /* Private types -------------------------------------------------------------*/
 
 /** @brief 原始采样快照 — DMA 中断回调只填此结构，不做任何换算 */
@@ -110,7 +115,8 @@ static void adc_sample_cb(drv_adc_inst_t inst);
 static float adc_filtered(drv_adc_channel_t ch, uint16_t raw_value);
 static bool warn_rate_limited(void);
 static srv_adc_calc_status_t calc_vdda_mv(float vrefint_filtered, uint32_t* vdda_mv);
-static srv_adc_calc_status_t calc_mcu_temp(float ts_filtered, int16_t* temp_x100);
+static srv_adc_calc_status_t calc_mcu_temp(float ts_filtered, float vdda_mv,
+    int16_t* temp_x100);
 static srv_adc_calc_status_t calc_external_mv(float filtered_raw, float scale,
     float raw_to_mv, uint32_t* out_mv);
 
@@ -185,7 +191,8 @@ void srv_adc_step(void)
 
     /* ── MCU 内部温度 ── */
     s.mcu_temp_status = calc_mcu_temp(
-        adc_filtered(DRV_ADC_CH_TEMPSENSOR, raw.raw[DRV_ADC_CH_TEMPSENSOR]), &s.mcu_temp_x100);
+        adc_filtered(DRV_ADC_CH_TEMPSENSOR, raw.raw[DRV_ADC_CH_TEMPSENSOR]),
+        (float)vdda_mv, &s.mcu_temp_x100);
 
     /* 遥测日志（任务上下文，限频 1s；温度字段为 ×100 整数，单位 0.01°C） */
     const uint32_t now_ms = millis();
@@ -269,22 +276,40 @@ static srv_adc_calc_status_t calc_vdda_mv(float vrefint_filtered, uint32_t* vdda
 /**
  * @brief 内部温度传感器 → 温度 (°C × 100)
  *
- * 使用 ST 出厂校准值 (30°C / 110°C) 线性插值，采样值按 VDDA 归一化到 3.3V。
+ * 优先使用 ST 出厂校准值 (30°C/110°C) 线性插值；
+ * 无出厂校准（F103 部分器件地址读回 0xFFFF）时回退数据手册典型参数：
+ *   V_sense = raw × VDDA/4095
+ *   T = (V25 − V_sense)/斜率 + 25     （F1 传感器电压随温度升高而下降）
  */
-static srv_adc_calc_status_t calc_mcu_temp(float ts_filtered, int16_t* temp_x100)
+static srv_adc_calc_status_t calc_mcu_temp(float ts_filtered, float vdda_mv,
+    int16_t* temp_x100)
 {
     if (temp_x100 == NULL) {
         return SRV_ADC_CALC_ERR_PARAM;
     }
 
-    if (s_ts_cal1 == 0xFFFF || s_ts_cal2 == 0xFFFF || s_ts_cal2 == s_ts_cal1) {
-        *temp_x100 = 0; /* 校准值无效 → 温度输出 0 */
-        return SRV_ADC_CALC_ERR_CAL;
+    float t;
+
+    if (s_ts_cal1 != 0xFFFF && s_ts_cal2 != 0xFFFF && s_ts_cal2 != s_ts_cal1) {
+        /* 出厂校准两值含斜率符号，raw 低=温度高，直接线性插值即可 */
+        t = (float)TS_CAL1_TEMP
+            + (float)(TS_CAL2_TEMP - TS_CAL1_TEMP) * (ts_filtered - (float)s_ts_cal1)
+                / (float)(s_ts_cal2 - s_ts_cal1);
+    } else {
+        /* 出厂校准缺失 → 典型参数法（注意 F1 为负斜率：V_sense 随温度升高而下降） */
+        if (vdda_mv < 2000.0f) {
+            return SRV_ADC_CALC_ERR_LOW_RAW;
+        }
+        const float v_sense_mv = ts_filtered * vdda_mv / 4095.0f;
+        t = (TS_TYP_V25_MV - v_sense_mv) / TS_TYP_SLOPE_MV_PER_DEG + TS_TYP_T25;
     }
 
-    float t = (float)TS_CAL1_TEMP
-        + (float)(TS_CAL2_TEMP - TS_CAL1_TEMP) * (ts_filtered - (float)s_ts_cal1)
-            / (float)(s_ts_cal2 - s_ts_cal1);
+    if (t < -50.0f) {
+        t = -50.0f;
+    }
+    if (t > 150.0f) {
+        t = 150.0f;
+    }
 
     *temp_x100 = (int16_t)(t * 100.0f);
     return SRV_ADC_CALC_OK;

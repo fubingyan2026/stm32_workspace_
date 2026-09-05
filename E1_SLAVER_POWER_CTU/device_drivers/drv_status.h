@@ -25,8 +25,8 @@ extern "C" {
 /* Exported types ------------------------------------------------------------*/
 
 typedef enum {
-    DRV_STATUS_24V_PGD,         /**< EXT_PCOOG_24V — 24V 降压输出正常 (PA1) */
-    DRV_STATUS_ISO12V_PGD,      /**< ISO_PGOOD_12V — 12V_ISO 输出正常 (PA5) */
+    DRV_STATUS_24V_PGD,         /**< EXT_PCOOG_24V — 24V 降压输出正常 (PA1, 高有效) */
+    DRV_STATUS_ISO12V_PGD,      /**< ISO_PGOOD_12V — 12V_ISO 输出正常 (PA5, 高有效) */
 
     DRV_STATUS_NUM,
 } drv_status_signal_t;

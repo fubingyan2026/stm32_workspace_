@@ -51,7 +51,7 @@ typedef struct {
  */
 static const drv_status_pin_t s_pins[DRV_STATUS_NUM] = {
     [DRV_STATUS_24V_PGD]    = { EXT_PCOOG_24V_GPIO_Port, EXT_PCOOG_24V_Pin, false, "24V_PGD" },
-    [DRV_STATUS_ISO12V_PGD] = { ISO_PGOOD_12V_GPIO_Port, ISO_PGOOD_12V_Pin, false, "ISO12V_PGD" },
+    [DRV_STATUS_ISO12V_PGD] = { ISO_PGOOD_12V_GPIO_Port, ISO_PGOOD_12V_Pin, true, "ISO12V_PGD" },
 };
 
 /* Private variables ---------------------------------------------------------*/

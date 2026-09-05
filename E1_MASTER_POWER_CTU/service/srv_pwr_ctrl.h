@@ -67,7 +67,9 @@ void srv_pwr_ctrl_step(uint16_t elapsed_ms);
 
 /**
  * @brief MOTOR_EN 开/关（受控负载轨，由上层故障策略按急停状态驱动）
- * @note  仅操作 MOTOR；VIN/24V/AUX 常供电源轨不受影响
+ * @note  仅操作 MOTOR；VIN/24V/AUX 常供电源轨不受影响。
+ *        延后设定：on=true 且尚未上电成功(POWERED，即 VIN_DC-DC/24V/AUX 启动完成)时，
+ *        仅记录请求，POWERED 后自动生效；off=false 任何时刻立即生效。
  */
 void srv_pwr_ctrl_motor_set(bool on);
 

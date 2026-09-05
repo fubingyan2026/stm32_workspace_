@@ -51,7 +51,8 @@ void app_status_report_fill(srv_com_mst_report_t* report)
     report->status.bits.err_24v = !st.dc24v_ok;
     report->status.bits.err_vin_dcdc = !st.lm5060_ok;
     report->status.bits.err_aux_power = !st.aux_power_ok;
-    report->status.bits.err_motor_power = !st.motor_power_ok;
+    /* MOTOR 异常判定：仅当未急停时 PGD 为低才报异常（急停中 MOTOR 关断属正常） */
+    report->status.bits.err_motor_power = !st.estop_on && !st.motor_power_ok;
 
     /* 风扇故障（逐路检测） */
     report->status.bits.err_fan0 = srv_fan_ctrl_is_fault(0);

@@ -51,7 +51,7 @@ typedef struct {
  * E_STOP_ON 为急停串链，低电平表示急停按下（active_low=true，待实机确认）。
  */
 static const drv_status_pin_t s_pins[DRV_STATUS_NUM] = {
-    [DRV_STATUS_LM5060_PGD]  = { LM5060_PGOOD_GPIO_Port,   LM5060_PGOOD_Pin,   false, "LM5060_PGD" },
+    [DRV_STATUS_LM5060_PGD]  = { LM5060_PGOOD_GPIO_Port,   LM5060_PGOOD_Pin,   true, "LM5060_PGD" },
     [DRV_STATUS_DC24V_PGD]   = { DC_DC_24V_PGOOD_GPIO_Port, DC_DC_24V_PGOOD_Pin, false, "DC24V_PGD" },
     [DRV_STATUS_12V_PGD]     = { PGOOD_12V_GPIO_Port,      PGOOD_12V_Pin,      false, "12V_PGD" },
     [DRV_STATUS_AUX_PGD]     = { AUX_PWER_PGD_GPIO_Port,   AUX_PWER_PGD_Pin,   false, "AUX_PGD" },
