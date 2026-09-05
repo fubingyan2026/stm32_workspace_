@@ -41,6 +41,10 @@ typedef struct {
 /** @brief E-STOP 冗余数据读取回调（task 层接线实现，禁止为 NULL 时按冗余无效处理） */
 typedef void (*srv_pwr_det_estop_redun_cb_t)(srv_pwr_det_estop_redun_t* redun);
 
+/** @brief 常开轨使能掩码读取回调（返回 3bit：bit0=LM5060/VIN_DC-DC、bit1=24V、bit2=AUX；
+ *         返回 NULL 时按“全部已使能”处理，即保留纯常开语义） */
+typedef uint8_t (*srv_pwr_det_rail_en_cb_t)(void);
+
 /**
  * @brief 电源状态汇总
  */
@@ -60,8 +64,10 @@ typedef struct {
  * @brief 初始化电源监控服务
  * @param estop_redun_cb E-STOP 冗余数据读取回调（可为 NULL：冗余判据视为无效，
  *                       有效急停恒为 false，交由硬件/其他安全链路兜底）
+ * @param rail_en_cb     常开轨使能掩码回调（可为 NULL：视为全部使能，恒监测）
  */
-void srv_pwr_det_init(srv_pwr_det_estop_redun_cb_t estop_redun_cb);
+void srv_pwr_det_init(srv_pwr_det_estop_redun_cb_t estop_redun_cb,
+    srv_pwr_det_rail_en_cb_t rail_en_cb);
 
 /** @brief 读取电源状态（批量，推荐用于 RS485 上报打包） */
 void srv_pwr_det_read(srv_pwr_det_status_t* status);

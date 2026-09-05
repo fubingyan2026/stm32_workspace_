@@ -24,6 +24,7 @@
 #include "log.h"
 #include "srv_adc.h"
 #include "srv_com_mst.h"
+#include "srv_pwr_ctrl.h"
 #include "srv_pwr_det.h"
 #include "sw_timer.h"
 
@@ -61,6 +62,7 @@ static void com_timer_cb(void* user_data);
 static void com_send_frame(const uint8_t* data, uint32_t len);
 static void com_apply_ctrl(const srv_com_mst_ctrl_t* ctrl);
 static void com_read_estop_redun(srv_pwr_det_estop_redun_t* redun);
+static uint8_t com_rail_en_mask(void);
 
 /* Exported functions --------------------------------------------------------*/
 
@@ -74,9 +76,9 @@ void com_task_init(void)
     /* 蜂鸣器 PWM 初始化（0x10 控制帧 buzzer_duty 由 ctrl 回调驱动） */
     drv_buzzer_init();
 
-    /* 电源状态检测服务（初始化 drv_status；E-STOP 冗余数据经回调注入，
+    /* 电源状态检测服务（初始化 drv_status；E-STOP 冗余/常开轨使能门控经回调注入，
      * 避免 service 层同层互引） */
-    srv_pwr_det_init(com_read_estop_redun);
+    srv_pwr_det_init(com_read_estop_redun, com_rail_en_mask);
 
     /* 主机协议服务：read_data/ctrl/send_frame 均由本任务接线 */
     const srv_com_mst_config_t cfg = {
@@ -146,6 +148,27 @@ static void com_read_estop_redun(srv_pwr_det_estop_redun_t* redun)
 {
     redun->valid = srv_adc_estop_valid();
     redun->closed_mask = redun->valid ? srv_adc_estop_closed_mask() : 0U;
+}
+
+/**
+ * @brief 常开轨使能掩码接线（供 srv_pwr_det 注入，按轨使能门控 PGD 异常监测）
+ * @note  返回 bit0=LM5060/VIN_DC-DC、bit1=24V、bit2=AUX 的使能位
+ */
+static uint8_t com_rail_en_mask(void)
+{
+    const srv_pwr_ctrl_state_t st = srv_pwr_ctrl_get_state();
+
+    uint8_t mask = 0;
+    if (st.vin_en) {
+        mask |= (uint8_t)(1U << 0);
+    }
+    if (st.dc24v_en) {
+        mask |= (uint8_t)(1U << 1);
+    }
+    if (st.aux_en) {
+        mask |= (uint8_t)(1U << 2);
+    }
+    return mask;
 }
 
 /**

@@ -4,7 +4,7 @@ E1 量产主控电源板固件（E1_Master_Power_Manage 的 F103 量产版本，
 
 ## 主要功能
 
-- 电源管理：VIN_DC-DC(LM5060)/DC-DC 24V(MP9931N)/AUX(LM5069) **三路默认常开**（PGD 仅监测）；MOTOR(LM5069) **独立受控**（`srv_pwr_ctrl` fsm 两态），急停/紧急断电在任何状态都无条件强制 MOTOR_EN=0，不受三路健康影响
+- 电源管理：AUX **初始化直接使能**（不参与等待）；5 步上电流程（`srv_pwr_ctrl` fsm）：VIN∈[36,58]V → VIN_DC-DC≥90%VIN → 使能 VIN_DC-DC_EN(+100ms) → 使能 DC_DC_24V_EN → 双 PGD(DC24V+LM5060) 就绪=上电成功；**急停只控制 MOTOR**（VIN/24V/AUX 不被急停关断），MOTOR 由故障策略门控（未锁存+已上电+未急停时使能）
 - 故障保护：E-STOP 双判据（PC9 数字串链 + CD4051B 轮询 4 组 E-STOP 双冗余节点，任一冗余不一致）→ 紧急断电 + 风扇满速 + 锁存（`app_fault_policy`）
 - RS485 通信（USART3，主机查询应答式）：z 帧 `[z][cmd][len][payload][CRC8][\n]`（与 G0 上位机协议同构），解析/打包用 `protocol_parser`/`protocol_packer`，详见 [docs/protocol_master_485.md](docs/protocol_master_485.md)
 - ADC 采样：ADC1 + DMA + VREFINT 校准，NTC1/NTC2 温度、VIN/VIN_DC-DC 电压、MCU 温度；CD4051B（PA4/5/6 + PC4）逐周期轮转采样 4 组 E-STOP 双冗余节点（Y0/1、Y2/3…=ADC1/ADC2）

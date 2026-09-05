@@ -13,6 +13,7 @@
 
 #include "app_fault_policy.h"
 #include "log.h"
+#include "srv_adc.h"
 #include "srv_pwr_ctrl.h"
 #include "sw_timer.h"
 
@@ -52,13 +53,17 @@ static uint8_t s_sub_tick; /**< 故障策略分频计数 (0..POWER_SUB_DIV-1) */
 /* Private function prototypes -----------------------------------------------*/
 
 static void power_timer_cb(void* user_data);
+static void power_read_voltage(uint32_t* vin_mv, uint32_t* vin_dcdc_mv);
 
 /* Exported functions --------------------------------------------------------*/
 
 void power_task_init(void)
 {
-    /* srv_pwr_ctrl 自包含：内部完成 drv_power 初始化 + 顺序上电 FSM */
-    srv_pwr_ctrl_init();
+    /* srv_pwr_ctrl 注入电压读取（task 聚合 srv_adc），内部完成 drv_power 初始化 */
+    const srv_pwr_ctrl_config_t cfg = {
+        .read_voltage = power_read_voltage,
+    };
+    srv_pwr_ctrl_init(&cfg);
     app_fault_policy_init();
     POWER_TASK_LOG_I("电源管理任务初始化完成 (步进周期=%ums, 故障策略分频=%ums)",
         (unsigned)TASK_PERIOD_MS, (unsigned)FAULT_POLICY_PERIOD_MS);
@@ -85,5 +90,20 @@ static void power_timer_cb(void* user_data)
     if (++s_sub_tick >= POWER_SUB_DIV) {
         s_sub_tick = 0;
         app_fault_policy_step(FAULT_POLICY_PERIOD_MS);
+    }
+}
+
+/**
+ * @brief 电压读取接线（供 srv_pwr_ctrl 注入，task 层聚合 srv_adc 最新采样）
+ */
+static void power_read_voltage(uint32_t* vin_mv, uint32_t* vin_dcdc_mv)
+{
+    *vin_mv = 0;
+    *vin_dcdc_mv = 0;
+
+    srv_adc_data_t sample;
+    if (srv_adc_get_latest(&sample)) {
+        *vin_mv = sample.vin_mv;
+        *vin_dcdc_mv = sample.vin_dcdc_mv;
     }
 }

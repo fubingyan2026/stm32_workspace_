@@ -48,6 +48,9 @@ static bool s_initialized;
 /** @brief E-STOP 冗余数据读取回调（接线层注入，见 srv_pwr_det_init） */
 static srv_pwr_det_estop_redun_cb_t s_estop_redun_cb;
 
+/** @brief 常开轨使能掩码回调（接线层注入；NULL=视为全部使能） */
+static srv_pwr_det_rail_en_cb_t s_rail_en_cb;
+
 /** @brief 状态遥测日志时间戳 (ms) */
 static uint32_t s_pwr_det_log_ts;
 
@@ -84,12 +87,14 @@ static void srv_pwr_det_rail_monitor(uint32_t sta);
 
 /* Exported functions --------------------------------------------------------*/
 
-void srv_pwr_det_init(srv_pwr_det_estop_redun_cb_t estop_redun_cb)
+void srv_pwr_det_init(srv_pwr_det_estop_redun_cb_t estop_redun_cb,
+    srv_pwr_det_rail_en_cb_t rail_en_cb)
 {
     /* 本服务封装 drv_status 读取 PGOOD/E-STOP，必须先初始化其状态位 */
     drv_status_init();
 
     s_estop_redun_cb = estop_redun_cb;
+    s_rail_en_cb = rail_en_cb;
     s_initialized = true;
 
     /* 边沿检测状态建基线由 utils_edge_detect 首次调用完成，这里显式复位以清晰 */
@@ -192,9 +197,16 @@ static void srv_pwr_det_rail_monitor(uint32_t sta)
         return;
     }
 
+    /* 使能门控：仅监测“已使能”的轨（上电流程逐步使能，未使能轨 PGD 恒低属正常） */
+    const uint8_t en_mask = s_rail_en_cb ? s_rail_en_cb() : 0xFFU;
+
     bool any_abn = false;
 
     for (uint32_t i = 0; i < SRV_PWR_DET_RAIL_MON_NUM; i++) {
+        if (((en_mask >> i) & 1U) == 0U) {
+            continue; /* 轨未使能：不建基线、不判异常 */
+        }
+
         const drv_status_signal_t sig = s_rail_mon_signals[i];
         const bool abn = ((sta >> sig) & 1U) == 0U; /* PGOOD 低电平=异常 */
 
@@ -213,7 +225,7 @@ static void srv_pwr_det_rail_monitor(uint32_t sta)
         any_abn |= abn;
     }
 
-    /* 异常持续期间聚合重报（1s 一次，逐路列出当前异常轨） */
+    /* 异常持续期间聚合重报（1s 一次，逐路列出当前已使能且异常轨） */
     if (any_abn) {
         const uint32_t now_ms = millis();
         if ((uint32_t)(now_ms - s_rail_mon_log_ts) >= SRV_PWR_DET_RAIL_ERR_REPORT_MS) {
@@ -221,6 +233,9 @@ static void srv_pwr_det_rail_monitor(uint32_t sta)
 
             char rail_list[64] = { 0 };
             for (uint32_t i = 0; i < SRV_PWR_DET_RAIL_MON_NUM; i++) {
+                if (((en_mask >> i) & 1U) == 0U) {
+                    continue;
+                }
                 const drv_status_signal_t sig = s_rail_mon_signals[i];
                 if (((sta >> sig) & 1U) == 0U) {
                     if (rail_list[0] != '\0') {

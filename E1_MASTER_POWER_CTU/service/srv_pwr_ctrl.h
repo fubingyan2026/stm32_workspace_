@@ -1,19 +1,25 @@
 /**
  * @file    srv_pwr_ctrl.h
  * @author  maximillian
- * @version V3.0.0
- * @date    2026-09-04
- * @brief   电源控制服务 — 三路默认常开 + MOTOR 独立受控 (E1_MASTER_POWER_CTU)
+ * @version V5.0.0
+ * @date    2026-09-05
+ * @brief   电源控制服务 — 默认 5 步上电流程 + MOTOR 独立急停控制 (E1_MASTER_POWER_CTU)
  *
- * 电源语义（量产板）：
- * - VIN_DC-DC(LM5060) / DC_DC_24V(MP9931N) / AUX(LM5069) 三路**默认常开**：
- *   初始化即直接使能，不随 FSM/急停开关；其 PGOOD 仅作状态监测与上报（见 srv_pwr_det），
- *   不作为 MOTOR 使能的门控，其中任何一路异常不再阻塞/影响 MOTOR 的受控。
- * - MOTOR_POWER(LM5069) **独立受控**：request_on() 使能，emergency_off() 无条件强制
- *   关断（任何状态下都直接拉低 MOTOR_EN，不受三路健康影响）。
+ * ## 上电（程序默认启动，初始化即自动执行，无需请求）
+ *   1. 采样 VIN：满足 36~58V
+ *   2. 检测 VIN_DC-DC ≥ 90%·VIN
+ *   3. 使能 VIN_DC-DC_EN，延迟 100ms
+ *   4. 使能 DC_DC_24V_EN
+ *   5. DC_DC_24V_PGOOD 与 LM5060_PGOOD 均高 → 上电成功(POWERED)
  *
- * 内部为 fsm 库两态机：IDLE(motor 关) ↔ POWERED(motor 开)。不管理 sw_timer，
- * 由 task 层定期调用 srv_pwr_ctrl_step() 推进。
+ * ## 电源轨语义
+ * - AUX：**初始化即直接使能**，不等待其他轨上电成功（直通电源）。
+ * - VIN_DC-DC / 24V：按上述流程门控；上电成功后持续供电。
+ * - **急停/异常不关断 VIN/24V/AUX**（仅 MOTOR 受控）。
+ * - MOTOR_EN 为受控负载轨：由上层（app_fault_policy）按「急停/故障状态」调用
+ *   srv_pwr_ctrl_motor_set() 开/关，急停只控制 MOTOR。
+ *
+ * 电压数据经注入回调读取（task 层聚合 srv_adc），避免 service 同层互引。
  */
 
 #ifndef __SRV_PWR_CTRL_H
@@ -26,42 +32,47 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
+/* Exported types ------------------------------------------------------------*/
+
+/** @brief 电压读取回调（task 层接线，通常读 srv_adc 最新采样） */
+typedef void (*srv_pwr_ctrl_volt_cb_t)(uint32_t* vin_mv, uint32_t* vin_dcdc_mv);
+
+/** @brief 服务配置 */
+typedef struct {
+    srv_pwr_ctrl_volt_cb_t read_voltage; /**< 电压读取回调（必填；缺失时跳过电压门控直接执行后续使能） */
+} srv_pwr_ctrl_config_t;
+
+/** @brief 电源状态快照（一次调用取全部） */
+typedef struct {
+    bool powered_on; /**< 上电流程成功 (POWERED) */
+    bool vin_en;     /**< VIN_DC-DC_EN 已使能 */
+    bool dc24v_en;   /**< DC_DC_24V_EN 已使能 */
+    bool aux_en;     /**< AUX_EN 已使能 */
+    bool motor_en;   /**< MOTOR_EN 已使能 */
+} srv_pwr_ctrl_state_t;
+
 /* Exported functions prototypes ---------------------------------------------*/
 
 /**
- * @brief 初始化电源控制服务
- * @note  内部完成 drv_power 初始化并**立即使能 VIN_DC-DC / DC24V / AUX 三路**，
- *        MOTOR 保持关闭，FSM 进入 IDLE
+ * @brief 初始化并自动启动默认上电流程（drv_power 复位后 FSM 进入 CHECK_VIN）
+ * @param config 配置（read_voltage 由 power_task 注入）
  */
-void srv_pwr_ctrl_init(void);
+void srv_pwr_ctrl_init(const srv_pwr_ctrl_config_t* config);
 
 /**
- * @brief 推进 FSM 状态机一步
- * @param elapsed_ms 距离上次调用经过的毫秒数（当前两态机下仅作参数保留）
- * @note  由 task 层 sw_timer 周期调用
+ * @brief 推进上电 FSM 一步
+ * @param elapsed_ms 距上次调用经过的毫秒数（1ms）
  */
 void srv_pwr_ctrl_step(uint16_t elapsed_ms);
 
 /**
- * @brief 使能 MOTOR（异步，下一拍由 FSM 进入 POWERED 时拉高 MOTOR_EN）
- * @note  不依赖三路常开轨的 PGD 状态
+ * @brief MOTOR_EN 开/关（受控负载轨，由上层故障策略按急停状态驱动）
+ * @note  仅操作 MOTOR；VIN/24V/AUX 常供电源轨不受影响
  */
-void srv_pwr_ctrl_request_on(void);
+void srv_pwr_ctrl_motor_set(bool on);
 
-/**
- * @brief 紧急断电：无条件直接强制 MOTOR_EN=0 并回到 IDLE
- * @note  MOTOR 关断与 FSM 当前状态/三路健康无关；三路常开轨保持使能
- */
-void srv_pwr_ctrl_emergency_off(void);
-
-/** @brief MOTOR 是否已使能（FSM 处于 POWERED） */
-bool srv_pwr_ctrl_is_powered_on(void);
-
-/** @brief 各轨当前使能状态查询（三路常开轨初始化后恒为 true，MOTOR 视 FSM） */
-bool srv_pwr_ctrl_is_vin_enabled(void);
-bool srv_pwr_ctrl_is_dc24v_enabled(void);
-bool srv_pwr_ctrl_is_aux_enabled(void);
-bool srv_pwr_ctrl_is_motor_enabled(void);
+/** @brief 获取电源状态快照（上电完成标志 + 各轨使能标志） */
+srv_pwr_ctrl_state_t srv_pwr_ctrl_get_state(void);
 
 #ifdef __cplusplus
 }

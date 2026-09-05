@@ -37,7 +37,7 @@ bool app_fault_policy_is_tripped(void);
 
 /**
  * @brief 显式复位保护锁存（操作员确认故障排除后调用）
- * @note  仅解除锁存标志，不自动重新上电；上电需另行调用 request_on
+ * @note  仅解除锁存标志；MOTOR 由策略门控在“上电成功且急停未按下”时自动重新使能
  */
 void app_fault_policy_reset(void);
 
