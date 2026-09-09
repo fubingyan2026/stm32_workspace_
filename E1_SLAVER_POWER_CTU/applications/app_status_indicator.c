@@ -36,10 +36,8 @@
 #define APP_IND_EVAL_PERIOD_MS (100U)
 
 /* 状态灯灯效参数 */
-#define APP_IND_FAULT_BLINK_CYCLE_MS (100U) /**< 故障锁存：快闪 */
-#define APP_IND_FAULT_BLINK_WAIT_MS (100U)
-#define APP_IND_BUSY_BLINK_CYCLE_MS (300U) /**< 使能进行中：慢闪 */
-#define APP_IND_BUSY_BLINK_WAIT_MS (300U)
+#define APP_IND_FAULT_BLINK_CYCLE_MS (100U)/**< 关键电源轨故障：慢闪 */ 
+#define APP_IND_BUZY_BLINK_CYCLE_MS (500U) /**< 急停：快闪 */
 
 /* Private types -------------------------------------------------------------*/
 
@@ -48,9 +46,9 @@
  */
 typedef enum {
     APP_IND_LEVEL_IDLE = 0, /**< 空闲：无期望输出 */
-    APP_IND_LEVEL_NORMAL,   /**< 输出正常 */
-    APP_IND_LEVEL_BUSY,     /**< 使能进行中（期望与实态不一致） */
-    APP_IND_LEVEL_FAULT,    /**< 故障锁存 */
+    APP_IND_LEVEL_NORMAL, /**< 输出正常 */
+    APP_IND_LEVEL_BUSY, /**< 使能进行中（期望与实态不一致） */
+    APP_IND_LEVEL_FAULT, /**< 故障锁存 */
     APP_IND_LEVEL_COUNT,
 } app_ind_level_t;
 
@@ -122,9 +120,6 @@ static app_ind_level_t ind_evaluate(void)
     }
 
     const uint8_t desired = srv_pwr_ctrl_get_desired();
-    if (desired == 0U) {
-        return APP_IND_LEVEL_IDLE; /* 空闲 */
-    }
 
     /* 期望全部就绪 → 正常；否则视为使能进行中 */
     const uint8_t on = srv_pwr_ctrl_get_on_outputs();
@@ -142,12 +137,12 @@ static void ind_apply(app_ind_level_t level)
 {
     switch (level) {
     case APP_IND_LEVEL_FAULT:
-        ind_set_blink(s_status_led, APP_IND_FAULT_BLINK_CYCLE_MS, APP_IND_FAULT_BLINK_WAIT_MS);
+        ind_set_blink(s_status_led, APP_IND_FAULT_BLINK_CYCLE_MS, 0);
         ind_set_state(s_status_led, SRV_SIGNAL_STATE_BLINK_CODE);
         break;
 
     case APP_IND_LEVEL_BUSY:
-        ind_set_blink(s_status_led, APP_IND_BUSY_BLINK_CYCLE_MS, APP_IND_BUSY_BLINK_WAIT_MS);
+        ind_set_blink(s_status_led, APP_IND_BUZY_BLINK_CYCLE_MS, 0);
         ind_set_state(s_status_led, SRV_SIGNAL_STATE_BLINK_CODE);
         break;
 
@@ -157,7 +152,7 @@ static void ind_apply(app_ind_level_t level)
 
     case APP_IND_LEVEL_IDLE:
     default:
-        ind_set_state(s_status_led, SRV_SIGNAL_STATE_OFF);
+        ind_set_state(s_status_led, SRV_SIGNAL_STATE_ON);
         break;
     }
 }
@@ -176,6 +171,7 @@ static void ind_set_blink(srv_signal_handle_t* h, uint16_t cycle_ms, uint16_t wa
     }
 
     const srv_signal_cmd_t cmd = {
+        .set_state = SRV_SIGNAL_STATE_BLINK_CODE,
         .blink_cycle_ms = cycle_ms,
         .blink_wait_ms = wait_ms,
         .blink_code_counts = 0, /* 无限循环，直到等级切换 */

@@ -10,12 +10,12 @@
  *
  * 主机查询应答式 485 从站：任务层负责传输搬运，协议帧解析/打包全部由
  * service 层 srv_com_slv（protocol_parser/protocol_packer）完成。
- *  - 每周期：dev_rs485 读字节 → srv_com_slv_rx_feed 喂数据（内部解析并应答）
- *  - srv_com_slv_rx_tick() 驱动解析器空闲超时
- *  - dev_rs485_tx_flush() 排空底层发送队列
- * 控制帧（0x10）→ srv_pwr_ctrl 输出期望 + drv_pwm 补光亮度；
- * 清锁存帧（0x11）→ srv_pwr_ctrl_clear_latch；
- * 升级帧（0x1F）→ srv_boot_ctrl 写共享 metadata upgrade_flag=1 → 复位进 Boot。
+ *  - RX 字节搬运/解析应答/TX 排空在 com_task_service()（主循环每轮迭代）高频执行，
+ *    帧收齐后几乎立即应答，不受定时器周期限制（参考 E1_MASTER_POWER_CTU）
+ *  - 定时器(1ms)仅驱动 parser 空闲超时 + 兜底排空 TX
+ *  - 升级请求（0x06）：先发 ACK，等 TX 排空后写 boot 标志并复位
+ * 控制帧（0x04）→ srv_pwr_ctrl 输出期望 + drv_pwm 补光亮度；
+ * 清锁存帧（0x05）→ srv_pwr_ctrl_clear_latch。
  */
 
 #include "com_task.h"
@@ -50,7 +50,8 @@
 
 /* Private constants ---------------------------------------------------------*/
 
-#define TASK_PERIOD_MS (10U)
+/** @brief 定时器周期：仅用于 parser 空闲超时 tick（RX/TX 已主循环高频服务） */
+#define TASK_PERIOD_MS (1U)
 
 /** @brief 单次从 dev_rs485 读取字节数 */
 #define COM_READ_BUF_SIZE (32U)
@@ -70,6 +71,7 @@ static void com_send_frame(const uint8_t* data, uint32_t len);
 static void com_apply_ctrl(const srv_com_slv_ctrl_t* ctrl);
 static void com_reset_latch(void);
 static void com_upgrade_request(void);
+static void com_exec_upgrade(void);
 
 /* Exported functions --------------------------------------------------------*/
 
@@ -98,6 +100,7 @@ void com_task_init(void)
 
     s_upgrade_pending = false;
 
+    /* 定时器仅驱动 parser 空闲超时 + 兜底 TX 排空（低周期，不阻塞主循环 RX） */
     const sw_timer_config_t timer_cfg = {
         .priority = SW_TIMER_PRIO_NORMAL,
         .callback = com_timer_cb,
@@ -106,15 +109,16 @@ void com_task_init(void)
     sw_timer_init(&s_timer, &timer_cfg);
     sw_timer_start(&s_timer, TASK_PERIOD_MS, 0);
 
-    COM_TASK_LOG_I("RS485 任务初始化完成 (period=%ums)", (unsigned)TASK_PERIOD_MS);
+    COM_TASK_LOG_I("RS485 任务初始化完成 (service 高频 + timer=%ums)",
+        (unsigned)TASK_PERIOD_MS);
 }
 
-/* Private functions ---------------------------------------------------------*/
-
-static void com_timer_cb(void* user_data)
+/**
+ * @brief 主循环高频服务：搬运 RX → 解析应答 → 排空 TX → 执行升级跳转
+ * @note  由 app_main 每轮迭代调用；帧收齐后几乎立即应答
+ */
+void com_task_service(void)
 {
-    (void)user_data;
-
     /* 1. RX：读取字节喂入 srv_com_slv（内部 protocol_parser 解析 + 应答打包） */
     uint8_t buf[COM_READ_BUF_SIZE];
     uint32_t n = dev_rs485_rx_available();
@@ -128,22 +132,28 @@ static void com_timer_cb(void* user_data)
         n -= rd;
     }
 
-    /* 2. 解析器空闲超时 tick */
-    srv_com_slv_rx_tick();
-
-    /* 3. TX：排空底层帧队列 */
+    /* 2. TX：排空底层帧队列 */
     dev_rs485_tx_flush();
 
-    /* 4. 升级请求：等 ACK 帧发完后写升级标志并复位（跳转 Boot 升级模式） */
-    if (s_upgrade_pending && !dev_rs485_is_tx_busy()) {
-        s_upgrade_pending = false;
-        COM_TASK_LOG_I("升级请求：写 boot 标志并复位进入 Bootloader");
-        if (srv_boot_ctrl_request_upgrade()) {
-            drv_system_reset();
-        } else {
-            COM_TASK_LOG_E("升级标志写入失败，本次不复位");
-        }
-    }
+    /* 3. 升级请求：ACK 排空后写升级标志并复位（跳转 Boot 升级模式） */
+    com_exec_upgrade();
+}
+
+/* Private functions ---------------------------------------------------------*/
+
+/**
+ * @brief 周期回调：parser 空闲超时 tick + 兜底排空 TX
+ * @note  RX 搬运/解析/应答由主循环 com_task_service() 高频执行，此处不做
+ */
+static void com_timer_cb(void* user_data)
+{
+    (void)user_data;
+
+    /* 解析器空闲超时 tick */
+    srv_com_slv_rx_tick();
+
+    /* 兜底排空 TX（主循环 service 已每次迭代执行，此处仅保险） */
+    dev_rs485_tx_flush();
 }
 
 /**
@@ -162,7 +172,7 @@ static void com_send_frame(const uint8_t* data, uint32_t len)
 }
 
 /**
- * @brief 主机控制命令应用回调（0x10 输出控制帧）
+ * @brief 主机控制命令应用回调（0x04 输出控制帧）
  * @note  输出期望整帧覆盖 → srv_pwr_ctrl；补光亮度 → TIM4_CH3（PT4115 DIM）
  */
 static void com_apply_ctrl(const srv_com_slv_ctrl_t* ctrl)
@@ -184,7 +194,7 @@ static void com_apply_ctrl(const srv_com_slv_ctrl_t* ctrl)
 }
 
 /**
- * @brief 清除故障锁存回调（0x11 清除锁存命令）
+ * @brief 清除故障锁存回调（0x05 清除锁存命令）
  */
 static void com_reset_latch(void)
 {
@@ -192,10 +202,27 @@ static void com_reset_latch(void)
 }
 
 /**
- * @brief 升级请求回调（0x1F 升级请求）
- * @note  先置标志等待 ACK 发出（见 com_timer_cb 第 4 步），再写 boot 标志并复位
+ * @brief 升级请求回调（0x06 升级请求）
+ * @note  先置标志等待 ACK 排空（见 com_exec_upgrade），再写 boot 标志并复位
  */
 static void com_upgrade_request(void)
 {
     s_upgrade_pending = true;
+}
+
+/**
+ * @brief 执行升级跳转：TX 空闲后写 boot 标志并复位
+ * @note  由 com_task_service 每轮调用，保证 ACK 已发出
+ */
+static void com_exec_upgrade(void)
+{
+    if (s_upgrade_pending && !dev_rs485_is_tx_busy()) {
+        s_upgrade_pending = false;
+        COM_TASK_LOG_I("升级请求：写 boot 标志并复位进入 Bootloader");
+        if (srv_boot_ctrl_request_upgrade()) {
+            drv_system_reset();
+        } else {
+            COM_TASK_LOG_E("升级标志写入失败，本次不复位");
+        }
+    }
 }

@@ -31,7 +31,7 @@
 #define SRV_COM_SLV_LOG_E(...) LOG_E("srv_com_slv", __VA_ARGS__)
 #define SRV_COM_SLV_LOG_W(...) LOG_W("srv_com_slv", __VA_ARGS__)
 #define SRV_COM_SLV_LOG_I(...) LOG_I("srv_com_slv", __VA_ARGS__)
-#define SRV_COM_SLV_LOG_D(...) LOG_D("srv_com_slv", __VA_ARGS__)
+#define SRV_COM_SLV_LOG_D(...) ((void)0) // LOG_D("srv_com_slv", __VA_ARGS__)
 #else
 #define SRV_COM_SLV_LOG_E(...) ((void)0)
 #define SRV_COM_SLV_LOG_W(...) ((void)0)
