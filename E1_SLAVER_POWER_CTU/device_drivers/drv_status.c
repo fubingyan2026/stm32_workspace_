@@ -47,7 +47,8 @@ typedef struct {
  * @brief 状态信号引脚配置表
  *
  * 引脚宏定义来自 Core/Inc/main.h，每路对应 CubeMX 已配置的 GPIO 输入。
- * PGOOD 类信号高电平表示正常（active_low=false）。
+ * 极性实测：EXT_PCOOG_24V 高=好（active_low=false）；
+ *          ISO_PGOOD_12V 经光耦反相为低=好（active_low=true）。
  */
 static const drv_status_pin_t s_pins[DRV_STATUS_NUM] = {
     [DRV_STATUS_24V_PGD]    = { EXT_PCOOG_24V_GPIO_Port, EXT_PCOOG_24V_Pin, false, "24V_PGD" },

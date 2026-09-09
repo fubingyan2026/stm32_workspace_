@@ -1,25 +1,32 @@
 /**
  * @file    srv_com_mst.h
  * @author  maximillian
- * @version V2.0.0
- * @date    2026-09-03
+ * @version V5.0.0
+ * @date    2026-09-09
  * @brief   RS485 主机协议服务（E1_MASTER_POWER_CTU）— 帧解析/打包 + 命令处理
  * @attention
  *
  * 485 为主机查询应答式：本板作为从站，不自主上报，仅应答主机。
- * 帧格式与 G0 上位机协议一致（参考 srv_uart_rx_cmd/tx_cmd）：
+ * 两兄弟板（E1_MASTER/E1_SLAVER）**共用同一帧头/信封**（避免帧头差异导致解析失败），
+ * 设备区分放在 **payload 首字节的设备 ID** 上：
  *   [ 'z' ][cmd][data_len][payload...][CRC8][ '\n' ]，总长 = data_len + 5
  *   - 帧头 'z'(0x7A) 1B | cmd 1B | data_len 1B | payload data_len B |
  *     CRC8 1B（get_CRC8_check_sum 初值 0xFF）| 帧尾 '\n'(0x0A) 1B
+ *   - 下行请求 payload[0] = 目标设备 ID（0x01=MASTER / 0x02=SLAVER）；
+ *     ID 不匹配本板的帧直接忽略不响应（定向，避免两板同时应答撞线）
+ *   - 上行应答 payload[0] = 源设备 ID（本板 ID），其后为数据/错误码
  *
  * 解析使用 m_middlewares protocol_parser 库、打包使用 protocol_packer 库。
- * 命令码与负载布局见 docs/protocol_master_485.md。
+ * 命令码与 E1_SLAVER 统一（0x01 状态 / 0x02 电压 / 0x03 温度 / 0x04 控制 /
+ * 0x05 清除故障锁存 / 0x06 升级预留），两板仅数据段不同，
+ * 详见 docs/protocol_master_485.md。
  *
  * ## 用法
  * @code
  *   srv_com_mst_config_t cfg = {
  *       .read_data = app_status_report_fill,   // 数据读取回调
  *       .ctrl      = my_ctrl_cb,               // 控制命令应用回调
+ *       .reset_latch = my_reset_cb,            // 清除故障锁存回调（可选）
  *       .send_frame= my_send_cb,               // 原始帧发送回调（task 层 → dev_rs485）
  *   };
  *   srv_com_mst_init(&cfg);
@@ -46,7 +53,10 @@ extern "C" {
 #define SRV_COM_MST_CMD_REPLY_FLAG (0x80U) /**< 应答帧命令标志位 */
 #define SRV_COM_MST_CMD_ERR (0x7FU) /**< 错误应答命令 */
 
-/** @brief 最大负载长度（状态 2 / 温度 6 / 电压 4 / ACK 1） */
+/** @brief 本板 485 设备 ID（E1_MASTER，payload 首字节标识/定向，见 docs） */
+#define SRV_COM_MST_DEV_ID (0x01U)
+
+/** @brief 最大负载长度（含首字节设备 ID 后：状态 3 / 电压 5 / 温度 7 / ACK 2） */
 #define SRV_COM_MST_MAX_PAYLOAD_LEN (16U)
 
 /** @brief 最大帧长 = MAX_PAYLOAD + 5（z/cmd/len + payload + crc + \n） */
@@ -60,13 +70,14 @@ typedef enum {
     SRV_COM_MST_ERR_BAD_LEN = 0x03, /**< 帧长度与命令不匹配 */
 } srv_com_mst_err_code_t;
 
-/** @brief 主机查询/控制命令码（下行） */
+/** @brief 主机查询/控制命令码（下行，与 E1_SLAVER 统一，数据段按板不同） */
 typedef enum {
     SRV_COM_MST_CMD_READ_STATUS = 0x01, /**< 读系统状态（2B 位域） */
-    SRV_COM_MST_CMD_READ_TEMP = 0x02, /**< 读温度（6B：NTC1/NTC2/MCU ×100℃） */
-    SRV_COM_MST_CMD_READ_VOLT = 0x03, /**< 读电压（4B：VIN/VIN_DC-DC mV） */
-    SRV_COM_MST_CMD_CTRL = 0x10, /**< 控制（蜂鸣器 + 预留） */
-    SRV_COM_MST_CMD_UPGRADE = 0x11, /**< 升级请求（预留，本阶段应答不支持） */
+    SRV_COM_MST_CMD_READ_VOLT = 0x02, /**< 读电压（4B：VIN/VIN_DC-DC mV） */
+    SRV_COM_MST_CMD_READ_TEMP = 0x03, /**< 读温度（6B：NTC1/NTC2/MCU ×100℃） */
+    SRV_COM_MST_CMD_CTRL = 0x04, /**< 控制（蜂鸣器占空比） */
+    SRV_COM_MST_CMD_RESET_LATCH = 0x05, /**< 清除故障锁存（1B magic=0x01） */
+    SRV_COM_MST_CMD_UPGRADE = 0x06, /**< 升级请求（预留，本阶段应答不支持） */
 } srv_com_mst_cmd_t;
 
 /* Exported types ------------------------------------------------------------*/
@@ -99,7 +110,7 @@ typedef union {
 } srv_com_mst_status_frame_t;
 
 /**
- * @brief 主机控制指令（0x10 控制帧，长度 1）
+ * @brief 主机控制指令（0x04 控制帧，长度 1）
  */
 typedef struct {
     uint8_t buzzer_duty; /**< 蜂鸣器导通占空比 0-50% (0=静音, 50=最响；驱动会截断超限) */
@@ -123,6 +134,9 @@ typedef void (*srv_com_mst_read_cb_t)(srv_com_mst_report_t* report);
 /** @brief 控制命令应用回调（task 层实现，如蜂鸣器占空比 → drv_buzzer） */
 typedef void (*srv_com_mst_ctrl_cb_t)(const srv_com_mst_ctrl_t* ctrl);
 
+/** @brief 清除故障锁存回调（task 层实现 → app_fault_policy_reset） */
+typedef void (*srv_com_mst_reset_cb_t)(void);
+
 /** @brief 应答帧发送回调（task 层实现 → dev_rs485_send） */
 typedef void (*srv_com_mst_send_cb_t)(const uint8_t* data, uint32_t len);
 
@@ -130,6 +144,7 @@ typedef void (*srv_com_mst_send_cb_t)(const uint8_t* data, uint32_t len);
 typedef struct {
     srv_com_mst_read_cb_t read_data; /**< 数据读取回调（必填） */
     srv_com_mst_ctrl_cb_t ctrl; /**< 控制命令回调（必填） */
+    srv_com_mst_reset_cb_t reset_latch; /**< 清除故障锁存回调（可选，缺省应答不支持） */
     srv_com_mst_send_cb_t send_frame; /**< 原始帧发送回调（必填） */
 } srv_com_mst_config_t;
 

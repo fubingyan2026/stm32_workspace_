@@ -19,7 +19,7 @@
 /* 模块日志开关 ----------------------------------------------------------------*/
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
-#define DRV_ADC_LOG_ENABLE 1
+#define DRV_ADC_LOG_ENABLE 0
 
 #if DRV_ADC_LOG_ENABLE
 #define DRV_ADC_LOG_E(...) LOG_E("drv_adc", __VA_ARGS__)
@@ -165,6 +165,29 @@ bool drv_adc_is_busy(drv_adc_inst_t inst)
         return false;
     }
     return s_ctx[inst].busy;
+}
+
+drv_adc_error_t drv_adc_recover(drv_adc_inst_t inst)
+{
+    if (inst >= DRV_ADC_INST_NUM) {
+        return DRV_ADC_ERROR_NULL_PTR;
+    }
+    if (!s_ctx[inst].initialized) {
+        return DRV_ADC_ERROR_UNINITIALIZED;
+    }
+
+    drv_adc_ctx_t* ctx = &s_ctx[inst];
+
+    if (ctx->busy || ctx->hadc->State != HAL_ADC_STATE_READY) {
+        if (HAL_ADC_Stop_DMA(ctx->hadc) != HAL_OK) {
+            /* 状态已异常时 Stop 失败不致命，直接复位内部标志继续 */
+        }
+    }
+
+    ctx->busy = false;
+    DRV_ADC_LOG_I("ADC%u 链路已恢复 (busy/状态复位)", (unsigned)inst + 1U);
+
+    return DRV_ADC_OK;
 }
 
 /* --- 读取（通道路由） --- */

@@ -66,8 +66,10 @@ int app_main(void)
     /* 电源管理（顺序上电 FSM + 故障保护策略） */
     power_task_init();
 
-    /* 主循环：所有周期性任务均由 sw_timer 驱动 */
+    /* 主循环：所有周期性任务均由 sw_timer 驱动；485 应答在每轮循环内高频服务，
+       不受定时器 10ms 周期限制 */
     for (;;) {
+        com_task_service();
         sw_timer_tick(millis());
         sw_timer_task();
     }

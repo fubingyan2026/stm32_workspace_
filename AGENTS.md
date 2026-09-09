@@ -9,6 +9,7 @@ STM32 固件 monorepo 工作区（git 根目录）：多个独立的 CubeMX 工�
   - `G0_hand_ctrl_sample/` — G0 遥操作手套工程（STM32F103xB/Cortex-M3），已适配分层架构（device_drivers/tasks/service + public_layer），CAN 协议为骨架占位；`log_task` 为工程内本地副本（不复用 public_layer 版本）；`host/g0_host.py` 为串口上位机（PySide6 + pyserial，协议见 `docs/G0_Hand 串口通信协议规范.md`，帧格式 `z-cmd-len-payload-crc-\n`，CRC8 多项式 0x31 初值 0xFF）。
   - `stm32_g0b1_boot/`、`stm32_g474_boot/` — 引导程序。`stm32_g474_boot/MODULE_CODING_GUIDE.md` 是全局 C 模块编码规范。
   - `e1_dual_battery_hot_swappable/` — 双电池热插拔（git 未跟踪的新工程）。
+  - `ctu_host/` — E1_MASTER_POWER_CTU 与 E1_SLAVER_POWER_CTU 合并后的 RS485 双板调试上位机（PySide6 + pyserial，命令码统一、数据段按板不同，`python ctu_host.py` 运行）。
 - `public_layer/` — **共享代码原件**（`device_drivers/`、`m_middlewares/`、`service/`、`task/`）。各工程 CMake 通过 `../public_layer/` 直接引用，本目录没有本地副本。
 
 ## 构建（每个工程独立，Windows）

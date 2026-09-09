@@ -40,11 +40,15 @@
 #define BOOT_PARTITION_MAX (BOOT_PARTITION_B)
 #endif
 
-/** Metadata 区相对基址偏移（跳过 Boot + App 槽位区域） */
+/** Metadata 区相对基址偏移（跳过 Boot + App 槽位区域）。
+ * 板级可经编译定义 BOOT_META_OFFSET 覆写（如 F103 RCT 把 meta 置于
+ * Boot+2*APP 之后的保留区顶部 0x0803E000）。 */
+#ifndef BOOT_META_OFFSET
 #ifdef BOOT_SINGLE_PARTITION
 #define BOOT_META_OFFSET (BOOT_FLASH_BOOT_SIZE + BOOT_FLASH_APP_SIZE)
 #else
 #define BOOT_META_OFFSET (BOOT_FLASH_BOOT_SIZE + BOOT_FLASH_APP_SIZE * 2U)
+#endif
 #endif
 
 /** Metadata 扇区大小（板级可覆写）。

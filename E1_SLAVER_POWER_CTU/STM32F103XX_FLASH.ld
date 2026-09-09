@@ -56,7 +56,9 @@ ENTRY(Reset_Handler)
 MEMORY
 {
 RAM (xrw)      : ORIGIN = 0x20000000, LENGTH = 48K
-FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 256K
+/* Boot 适配：Bootloader 位于 0x08000000(32K)，App 运行槽 A 链接于此。
+   布局见 ../E1_CTU_BOOT/docs/boot_485_ymodem.md（AppA 96K / AppB 96K / Meta 8K） */
+FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 96K
 }
 
 /* Highest address of the user mode stack */

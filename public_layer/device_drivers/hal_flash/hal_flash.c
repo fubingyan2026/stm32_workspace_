@@ -11,7 +11,9 @@
 #include "main.h"
 /* ====== 芯片驱动头文件 (编译时选择) ========================================*/
 
-#ifdef HAL_FLASH_CHIP_STM32F4
+#ifdef HAL_FLASH_CHIP_STM32F1
+#include "drv_stm32f1_flash.h"
+#elif defined(HAL_FLASH_CHIP_STM32F4)
 #include "drv_stm32f4_flash.h"
 #elif defined(HAL_FLASH_CHIP_STM32G4)
 #include "drv_stm32g4_flash.h"
@@ -25,7 +27,10 @@
 
 /* ====== 单例设备实例 (由芯片驱动定义) ========================================*/
 
-#ifdef HAL_FLASH_CHIP_STM32F4
+#ifdef HAL_FLASH_CHIP_STM32F1
+extern hal_flash_dev_t f1_dev;
+#define FLASH_DEV f1_dev
+#elif defined(HAL_FLASH_CHIP_STM32F4)
 extern hal_flash_dev_t f4_dev;
 #define FLASH_DEV f4_dev
 #elif defined(HAL_FLASH_CHIP_STM32G4)

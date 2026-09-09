@@ -33,10 +33,13 @@ enable_language(C ASM)
 
 # ==============================================================================
 # E1_SLAVER_POWER_CTU 分层固件（STM32F103RCT7 副电源管理模块）
-#   - 单 App 镜像，链接地址 0x08000000（无 bootloader，485 升级预留）
+#   - Boot 适配：App 链接 AppA 分区 0x08008000（96K），Bootloader 0x08000000(32K)
+#     485 升级：0x1F 命令 → 写共享 metadata(0x0803E000) upgrade_flag=1 → 复位进 Boot
+#     布局/契约见 ../E1_CTU_BOOT/docs/boot_485_ymodem.md
 #   - 通信：RS485 主机查询应答式；日志：USART1
 #   - 共享层：../public_layer/m_middlewares（sw_timer/msg_fifo/protocol_parser 等）
 #             ../public_layer/service/srv_signal（状态灯效引擎）
+#             ../public_layer/service/boot + hal_flash（升级跳转的 metadata 读写）
 #   - log_task 为工程内本地副本（UART 输出，见 tasks/log_task.c）
 # ==============================================================================
 
@@ -69,6 +72,11 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${APP}
     # 共享服务（public_layer）：状态灯效引擎
     ${CMAKE_SOURCE_DIR}/../public_layer/service/srv_signal.c
+    # 共享 boot 栈（metadata/升级跳转；ring_storage/crc 已在 m_middlewares 库内）
+    ${CMAKE_SOURCE_DIR}/../public_layer/service/boot/boot_flash.c
+    ${CMAKE_SOURCE_DIR}/../public_layer/device_drivers/hal_flash/hal_flash.c
+    ${CMAKE_SOURCE_DIR}/../public_layer/device_drivers/hal_flash/drv_stm32f1_flash.c
+    ${CMAKE_SOURCE_DIR}/../public_layer/device_drivers/hal_flash/ring_storage_port.c
 )
 
 # Add include paths
@@ -79,6 +87,8 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     service
     applications
     ../public_layer/service
+    ../public_layer/service/boot
+    ../public_layer/device_drivers/hal_flash
 )
 
 # Add project symbols (macros)
@@ -87,6 +97,17 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # mpaland_printf: STM32F103 无硬件 FPU，禁用浮点/指数格式化
     PRINTF_DISABLE_SUPPORT_FLOAT
     PRINTF_DISABLE_SUPPORT_EXPONENTIAL
+    # Flash 抽象层选型（升级 metadata 读写）
+    HAL_FLASH_CHIP_STM32F1
+    # Boot 适配：向量表偏移（main() 在 HAL_Init 前执行 SCB->VTOR=FLASH_BASE|VECT_TAB_OFFSET；
+    #            App 链接于 A 分区 0x08008000，布局见 ../E1_CTU_BOOT/docs/boot_485_ymodem.md）
+    VECT_TAB_OFFSET=0x00000000U
+    # 分区布局（与 E1_CTU_BOOT 一致，见 ../E1_CTU_BOOT/docs/boot_485_ymodem.md）
+    BOOT_FLASH_BOOT_SIZE=0x8000U
+    BOOT_FLASH_APP_SIZE=0x18000U
+    BOOT_FLASH_META_SIZE=0x2000U
+    BOOT_META_OFFSET=0x3E000U
+    BOOT_META_SECTOR_SIZE=0x800U
 )
 
 # Remove wrong libob.a library dependency when using cpp files

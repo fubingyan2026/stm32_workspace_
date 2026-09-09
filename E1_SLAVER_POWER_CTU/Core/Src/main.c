@@ -69,7 +69,9 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+  /* Boot 适配：App 运行于 A 分区 0x08008000，须在 HAL_Init（使能 SysTick）前
+     重定位向量表；VECT_TAB_OFFSET 由 CMakeLists.txt 定义 */
+  SCB->VTOR = FLASH_BASE | VECT_TAB_OFFSET;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/

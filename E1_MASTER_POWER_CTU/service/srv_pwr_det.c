@@ -19,7 +19,7 @@
 /* 模块日志开关 ----------------------------------------------------------------*/
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
-#define SRV_PWR_DET_LOG_ENABLE 1
+#define SRV_PWR_DET_LOG_ENABLE 0
 
 #if SRV_PWR_DET_LOG_ENABLE
 #define SRV_PWR_DET_LOG_E(...) LOG_E("srv_pwr_det", __VA_ARGS__)
@@ -129,7 +129,7 @@ void srv_pwr_det_read(srv_pwr_det_status_t* status)
 
         switch (utils_edge_detect(&s_fault_edge[i], now_set)) {
         case UTILS_EDGE_RISING:
-            SRV_PWR_DET_LOG_E("数字侧急停输入断言: %s (是否形成有效急停还取决于冗余侧)",
+            SRV_PWR_DET_LOG_W("数字侧急停输入断言: %s (是否形成有效急停还取决于冗余侧)",
                 drv_status_name(sig));
             break;
         case UTILS_EDGE_FALLING:

@@ -59,7 +59,8 @@ typedef struct {
     uint8_t idx; /**< 配置表下标（对应 drv rail / 协议位） */
     fsm_t fsm; /**< 本路独立 fsm 实例 */
 
-    uint32_t enable_elapsed_ms; /**< ENABLING 起累计 (ms) */
+    uint32_t settle_elapsed_ms; /**< ENABLING 内 settle 窗口累计 (ms) */
+    uint32_t enable_elapsed_ms; /**< settle 结束后起累计超时 (ms) */
     uint16_t stable_ms; /**< 好状态连续稳定计数 (ms) */
     uint16_t loss_ms; /**< ON 时好状态连续丢失计数 (ms) */
 } srv_pwr_rail_ctx_t;
@@ -100,7 +101,7 @@ static const char* s_rail_state_names[SRV_PWR_RAIL_STATE_COUNT] = {
     "LATCHED",
 };
 
-static uint8_t s_desired_mask; /**< 期望输出掩码（来自 0x10 控制帧） */
+static uint8_t s_desired_mask; /**< 期望输出掩码（来自 0x04 控制帧） */
 static uint8_t s_latch_mask; /**< 故障锁存掩码 */
 static bool s_initialized;
 static srv_pwr_voltage_cb_t s_voltage_cb;
@@ -211,7 +212,7 @@ void srv_pwr_ctrl_request_outputs(uint8_t mask)
         const bool want_off = (s_desired_mask & bit) == 0;
 
         if (want_off) {
-            /* 人工关断确认：顺带清该路锁存（避免主机不依赖 0x11） */
+            /* 人工关断确认：顺带清该路锁存（避免主机不依赖 0x05） */
             if ((s_latch_mask & bit) != 0) {
                 s_latch_mask &= (uint8_t)~bit;
                 SRV_PWR_CTRL_LOG_I("输出 %s 人工关断，清除故障锁存", cfg->name);
@@ -319,7 +320,7 @@ static fsm_state_t rail_state_off(fsm_t* ctx)
     return SRV_PWR_RAIL_STATE_OFF;
 }
 
-/** @brief ENABLING：好状态去抖 → ON；前提瞬失保持等待；超时 → 故障锁存 */
+/** @brief ENABLING：settle 窗口 → 好状态去抖 → ON；前提瞬失保持等待；超时 → 故障锁存 */
 static fsm_state_t rail_state_enabling(fsm_t* ctx)
 {
     srv_pwr_rail_ctx_t* rail = (srv_pwr_rail_ctx_t*)fsm_user_data(ctx);
@@ -329,6 +330,15 @@ static fsm_state_t rail_state_enabling(fsm_t* ctx)
     if ((s_desired_mask & bit) == 0 || (s_latch_mask & bit) != 0) {
         rail_turn_off(rail);
         return SRV_PWR_RAIL_STATE_OFF;
+    }
+
+    /* 使能稳定窗口：使能后头 N ms 忽略 PGOOD 电平（启动建立暂态），
+     * 不计稳定、不计超时，窗口结束才进入正常判定 */
+    if (rail->settle_elapsed_ms < SRV_PWR_EN_SETTLE_MS) {
+        rail->settle_elapsed_ms += s_step.elapsed_ms;
+        rail->stable_ms = 0;
+        rail->enable_elapsed_ms = 0;
+        return SRV_PWR_RAIL_STATE_ENABLING;
     }
 
     if (!rail_precondition_ok(rail->idx)) {
@@ -431,6 +441,7 @@ static bool rail_ready_ok(uint32_t idx)
 
 static void rail_reset_counters(srv_pwr_rail_ctx_t* rail)
 {
+    rail->settle_elapsed_ms = 0;
     rail->enable_elapsed_ms = 0;
     rail->stable_ms = 0;
     rail->loss_ms = 0;

@@ -11,10 +11,12 @@
 
 #include "drv_adc.h"
 #include "drv_cd4051b.h"
+#include "drv_status.h"
 #include "drv_systick.h"
 #include "filter.h"
 #include "log.h"
 #include "msg_fifo.h"
+#include "utils_math.h"
 
 #include <math.h>
 #include <string.h>
@@ -28,7 +30,7 @@
 #define SRV_ADC_LOG_E(...) LOG_E("srv_adc", __VA_ARGS__)
 #define SRV_ADC_LOG_W(...) LOG_W("srv_adc", __VA_ARGS__)
 #define SRV_ADC_LOG_I(...) LOG_I("srv_adc", __VA_ARGS__)
-#define SRV_ADC_LOG_D(...) LOG_D("srv_adc", __VA_ARGS__)
+#define SRV_ADC_LOG_D(...) ((void)0)//LOG_D("srv_adc", __VA_ARGS__)
 #else
 #define SRV_ADC_LOG_E(...) ((void)0)
 #define SRV_ADC_LOG_W(...) ((void)0)
@@ -53,7 +55,10 @@
 #define ADC_FILTER_CUTOFF_HZ (100U)
 
 #define ADC_MAX (4095U)
-#define ADC_SAMPLE_RATE_HZ (1000U) /**< 1000Hz (1ms period) */
+#define ADC_SAMPLE_RATE_HZ (500U) /**< 500Hz (2ms period) */
+
+/** @brief ADC 无采样快照看门狗：连续无快照超过该时长即复位 DMA 链路 (ms) */
+#define SRV_ADC_NO_SNAPSHOT_RESET_MS (100U)
 
 /** @brief 12-bit ADC 满量程原始值 */
 #define SRV_ADC_RAW_MAX (4095U)
@@ -96,11 +101,15 @@
 
 /** @brief E-STOP 冗余故障去抖时间 (ms)：单路 mux 轮转下冗余节点不同时刷新，
  *        急停切换瞬间偏差会扫过中间区间约一个轮转周期(≈80ms)，去抖需覆盖之 */
-#define SRV_ADC_ESTOP_FAULT_DEBOUNCE_MS (500U)
+#define SRV_ADC_ESTOP_FAULT_DEBOUNCE_MS (1000U)
 
-/** @brief E-STOP 冗余故障去抖帧数（step 以 100Hz 周期运行，10ms/帧） */
+/** @brief E-STOP 冗余故障去抖帧数（step 以 100Hz 周期运行，2ms/帧） */
 #define SRV_ADC_ESTOP_FAULT_DEBOUNCE_FRAMES \
     ((SRV_ADC_ESTOP_FAULT_DEBOUNCE_MS * ADC_SAMPLE_RATE_HZ) / 1000U)
+
+/** @brief 急停动作抑制窗口 (ms)：数字侧按下/释放边沿后窗口内跳过冗余异常诊断
+ *         （mux 轮询扫描/通道切换延时产生中间区读数属正常，不判线缆异常） */
+#define SRV_ADC_ESTOP_ANOM_SUPPRESS_MS (500U)
 
 /* Private types -------------------------------------------------------------*/
 
@@ -135,9 +144,22 @@ static uint16_t s_ts_cal2;
 /** @brief 服务初始化完成标志 */
 static bool s_initialized;
 
-/** @brief 当前选通的 CD4051B 通道 (Y0~Y7)：trigger 按此选通采样，ISR 读入快照标签，
- *        在本周期 step 末推进到下一通道（单一变量贯穿 trigger→ISR→step） */
-static volatile uint8_t s_mux_ch;
+/** @brief 无采样快照看门狗计数 (ms)，连续无快照超过阈值自动复位 ADC 链路 */
+static uint32_t s_no_snapshot_ms;
+
+/**
+ * @brief 当前已选通的 CD4051B 通道 (Y0~Y7)：在上一周期 srv_adc_step 末预选（GPIO 置好），
+ *        到本周期 trigger 启动转换之间已有整整一个周期稳定时间。
+ *        本周期 step 末再预选下一通道（无阻塞，不需要 delay_us）。
+ */
+static uint8_t s_mux_gpio;
+
+/**
+ * @brief 本次转换对应的 CD4051B 通道（trigger 写入、ISR 快照标签）。
+ *        与 s_mux_gpio 分离：step 末预选下一通道不影响本帧标签，避免 ISR 竞态。
+ */
+static volatile uint8_t s_mux_sampling;
+
 /** @brief 各 CD4051B 通道最近一次采样值（轮转更新，跨 step 保留旧值） */
 static uint16_t s_mux_raw[SRV_ADC_MUX_CH_NUM];
 /** @brief 各通道是否已至少采样一次（bitN=1 → YN 已就绪） */
@@ -145,6 +167,10 @@ static uint8_t s_mux_ready_mask;
 
 /** @brief E-STOP 冗余故障去抖计数（每回路一帧计数，达 DEBOUNCE_FRAMES 触发一次告警后清零） */
 static uint16_t s_estop_redund_fault_cnt[SRV_ADC_ESTOP_NUM];
+
+/** @brief 急停数字侧边沿检测 + 动作时间戳（供异常诊断抑制使用） */
+static utils_edge_det_t s_estop_gpio_edge;
+static uint32_t s_estop_gpio_change_ms;
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -180,12 +206,14 @@ void srv_adc_init(void)
             (unsigned)s_ts_cal1, (unsigned)s_ts_cal2);
     }
 
-    /* CD4051B 多路选择器：单通道变量轮转，见 s_mux_ch 说明 */
+    /* CD4051B 多路选择器：默认选通 Y0；GPIO 预选在本周期 step 末推进（无阻塞） */
     drv_cd4051b_init();
-    s_mux_ch = 0;
+    s_mux_gpio = 0;
+    s_mux_sampling = 0;
     memset(s_mux_raw, 0, sizeof(s_mux_raw));
     s_mux_ready_mask = 0;
     memset(s_estop_redund_fault_cnt, 0, sizeof(s_estop_redund_fault_cnt));
+    s_no_snapshot_ms = 0;
 
     s_initialized = true;
 
@@ -197,8 +225,9 @@ void srv_adc_init(void)
 
 void srv_adc_trigger(void)
 {
-    /* 选通当前通道并启动 DMA；通道推进在本周期 srv_adc_step 末完成 */
-    (void)drv_cd4051b_select(s_mux_ch);
+    /* 本周期要采样的通道由上一周期 step 末预选完成（GPIO 已置好约一个采样周期），
+       此处仅记录本次转换的通道标签并启动 DMA，不做切换、不阻塞。 */
+    s_mux_sampling = s_mux_gpio;
     drv_adc_trigger_all();
 }
 
@@ -211,24 +240,40 @@ void srv_adc_step(void)
         got = true;
     }
     if (!got) {
-        return; /* 尚无新快照（首拍），等待下一周期 */
+        /* 看门狗：连续无快照说明 ADC DMA 完成回调丢失/busy 卡死，
+           超时后强制复位 ADC 链路，避免 485 高频查询后 ADC 永久停采 */
+        s_no_snapshot_ms += 2U; /* 本周期约 2ms */
+        if (s_no_snapshot_ms >= SRV_ADC_NO_SNAPSHOT_RESET_MS) {
+            s_no_snapshot_ms = 0;
+            for (uint32_t i = 0; i < DRV_ADC_INST_NUM; i++) {
+                (void)drv_adc_recover((drv_adc_inst_t)i);
+            }
+            SRV_ADC_LOG_W("ADC 连续 %ums 无采样快照，已复位 DMA 链路",
+                (unsigned)SRV_ADC_NO_SNAPSHOT_RESET_MS);
+        }
+        return;
     }
+    s_no_snapshot_ms = 0;
 
     srv_adc_data_t s;
     memset(&s, 0, sizeof(s));
     s.timestamp_ms = raw.timestamp_ms;
 
     /* ── CD4051B 多路采样：仅更新本次快照对应的一路（用未滤波原始值，
-     *    避免 PT1 滤波把各通道混叠），并在本周期末推进到下一通道 ── */
+     *    避免 PT1 滤波把各通道混叠）── */
     if (raw.mux_ch < SRV_ADC_MUX_CH_NUM) {
         s_mux_raw[raw.mux_ch] = raw.raw[DRV_ADC_CH_CD4051B];
         s_mux_ready_mask |= (uint8_t)(1U << raw.mux_ch);
-
-        s_mux_ch = (uint8_t)(raw.mux_ch + 1U);
-        if (s_mux_ch >= SRV_ADC_MUX_CH_NUM) {
-            s_mux_ch = 0;
-        }
     }
+
+    /* 本次转换已结束（ISR 已入队该帧），此刻预选下一通道：
+       GPIO 于此处切换后，到下周期 trigger 的 Rank5(PC4) 采样之间隔整整一个采样周期，
+       无阻塞、无需 delay_us，硬件有充足稳定时间。 */
+    s_mux_gpio = (uint8_t)(s_mux_gpio + 1U);
+    if (s_mux_gpio >= SRV_ADC_MUX_CH_NUM) {
+        s_mux_gpio = 0;
+    }
+    (void)drv_cd4051b_select(s_mux_gpio);
 
     /* E-STOP 双通道冗余状态巡检（仅闭环上每拍运行，日志受限频） */
     estop_redundancy_check();
@@ -294,7 +339,7 @@ static void adc_sample_cb(drv_adc_inst_t inst)
     /* DMA 中断上下文：只做原始值快照，不做任何换算/打印。 */
     srv_adc_raw_t raw;
     raw.timestamp_ms = millis();
-    raw.mux_ch = s_mux_ch; /* 快照当前选通的 CD4051B 通道 */
+    raw.mux_ch = s_mux_sampling; /* 本次转换对应的 CD4051B 通道（trigger 写入） */
 
     for (uint32_t i = 0; i < DRV_ADC_CH_MAX; i++) {
         raw.raw[i] = (uint16_t)drv_adc_read_raw((drv_adc_channel_t)i);
@@ -353,6 +398,22 @@ static void estop_redundancy_check(void)
 {
     if (!srv_adc_estop_valid()) {
         return; /* 首轮轮转未完成，不做诊断 */
+    }
+
+    /* 急停动作抑制：数字侧按下/释放边沿 → 记录时刻；
+       按下期间或边沿后 SUPPRESS 窗口内，冗余中间态偏差属轮询切换正常现象，
+       跳过诊断并清计数，避免松开/按下过程误报。 */
+    const bool estop_digital = drv_status_read(DRV_STATUS_E_STOP_ON);
+    const uint32_t now_ms = millis();
+    if (utils_edge_detect(&s_estop_gpio_edge, estop_digital) != UTILS_EDGE_NONE) {
+        s_estop_gpio_change_ms = now_ms;
+    }
+    if (estop_digital
+        || (uint32_t)(now_ms - s_estop_gpio_change_ms) < SRV_ADC_ESTOP_ANOM_SUPPRESS_MS) {
+        for (uint8_t i = 0; i < SRV_ADC_ESTOP_NUM; i++) {
+            s_estop_redund_fault_cnt[i] = 0;
+        }
+        return;
     }
 
     for (uint8_t i = 0; i < SRV_ADC_ESTOP_NUM; i++) {

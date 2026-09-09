@@ -20,6 +20,11 @@ extern "C" {
 
 void com_task_init(void);
 
+/**
+ * @brief 主循环高频服务（RX 搬运/解析应答/TX 排空），由 app_main 每轮迭代调用
+ */
+void com_task_service(void);
+
 #ifdef __cplusplus
 }
 #endif

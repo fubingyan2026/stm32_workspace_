@@ -198,9 +198,26 @@ static void signal_fsm_on_entry(fsm_t* ctx, fsm_state_t state)
 static void signal_process_cmds(srv_signal_handle_t* handle)
 {
     srv_signal_cmd_t cmd;
+    bool left_blink = false; /* 本趟已切出 BLINK：其后残留的旧闪烁更新命令一律作废 */
+
     while (msg_fifo_pop(&handle->cmd_fifo, &cmd)) {
+        /* 已被更新的非闪烁意图取代的旧 BLINK 更新（可能因 blink 回推重试排到
+           呼吸/常亮命令之后执行），丢弃以避免“切回呼吸又被旧闪烁拉回 BLINK” */
+        if (cmd.set_state == SRV_SIGNAL_STATE_BLINK_CODE && left_blink) {
+            continue;
+        }
+
         if (cmd.set_state != SRV_SIGNAL_STATE_NONE) {
             fsm_goto(&handle->fsm, cmd.set_state);
+
+            if (cmd.set_state != SRV_SIGNAL_STATE_BLINK_CODE) {
+                /* 切出闪烁：清残留待更新标记与闪烁状态，防止旧命令复活闪烁 */
+                left_blink = true;
+                handle->pending_blink_update = false;
+                handle->current_blink_code_counts = 0;
+                handle->blink_code_phase = SRV_SIGNAL_BLINK_PHASE_INTERVAL;
+                handle->blink_sw_on = false;
+            }
         }
 
         if (cmd.set_state == SRV_SIGNAL_STATE_BLINK_CODE) {

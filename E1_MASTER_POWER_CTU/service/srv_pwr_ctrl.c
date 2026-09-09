@@ -9,6 +9,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "srv_pwr_ctrl.h"
 
+#include "drv_buzzer.h"
 #include "drv_power.h"
 #include "drv_status.h"
 #include "drv_systick.h"
@@ -62,6 +63,14 @@ typedef struct {
 
     bool motor_desired; /**< MOTOR 使能请求（延后设定：上电成功(POWERED)后自动生效） */
 
+    /* 输入异常蜂鸣上报状态 */
+    uint32_t beep_tick_ms; /**< 蜂鸣循环计时 (ms) */
+    uint8_t buz_last; /**< 上次蜂鸣器状态（0=关, 非0=开），变化才写 */
+
+    /* 过压保护状态 */
+    uint32_t vin_ov_ms; /**< VIN 超压累计时长 (ms)，未超压为 0 */
+    bool ov_latched; /**< 过压关断锁存（回落 ≤58V 后自动清除并重启） */
+
     /** @brief 各轨当前使能标志 */
     bool vin_on;
     bool dc24v_on;
@@ -74,6 +83,17 @@ typedef struct {
 /** @brief 步骤1：VIN 输入允许范围 (mV) */
 #define PWR_VIN_OK_MIN_MV (36000U)
 #define PWR_VIN_OK_MAX_MV (58000U)
+
+/** @brief 过压保护：已上电后 VIN 高于此值并持续满时长 → 关断全部输出 (mV) */
+#define PWR_VIN_OV_TRIP_MV (60000U)
+
+/** @brief 过压保护判定持续时长 (ms) */
+#define PWR_VIN_OV_TRIP_MS (5000U)
+
+/** @brief 输入电压异常蜂鸣上报：每 2s 响 200ms 循环 */
+#define PWR_BUZ_INVALID_PERIOD_MS (2000U)
+#define PWR_BUZ_INVALID_ON_MS (200U)
+#define PWR_BUZ_INVALID_DUTY (2U)
 
 /** @brief 步骤2：VIN_DC-DC 需达到 VIN 的百分比（‰，900=90.0%） */
 #define PWR_VIN_DCDC_MIN_PERMILLE (900U)
@@ -115,6 +135,10 @@ static void pwr_entry_cb(fsm_t* ctx, fsm_state_t state);
 static bool pwr_dual_pgd_ok(pwr_ctrl_t* pc);
 static void pwr_read_voltage(pwr_ctrl_t* pc, uint32_t* vin_mv, uint32_t* vin_dcdc_mv);
 static bool pwr_wait_log(pwr_ctrl_t* pc);
+static void pwr_buzzer_report_step(pwr_ctrl_t* pc, bool active);
+static void pwr_aux_enable_if_valid(pwr_ctrl_t* pc, uint32_t vin_mv);
+static void pwr_rails_all_off(pwr_ctrl_t* pc);
+static bool pwr_vin_in_range(uint32_t vin_mv);
 
 /* Exported functions --------------------------------------------------------*/
 
@@ -146,14 +170,10 @@ void srv_pwr_ctrl_init(const srv_pwr_ctrl_config_t* config)
 
     fsm_init(&s_pc.fsm, PWR_STATE_IDLE, &fsm_cfg);
 
-    /* AUX 直通电源：初始化即使能，不等待其他轨上电成功 */
-    drv_power_set(DRV_POWER_RAIL_AUX, true);
-    s_pc.aux_on = true;
-    SRV_PWR_CTRL_LOG_I("AUX_POWER_EN 已直接使能 (不参与上电流程等待)");
-
-    /* 默认上电流程：程序启动即自动进入步骤1 */
+    /* 输入电压有效后才允许使能任何输出（AUX 也纳入该条件）。
+       默认上电流程：程序启动即进入步骤1（含输入电压检查）。 */
     fsm_goto(&s_pc.fsm, PWR_STATE_CHECK_VIN);
-    SRV_PWR_CTRL_LOG_I("电源控制服务初始化完成，默认 5 步上电流程已启动");
+    SRV_PWR_CTRL_LOG_I("电源控制服务初始化完成，默认上电流程已启动 (输入电压有效前不使能任何输出)");
 }
 
 void srv_pwr_ctrl_step(uint16_t elapsed_ms)
@@ -185,7 +205,7 @@ void srv_pwr_ctrl_motor_set(bool on)
     /* 关断任何时候都立即生效 */
     s_pc.motor_on = false;
     drv_power_set(DRV_POWER_RAIL_MOTOR, false);
-    SRV_PWR_CTRL_LOG_E("MOTOR_POWER_EN 已关闭 (急停/故障)");
+    SRV_PWR_CTRL_LOG_W("MOTOR_POWER_EN 已关闭 (急停/故障)");
 }
 
 srv_pwr_ctrl_state_t srv_pwr_ctrl_get_state(void)
@@ -208,11 +228,32 @@ srv_pwr_ctrl_state_t srv_pwr_ctrl_get_state(void)
 
 static fsm_state_t pwr_state_idle(fsm_t* ctx)
 {
-    (void)ctx;
+    pwr_ctrl_t* pc = (pwr_ctrl_t*)fsm_user_data(ctx);
+
+    /* 过压关断锁存：输入回落到允许范围后自动清除并重新执行上电流程 */
+    if (pc->ov_latched) {
+        uint32_t vin_mv = 0;
+        uint32_t vin_dcdc_mv = 0;
+        pwr_read_voltage(pc, &vin_mv, &vin_dcdc_mv);
+
+        if (pwr_vin_in_range(vin_mv)) {
+            pc->ov_latched = false;
+            pc->vin_ov_ms = 0;
+            SRV_PWR_CTRL_LOG_I("输入电压回落至允许范围 (VIN=%umV)，解除过压锁存并重新上电",
+                (unsigned)vin_mv);
+            return PWR_STATE_CHECK_VIN;
+        }
+
+        if (pwr_wait_log(pc)) {
+            SRV_PWR_CTRL_LOG_E("过压锁存保持: VIN=%umV (>%u mV)，输出保持关闭",
+                (unsigned)vin_mv, (unsigned)PWR_VIN_OV_TRIP_MV);
+        }
+    }
+
     return PWR_STATE_IDLE;
 }
 
-/** 步骤1：VIN 输入范围判定 */
+/** 步骤1：VIN 输入范围判定（范围内才允许使能任何输出，否则蜂鸣上报等待） */
 static fsm_state_t pwr_state_check_vin(fsm_t* ctx)
 {
     pwr_ctrl_t* pc = (pwr_ctrl_t*)fsm_user_data(ctx);
@@ -221,13 +262,19 @@ static fsm_state_t pwr_state_check_vin(fsm_t* ctx)
     uint32_t vin_dcdc_mv = 0;
     pwr_read_voltage(pc, &vin_mv, &vin_dcdc_mv);
 
-    if (vin_mv >= PWR_VIN_OK_MIN_MV && vin_mv <= PWR_VIN_OK_MAX_MV) {
+    if (pwr_vin_in_range(vin_mv)) {
+        /* 输入有效：使能 AUX（其余轨继续后续步骤）并停止异常蜂鸣 */
+        pwr_aux_enable_if_valid(pc, vin_mv);
+        pwr_buzzer_report_step(pc, false);
         pc->stage_ms = 0;
         return PWR_STATE_CHECK_VIN_DCDC;
     }
 
+    /* 输入超范围：四路均不使能，蜂鸣器周期上报 */
+    pwr_buzzer_report_step(pc, true);
+
     if (pwr_wait_log(pc)) {
-        SRV_PWR_CTRL_LOG_W("等待输入电压合格: VIN=%umV (需 %u~%u mV)",
+        SRV_PWR_CTRL_LOG_W("输入电压超范围，所有输出关闭并蜂鸣上报: VIN=%umV (需 %u~%u mV)",
             (unsigned)vin_mv, (unsigned)PWR_VIN_OK_MIN_MV, (unsigned)PWR_VIN_OK_MAX_MV);
     }
     return PWR_STATE_CHECK_VIN;
@@ -292,6 +339,26 @@ static fsm_state_t pwr_state_powered(fsm_t* ctx)
 {
     pwr_ctrl_t* pc = (pwr_ctrl_t*)fsm_user_data(ctx);
 
+    /* 过压保护：已上电后 VIN >60V 持续 5s → 关断全部输出并锁存（回落自动重启）。
+       低压(<36V)仅监测，不关断输出。 */
+    uint32_t vin_mv = 0;
+    uint32_t vin_dcdc_mv = 0;
+    pwr_read_voltage(pc, &vin_mv, &vin_dcdc_mv);
+
+    if (vin_mv >= PWR_VIN_OV_TRIP_MV) {
+        pc->vin_ov_ms += pc->step_elapsed_ms;
+        if (pc->vin_ov_ms >= PWR_VIN_OV_TRIP_MS) {
+            SRV_PWR_CTRL_LOG_E("输入过压保护: VIN=%umV ≥ %u mV 持续 %ums，关断全部输出",
+                (unsigned)vin_mv, (unsigned)PWR_VIN_OV_TRIP_MV, (unsigned)PWR_VIN_OV_TRIP_MS);
+            pwr_rails_all_off(pc);
+            pc->ov_latched = true;
+            pc->vin_ov_ms = 0;
+            return PWR_STATE_IDLE;
+        }
+    } else {
+        pc->vin_ov_ms = 0;
+    }
+
     /* 延后使能：上电成功后若有 MOTOR 使能请求则自动开启 */
     if (pc->motor_desired && !pc->motor_on) {
         pc->motor_on = true;
@@ -329,16 +396,69 @@ static void pwr_entry_cb(fsm_t* ctx, fsm_state_t state)
         SRV_PWR_CTRL_LOG_I("步骤4: DC_DC_24V_EN 已使能");
         break;
     case PWR_STATE_POWERED:
-        SRV_PWR_CTRL_LOG_I("步骤5完成: 双 PGD 就绪，上电成功 (AUX 于初始化时已使能)");
+        SRV_PWR_CTRL_LOG_I("步骤5完成: 双 PGD 就绪，上电成功 (AUX 已于输入有效后使能)");
         break;
     case PWR_STATE_IDLE:
     default:
-        /* 全轨电源复位（见 pwr_rails_power_off），MOTOR 由上层策略控制 */
+        /* IDLE 由过压锁存/关断路径保证输出关闭 */
         break;
     }
 }
 
 /* ---- 内部工具 ---- */
+
+/** @brief 判定 VIN 是否处于允许输入范围 [36,58]V */
+static bool pwr_vin_in_range(uint32_t vin_mv)
+{
+    return vin_mv >= PWR_VIN_OK_MIN_MV && vin_mv <= PWR_VIN_OK_MAX_MV;
+}
+
+/** @brief 输入有效后使能 AUX（AUX 不依赖其他轨成功，但必须输入电压合格） */
+static void pwr_aux_enable_if_valid(pwr_ctrl_t* pc, uint32_t vin_mv)
+{
+    if (!pc->aux_on && pwr_vin_in_range(vin_mv)) {
+        pc->aux_on = true;
+        drv_power_set(DRV_POWER_RAIL_AUX, true);
+        SRV_PWR_CTRL_LOG_I("AUX_POWER_EN 已使能 (输入电压有效)");
+    }
+}
+
+/** @brief 输入超范围蜂鸣周期上报（每 2s 响 200ms；active=false 停止） */
+static void pwr_buzzer_report_step(pwr_ctrl_t* pc, bool active)
+{
+    if (!active) {
+        if (pc->buz_last != 0U) {
+            drv_buzzer_set(0);
+            pc->buz_last = 0;
+        }
+        return;
+    }
+
+    pc->beep_tick_ms += pc->step_elapsed_ms;
+    const uint32_t mod = pc->beep_tick_ms % PWR_BUZ_INVALID_PERIOD_MS;
+    const bool on = (mod < PWR_BUZ_INVALID_ON_MS);
+    const uint8_t want = on ? (uint8_t)PWR_BUZ_INVALID_DUTY : 0U;
+    if (want != pc->buz_last) {
+        drv_buzzer_set(want);
+        pc->buz_last = want;
+    }
+}
+
+/** @brief 立即关闭全部输出轨（VIN/24V/AUX/MOTOR）并复位内部状态 */
+static void pwr_rails_all_off(pwr_ctrl_t* pc)
+{
+    drv_power_set(DRV_POWER_RAIL_MOTOR, false);
+    drv_power_set(DRV_POWER_RAIL_AUX, false);
+    drv_power_set(DRV_POWER_RAIL_DC24V, false);
+    drv_power_set(DRV_POWER_RAIL_VIN_DCDC, false);
+
+    pc->motor_on = false;
+    pc->aux_on = false;
+    pc->dc24v_on = false;
+    pc->vin_on = false;
+    pc->stage_ms = 0;
+    pc->pgd_ok_steps = 0;
+}
 
 /** @brief 双 PGD（24V 与 LM5060）连续有效去抖 */
 static bool pwr_dual_pgd_ok(pwr_ctrl_t* pc)

@@ -11,7 +11,7 @@
 /* 模块日志开关 ----------------------------------------------------------------*/
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
-#define DRV_LED_LOG_ENABLE 1
+#define DRV_LED_LOG_ENABLE 0
 
 #if DRV_LED_LOG_ENABLE
 #define DRV_LED_LOG_E(...) LOG_E("drv_led", __VA_ARGS__)

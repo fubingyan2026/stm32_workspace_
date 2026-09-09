@@ -38,10 +38,9 @@
 #define APP_IND_EVAL_PERIOD_MS (100U)
 
 /* 状态灯灯效参数 */
-#define APP_IND_ESTOP_BLINK_CYCLE_MS (100U) /**< 急停：快闪 */
-#define APP_IND_ESTOP_BLINK_WAIT_MS (100U)
-#define APP_IND_CRITICAL_BLINK_CYCLE_MS (300U) /**< 关键电源轨故障：慢闪 */
-#define APP_IND_CRITICAL_BLINK_WAIT_MS (300U)
+#define APP_IND_ESTOP_BLINK_CYCLE_MS (100U)/**< 关键电源轨故障：慢闪 */ 
+#define APP_IND_CRITICAL_BLINK_CYCLE_MS (500U) /**< 急停：快闪 */
+#define APP_IND_WARN_BLINK_CYCLE_MS (1000U) /**< 关键电源轨故障：慢闪 */
 
 /* Private types -------------------------------------------------------------*/
 
@@ -122,14 +121,14 @@ void app_status_indicator_step(uint16_t elapsed_ms)
  */
 static app_ind_level_t ind_evaluate(const srv_com_mst_status_frame_t* st)
 {
-    /* P0 急停 / 故障锁存（最高优先级） */
-    if (app_fault_policy_is_tripped() || st->bits.stop_key_state) {
+    /* P0 关键电源轨故障 */
+    if (st->bits.err_vin_dcdc || st->bits.err_24v
+        || st->bits.err_aux_power || st->bits.err_motor_power) {
         return APP_IND_LEVEL_ESTOP;
     }
 
-    /* P1 关键电源轨故障 */
-    if (st->bits.err_vin_dcdc || st->bits.err_24v
-        || st->bits.err_aux_power || st->bits.err_motor_power) {
+    /* P1 急停 / 故障锁存（最高优先级） */
+    if (app_fault_policy_is_tripped() || st->bits.stop_key_state) {
         return APP_IND_LEVEL_CRITICAL;
     }
 
@@ -149,23 +148,28 @@ static void ind_apply(app_ind_level_t level)
 {
     switch (level) {
     case APP_IND_LEVEL_ESTOP:
-        ind_set_blink(s_status_led, APP_IND_ESTOP_BLINK_CYCLE_MS, APP_IND_ESTOP_BLINK_WAIT_MS);
+        /* 先置 BLINK 态再更新间隔参数（interval 携带 set_state=BLINK，
+           srv_signal 内 changed 去重，避免重复入队积压） */
         ind_set_state(s_status_led, SRV_SIGNAL_STATE_BLINK_CODE);
+        ind_set_blink(s_status_led, APP_IND_ESTOP_BLINK_CYCLE_MS, 0);
         break;
 
     case APP_IND_LEVEL_CRITICAL:
-        ind_set_blink(s_status_led, APP_IND_CRITICAL_BLINK_CYCLE_MS, APP_IND_CRITICAL_BLINK_WAIT_MS);
         ind_set_state(s_status_led, SRV_SIGNAL_STATE_BLINK_CODE);
+        ind_set_blink(s_status_led, APP_IND_CRITICAL_BLINK_CYCLE_MS, 0);
         break;
 
     case APP_IND_LEVEL_WARNING:
-        ind_set_state(s_status_led, SRV_SIGNAL_STATE_BREATHING);
+        ind_set_state(s_status_led, SRV_SIGNAL_STATE_BLINK_CODE);
+        ind_set_blink(s_status_led, APP_IND_WARN_BLINK_CYCLE_MS, 0);
         break;
 
     case APP_IND_LEVEL_NORMAL:
-    default:
-        ind_set_state(s_status_led, SRV_SIGNAL_STATE_ON);
+        ind_set_state(s_status_led, SRV_SIGNAL_STATE_BREATHING);
         break;
+    default: {
+        ind_set_state(s_status_led, SRV_SIGNAL_STATE_ON);
+    } break;
     }
 }
 
@@ -182,7 +186,10 @@ static void ind_set_blink(srv_signal_handle_t* h, uint16_t cycle_ms, uint16_t wa
         return;
     }
 
+    /* 携带 set_state=BLINK：使 set_blink_interval 的 changed 去重对“同一闪烁参数”
+       生效（不重复入队）；配合先 set_state 再本调用使用 */
     const srv_signal_cmd_t cmd = {
+        .set_state = SRV_SIGNAL_STATE_BLINK_CODE,
         .blink_cycle_ms = cycle_ms,
         .blink_wait_ms = wait_ms,
         .blink_code_counts = 0, /* 无限循环，直到等级切换 */

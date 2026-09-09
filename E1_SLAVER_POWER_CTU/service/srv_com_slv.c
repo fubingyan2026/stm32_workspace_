@@ -1,11 +1,13 @@
 /**
  * @file    srv_com_slv.c
  * @author  maximillian
- * @version V1.0.0
- * @date    2026-09-03
+ * @version V2.0.0
+ * @date    2026-09-08
  * @brief   RS485 从机协议服务实现（E1_SLAVER_POWER_CTU）
  *
- * 帧格式（与 G0 一致）：[ 'z' ][cmd][data_len][payload][CRC8][ '\n' ]
+ * 帧格式（两兄弟板共用帧头，设备用 payload 首字节 ID 区分/定向）：
+ *   [ 'z' ][cmd][data_len][payload][CRC8][ '\n' ]，总长 = data_len + 5
+ *   请求 payload[0]=目标 ID；应答 payload[0]=源 ID（本板）。
  * 解析 protocol_parser、打包 protocol_packer（公共 m_middlewares）。
  */
 
@@ -39,7 +41,7 @@
 
 /* Private constants ---------------------------------------------------------*/
 
-/** @brief 帧头/帧尾（协议定义，与 G0 上位机协议一致） */
+/** @brief 帧头/帧尾（两兄弟板共用，仅 'z'；设备区分在 payload 首字节 ID） */
 static const uint8_t s_header[] = { 'z' };
 static const uint8_t s_footer[] = { '\n' };
 
@@ -62,11 +64,12 @@ static protocol_packer_context_t s_packer;
 static uint8_t s_input_buf[SRV_COM_SLV_INPUT_BUF_SIZE];
 static uint8_t s_parse_out[SRV_COM_SLV_OUTPUT_BUF_SIZE];
 static uint8_t s_pack_out[SRV_COM_SLV_OUTPUT_BUF_SIZE];
-static uint8_t s_cmd_buf[SRV_COM_SLV_MAX_PAYLOAD_LEN + 2U]; /* cmd + dlen占位 + payload */
+static uint8_t s_cmd_buf[SRV_COM_SLV_MAX_PAYLOAD_LEN + 4U]; /* cmd + dlen + id占位 + payload */
 
 static srv_com_slv_read_cb_t s_read_data;
 static srv_com_slv_ctrl_cb_t s_ctrl_cb;
 static srv_com_slv_reset_cb_t s_reset_cb;
+static srv_com_slv_upgrade_cb_t s_upgrade_cb;
 static srv_com_slv_send_cb_t s_send_frame;
 
 static uint32_t s_last_err_log; /**< 错误日志限频时间戳 (ms) */
@@ -92,6 +95,7 @@ void srv_com_slv_init(const srv_com_slv_config_t* config)
     s_read_data = NULL;
     s_ctrl_cb = NULL;
     s_reset_cb = NULL;
+    s_upgrade_cb = NULL;
     s_send_frame = NULL;
     s_initialized = false;
 
@@ -103,6 +107,7 @@ void srv_com_slv_init(const srv_com_slv_config_t* config)
     s_read_data = config->read_data;
     s_ctrl_cb = config->ctrl;
     s_reset_cb = config->reset_latch;
+    s_upgrade_cb = config->upgrade;
     s_send_frame = config->send_frame;
 
     /* protocol_parser：接收下行帧 */
@@ -139,7 +144,8 @@ void srv_com_slv_init(const srv_com_slv_config_t* config)
     s_last_err_log = 0;
     s_initialized = true;
 
-    SRV_COM_SLV_LOG_I("从机协议服务初始化完成 (z-frame + CRC8)");
+    SRV_COM_SLV_LOG_I("从机协议服务初始化完成 (z-frame + payload ID=0x%02X + CRC8)",
+        (unsigned)SRV_COM_SLV_DEV_ID);
 }
 
 void srv_com_slv_deinit(void)
@@ -150,6 +156,7 @@ void srv_com_slv_deinit(void)
     s_read_data = NULL;
     s_ctrl_cb = NULL;
     s_reset_cb = NULL;
+    s_upgrade_cb = NULL;
     s_send_frame = NULL;
     s_initialized = false;
 
@@ -296,7 +303,21 @@ static protocol_packer_error_t com_checksum_cb(const uint8_t* data, uint16_t len
  */
 static void com_handle_frame(uint8_t cmd, const uint8_t* payload, uint8_t plen)
 {
-    SRV_COM_SLV_LOG_D("收到命令: 0x%02X len=%u", (unsigned)cmd, (unsigned)plen);
+    /* 调试：打印帧中设备 ID（payload 首字节）及是否匹配本板 */
+    const uint8_t rx_id = (plen >= 1U && payload != NULL) ? payload[0] : 0xFFU;
+    SRV_COM_SLV_LOG_D("RX cmd=0x%02X dev_id=0x%02X%s",
+        (unsigned)cmd, (unsigned)rx_id,
+        (rx_id == SRV_COM_SLV_DEV_ID) ? " (本板)" : " (忽略)");
+
+    /* 定向：payload[0] 必须为本板设备 ID，否则忽略（其它板查询流量，不响应） */
+    if (plen < 1U || payload == NULL || payload[0] != SRV_COM_SLV_DEV_ID) {
+        return;
+    }
+
+    const uint8_t* body = &payload[1];
+    const uint8_t body_len = (uint8_t)(plen - 1U);
+
+    SRV_COM_SLV_LOG_D("收到命令: 0x%02X len=%u", (unsigned)cmd, (unsigned)body_len);
 
     uint8_t reply_payload[SRV_COM_SLV_MAX_PAYLOAD_LEN];
     uint8_t reply_len = 0;
@@ -344,15 +365,15 @@ static void com_handle_frame(uint8_t cmd, const uint8_t* payload, uint8_t plen)
         break;
     }
     case SRV_COM_SLV_CMD_CTRL: {
-        if (plen != SRV_COM_SLV_CTRL_LEN) {
+        if (body_len != SRV_COM_SLV_CTRL_LEN) {
             com_reply_err(SRV_COM_SLV_ERR_BAD_LEN);
             return;
         }
         if (s_ctrl_cb) {
             srv_com_slv_ctrl_t ctrl;
-            ctrl.output_mask = payload[0];
-            ctrl.reserved = payload[1];
-            ctrl.fill_duty = (uint16_t)((uint16_t)payload[2] | ((uint16_t)payload[3] << 8));
+            ctrl.output_mask = body[0];
+            ctrl.reserved = body[1];
+            ctrl.fill_duty = (uint16_t)((uint16_t)body[2] | ((uint16_t)body[3] << 8));
             s_ctrl_cb(&ctrl);
         }
         reply_payload[0] = SRV_COM_SLV_ERR_NONE;
@@ -360,7 +381,7 @@ static void com_handle_frame(uint8_t cmd, const uint8_t* payload, uint8_t plen)
         break;
     }
     case SRV_COM_SLV_CMD_RESET_LATCH: {
-        if (plen != 1U || payload[0] != 0x01U) {
+        if (body_len < 1U || body[0] != 0x01U) {
             com_reply_err(SRV_COM_SLV_ERR_BAD_LEN);
             return;
         }
@@ -373,10 +394,21 @@ static void com_handle_frame(uint8_t cmd, const uint8_t* payload, uint8_t plen)
         }
         break;
     }
-    case SRV_COM_SLV_CMD_UPGRADE:
-        SRV_COM_SLV_LOG_W("收到升级请求，本阶段不支持");
-        com_reply_err(SRV_COM_SLV_ERR_NOT_SUPPORTED);
-        return;
+    case SRV_COM_SLV_CMD_UPGRADE: {
+        if (body_len < 1U || body[0] != 0x01U) {
+            com_reply_err(SRV_COM_SLV_ERR_BAD_LEN);
+            return;
+        }
+        if (s_upgrade_cb) {
+            SRV_COM_SLV_LOG_W("收到升级请求，将跳转 Bootloader");
+            s_upgrade_cb();
+            reply_payload[0] = SRV_COM_SLV_ERR_NONE;
+            reply_len = 1U;
+        } else {
+            com_reply_err(SRV_COM_SLV_ERR_NOT_SUPPORTED);
+        }
+        break;
+    }
     default:
         SRV_COM_SLV_LOG_W("未知命令: 0x%02X", (unsigned)cmd);
         com_reply_err(SRV_COM_SLV_ERR_UNKNOWN_CMD);
@@ -388,19 +420,21 @@ static void com_handle_frame(uint8_t cmd, const uint8_t* payload, uint8_t plen)
 
 /**
  * @brief 经 protocol_packer 打包并发送应答帧
+ * @note  应答 payload 自动前置本板设备 ID（源 ID）
  */
 static void com_reply(uint8_t reply_cmd, const uint8_t* payload, uint8_t plen)
 {
     s_cmd_buf[0] = reply_cmd;
     s_cmd_buf[1] = 0; /* data_len 占位，由 fill_len_cb 回填 */
+    s_cmd_buf[2] = SRV_COM_SLV_DEV_ID; /* 源设备 ID */
     if (plen > 0U && payload != NULL) {
-        memcpy(&s_cmd_buf[2], payload, plen);
+        memcpy(&s_cmd_buf[3], payload, plen);
     }
 
     uint8_t* frame = NULL;
     uint16_t frame_len = 0;
     const protocol_packer_error_t err = protocol_packer_pack(&s_packer,
-        s_cmd_buf, (uint16_t)(2U + plen), &frame, &frame_len);
+        s_cmd_buf, (uint16_t)(3U + plen), &frame, &frame_len);
 
     if (err != PROTOCOL_PACKER_OK) {
         com_log_error("应答打包失败", (int32_t)err);

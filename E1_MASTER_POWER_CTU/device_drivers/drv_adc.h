@@ -98,6 +98,13 @@ void drv_adc_trigger_all(void);
 /** @brief 查询 ADC 实例是否正在 DMA 传输 */
 bool drv_adc_is_busy(drv_adc_inst_t inst);
 
+/**
+ * @brief 恢复 ADC 链路：中止残留 DMA、清 busy（供“长时间无采样快照”看门狗调用）
+ * @param inst ADC 实例
+ * @return 操作结果错误码
+ */
+drv_adc_error_t drv_adc_recover(drv_adc_inst_t inst);
+
 /* --- 读取 --- */
 
 /** @brief 读取逻辑通道最近一次 DMA 采样值（12-bit 原始值） */

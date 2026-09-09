@@ -115,18 +115,18 @@
 /* --- 位置模式默认参数（srv_tz_temp_test_config_default 用；每实例可经 config 独立覆盖） --- */
 
 /** @brief 默认往复半幅（转）：目标在 初始化零点(0°) ±6.5 转 两端点间交替 */
-#define SRV_TZ_TEMP_DEF_POS_AMP_TURNS (6.5f)
+#define SRV_TZ_TEMP_DEF_POS_AMP_TURNS (5.6f)
 /** @brief 默认位置环 P 增益（1/s）：速度指令 = Kp × 位置误差（转） */
-#define SRV_TZ_TEMP_DEF_POS_KP (6.0f)
+#define SRV_TZ_TEMP_DEF_POS_KP (2.0f)
 /** @brief 默认位置模式速度指令限幅（转/s） */
 #define SRV_TZ_TEMP_DEF_POS_MAX_VEL_TPS (4.0f)
 /** @brief 默认速度指令加减速限制（转/s²）：换向/到位时速度指令按该斜率渐变，
  *        避免 换向瞬间速度阶跃（如 +3 转/s 突变 -3 转/s） */
-#define SRV_TZ_TEMP_DEF_POS_ACCEL_TPS2 (4.0f)
+#define SRV_TZ_TEMP_DEF_POS_ACCEL_TPS2 (2.0f)
 /** @brief 默认到位判定阈值（转）：|位置−目标| ≤ 该值视为到位（随后翻转目标） */
-#define SRV_TZ_TEMP_DEF_POS_ARRIVE_THRESH_TURNS (0.01f)
+#define SRV_TZ_TEMP_DEF_POS_ARRIVE_THRESH_TURNS (0.025f)
 /** @brief 默认位置到位判定超时 (ms)：超过该时长仍未到位则强制翻转（反馈冻结/到位偏置兜底） */
-#define SRV_TZ_TEMP_DEF_POS_ARRIVE_TIMEOUT_MS 6000U
+#define SRV_TZ_TEMP_DEF_POS_ARRIVE_TIMEOUT_MS 12000U
 /** @brief 停止序列回 0°（中心）超时 (ms)：超时仍未全部到位则强制进入保持+IDLE */
 #define SRV_TZ_TEMP_POS_RETURN_TIMEOUT_MS 60000U
 

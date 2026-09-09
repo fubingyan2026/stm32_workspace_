@@ -7,10 +7,14 @@
  * @attention
  *
  * 副电源模块作为 485 从站，主机查询应答式：本板不自主上报，仅应答主机。
- * 帧格式与 G0 上位机协议一致（参考 srv_uart_rx_cmd/tx_cmd）：
+ * 两兄弟板（E1_MASTER/E1_SLAVER）**共用同一帧头/信封**（避免帧头差异导致解析失败），
+ * 设备区分放在 **payload 首字节的设备 ID** 上：
  *   [ 'z' ][cmd][data_len][payload...][CRC8][ '\n' ]，总长 = data_len + 5
  *   - 帧头 'z'(0x7A) 1B | cmd 1B | data_len 1B | payload data_len B |
  *     CRC8 1B（get_CRC8_check_sum 初值 0xFF）| 帧尾 '\n'(0x0A) 1B
+ *   - 下行请求 payload[0] = 目标设备 ID（0x01=MASTER / 0x02=SLAVER）；
+ *     ID 不匹配本板的帧直接忽略不响应（定向，避免两板同时应答撞线）
+ *   - 上行应答 payload[0] = 源设备 ID（本板 ID），其后为数据/错误码
  *
  * 解析使用 m_middlewares protocol_parser 库、打包使用 protocol_packer 库。
  * 命令码与负载布局见 docs/protocol_slaver_485.md。
@@ -19,8 +23,9 @@
  * @code
  *   srv_com_slv_config_t cfg = {
  *       .read_data   = app_status_report_fill, // 数据读取回调
- *       .ctrl        = my_ctrl_cb,             // 0x10 输出控制应用回调
- *       .reset_latch = my_reset_cb,            // 0x11 清除锁存回调
+ *       .ctrl        = my_ctrl_cb,             // 0x04 输出控制应用回调
+ *       .reset_latch = my_reset_cb,            // 0x05 清除锁存回调
+ *       .upgrade     = my_upgrade_cb,          // 0x06 升级请求回调（可选）
  *       .send_frame  = my_send_cb,             // 原始帧发送回调（task 层 → dev_rs485）
  *   };
  *   srv_com_slv_init(&cfg);
@@ -47,31 +52,34 @@ extern "C" {
 #define SRV_COM_SLV_CMD_REPLY_FLAG (0x80U) /**< 应答帧命令标志位 */
 #define SRV_COM_SLV_CMD_ERR (0x7FU) /**< 错误应答命令 */
 
-/** @brief 最大负载长度（状态 2 / 电压 8 / 温度 4 / 控制 4 / ACK 1） */
+/** @brief 本板 485 设备 ID（E1_SLAVER，payload 首字节标识/定向，见 docs） */
+#define SRV_COM_SLV_DEV_ID (0x02U)
+
+/** @brief 最大负载长度（含首字节设备 ID：状态 3 / 电压 9 / 温度 5 / 控制 5 / ACK 2） */
 #define SRV_COM_SLV_MAX_PAYLOAD_LEN (16U)
 
 /** @brief 最大帧长 = MAX_PAYLOAD + 5（z/cmd/len + payload + crc + \n） */
 #define SRV_COM_SLV_MAX_FRAME_LEN (SRV_COM_SLV_MAX_PAYLOAD_LEN + 5U)
 
-/** @brief 控制帧负载长度（0x10） */
+/** @brief 控制帧负载长度（0x04，不含首字节 ID 后的 4B） */
 #define SRV_COM_SLV_CTRL_LEN (4U)
 
 /** @brief 错误码（应答负载第 0 字节） */
 typedef enum {
     SRV_COM_SLV_ERR_NONE = 0x00, /**< 无错误 */
     SRV_COM_SLV_ERR_UNKNOWN_CMD = 0x01, /**< 未知命令 */
-    SRV_COM_SLV_ERR_NOT_SUPPORTED = 0x02, /**< 功能暂不支持（如升级请求） */
+    SRV_COM_SLV_ERR_NOT_SUPPORTED = 0x02, /**< 功能暂不支持 */
     SRV_COM_SLV_ERR_BAD_LEN = 0x03, /**< 帧长度与命令不匹配 */
 } srv_com_slv_err_code_t;
 
-/** @brief 主机查询/控制命令码（下行） */
+/** @brief 主机查询/控制命令码（下行，连续编号） */
 typedef enum {
     SRV_COM_SLV_CMD_READ_STATUS = 0x01, /**< 读系统状态（2B：故障位 + 输出/锁存位） */
     SRV_COM_SLV_CMD_READ_VOLT = 0x02, /**< 读电压（8B：aux/motor/lsd1/lsd2 mV） */
     SRV_COM_SLV_CMD_READ_TEMP = 0x03, /**< 读温度/VDDA（4B：mcu_temp×100 + vdda_mv） */
-    SRV_COM_SLV_CMD_CTRL = 0x10, /**< 输出控制（4B：输出掩码 + 补光亮度） */
-    SRV_COM_SLV_CMD_RESET_LATCH = 0x11, /**< 清除故障锁存（1B magic=0x01） */
-    SRV_COM_SLV_CMD_UPGRADE = 0x1F, /**< 升级请求（预留，本阶段应答不支持） */
+    SRV_COM_SLV_CMD_CTRL = 0x04, /**< 输出控制（4B：输出掩码 + 补光亮度） */
+    SRV_COM_SLV_CMD_RESET_LATCH = 0x05, /**< 清除故障锁存（1B magic=0x01） */
+    SRV_COM_SLV_CMD_UPGRADE = 0x06, /**< 升级请求（1B magic=0x01 → 跳转 Boot） */
 } srv_com_slv_cmd_t;
 
 /* Exported types ------------------------------------------------------------*/
@@ -104,7 +112,7 @@ typedef union {
 } srv_com_slv_status_frame_t;
 
 /**
- * @brief 主机控制指令（0x10 控制帧，长度 4）
+ * @brief 主机控制指令（0x04 控制帧，长度 4）
  */
 typedef struct {
     uint8_t output_mask; /**< 输出掩码：bit0=24V、bit1=12V_ISO、bit2=LSD1、bit3=LSD2 */
@@ -134,6 +142,9 @@ typedef void (*srv_com_slv_ctrl_cb_t)(const srv_com_slv_ctrl_t* ctrl);
 /** @brief 清除故障锁存回调（task 层实现 → srv_pwr_ctrl_clear_latch；可空） */
 typedef void (*srv_com_slv_reset_cb_t)(void);
 
+/** @brief 升级请求回调（task 层实现 → srv_boot_ctrl 写升级标志并复位；可空） */
+typedef void (*srv_com_slv_upgrade_cb_t)(void);
+
 /** @brief 应答帧发送回调（task 层实现 → dev_rs485_send） */
 typedef void (*srv_com_slv_send_cb_t)(const uint8_t* data, uint32_t len);
 
@@ -142,6 +153,7 @@ typedef struct {
     srv_com_slv_read_cb_t read_data; /**< 数据读取回调（必填） */
     srv_com_slv_ctrl_cb_t ctrl; /**< 控制命令回调（必填） */
     srv_com_slv_reset_cb_t reset_latch; /**< 清除锁存回调（可选） */
+    srv_com_slv_upgrade_cb_t upgrade; /**< 升级请求回调（可选） */
     srv_com_slv_send_cb_t send_frame; /**< 原始帧发送回调（必填） */
 } srv_com_slv_config_t;
 

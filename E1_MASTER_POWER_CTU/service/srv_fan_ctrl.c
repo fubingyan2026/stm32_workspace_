@@ -49,6 +49,13 @@
 #define RPM_FILTER_CUTOFF_HZ (5U) /**< RPM 低通截止频率 (Hz), < Nyquist=5Hz */
 #define RPM_SAMPLE_RATE_HZ (10U) /**< RPM 采样率 (Hz), 100ms 周期 */
 #define FAN_DEFAULT_DUTY (85U) /** 风扇默认占空比 */
+
+/**
+ * @brief 屏蔽风扇测速/堵转故障检测（暂无 FG 脉冲反馈的临时调试，测速一律视为正常）
+ * @note  置 1：自检直接进入 RUN、运行态不做堵转判定、is_fault 恒 false；
+ *        置 0：恢复正常检测
+ */
+#define SRV_FAN_CTRL_TACH_BYPASS 1
 /* FSM 状态 -----------------------------------------------------------------*/
 
 /**
@@ -218,10 +225,15 @@ bool srv_fan_ctrl_any_fault(void)
 
 bool srv_fan_ctrl_is_fault(uint8_t id)
 {
+#if SRV_FAN_CTRL_TACH_BYPASS
+    (void)id;
+    return false; /* FG 反馈暂不可用：屏蔽故障上报，视为正常 */
+#else
     if (!s_initialized || id >= s_fan_count) {
         return false;
     }
     return fsm_current_state(&s_fans[id].fsm) == FAN_STATE_FAULT;
+#endif
 }
 
 void srv_fan_ctrl_set_auto(bool enable)
@@ -245,6 +257,13 @@ static fsm_state_t fan_state_selftest(fsm_t* ctx)
     fan_ctrl_t* f = (fan_ctrl_t*)fsm_user_data(ctx);
 
     f->duty = FAN_SELFTEST_DUTY;
+
+#if SRV_FAN_CTRL_TACH_BYPASS
+    /* FG 反馈暂不可用：跳过自检判转速，直接进入运行态 */
+    SRV_FAN_CTRL_LOG_I("风扇%u 自检跳过 (FG 屏蔽)", (unsigned)f->id);
+    f->selftest_pass = true;
+    return FAN_STATE_RUN;
+#else
     if (f->rpm >= FAN_SELFTEST_MIN_RPM) {
         f->selftest_pass = true;
     }
@@ -258,6 +277,7 @@ static fsm_state_t fan_state_selftest(fsm_t* ctx)
         return FAN_STATE_FAULT;
     }
     return FAN_STATE_SELFTEST;
+#endif
 }
 
 /**
@@ -269,6 +289,7 @@ static fsm_state_t fan_state_run(fsm_t* ctx)
 
     fan_apply_temp_duty(f);
 
+#if !SRV_FAN_CTRL_TACH_BYPASS
     /* 堵转 / 低速故障检测（仅命令转动 duty>0 时判定，风扇主动关闭不误报；
      * duty==0 清零去抖计时） */
     if (f->duty > 0) {
@@ -287,6 +308,9 @@ static fsm_state_t fan_state_run(fsm_t* ctx)
     } else {
         f->low_rpm_ms = 0;
     }
+#else
+    (void)f;
+#endif
     return FAN_STATE_RUN;
 }
 

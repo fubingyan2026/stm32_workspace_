@@ -42,6 +42,7 @@ extern "C" {
 #define SRV_PWR_AUX_PRESENT_MV      (20000UL) /**< AUX 输入存在判定阈值 (mV) */
 #define SRV_PWR_MOTOR_PRESENT_MV    (20000UL) /**< MOTOR 输入存在判定阈值 (mV) */
 #define SRV_PWR_LSD_NODE_ON_MAX_MV  (3000UL)  /**< LSD 使能后输出节点最大电压 (mV) */
+#define SRV_PWR_EN_SETTLE_MS        (50U)      /**< 使能稳定窗口 (ms)：忽略 PGOOD 建立暂态，不计稳定/超时；0=关闭 */
 #define SRV_PWR_READY_DEBOUNCE_MS   (10U)     /**< PGOOD/节点就绪稳定判定时间 (ms) */
 #define SRV_PWR_LOSS_DEBOUNCE_MS    (100U)    /**< 运行期好状态丢失去抖时间 (ms, 防误关断) */
 #define SRV_PWR_EN_TIMEOUT_DC24_MS  (800U)    /**< 24V 使能 PGOOD 超时 (ms) */
@@ -80,7 +81,7 @@ void srv_pwr_ctrl_set_voltage_cb(srv_pwr_voltage_cb_t cb);
 void srv_pwr_ctrl_step(uint16_t elapsed_ms);
 
 /**
- * @brief 写入期望输出掩码（整帧覆盖，来自 485 0x10 控制帧）
+ * @brief 写入期望输出掩码（整帧覆盖，来自 485 0x04 控制帧）
  * @param mask 期望使能位（SRV_PWR_OUT_MASK_*）
  * @note  被置 0 的锁存轨顺带清除该路锁存（视为人工关断确认）
  */
@@ -105,7 +106,7 @@ uint8_t srv_pwr_ctrl_get_latch_mask(void);
 bool srv_pwr_ctrl_is_any_latched(void);
 
 /**
- * @brief 清除全部故障锁存（来自 485 0x11 清除锁存命令）
+ * @brief 清除全部故障锁存（来自 485 0x05 清除锁存命令）
  * @note  清除后处于 LATCHED 的输出回到 OFF，若期望仍为 ON 则自动重新使能
  */
 void srv_pwr_ctrl_clear_latch(void);

@@ -14,7 +14,8 @@
  *  - srv_com_slv_rx_tick() 驱动解析器空闲超时
  *  - dev_rs485_tx_flush() 排空底层发送队列
  * 控制帧（0x10）→ srv_pwr_ctrl 输出期望 + drv_pwm 补光亮度；
- * 清锁存帧（0x11）→ srv_pwr_ctrl_clear_latch。
+ * 清锁存帧（0x11）→ srv_pwr_ctrl_clear_latch；
+ * 升级帧（0x1F）→ srv_boot_ctrl 写共享 metadata upgrade_flag=1 → 复位进 Boot。
  */
 
 #include "com_task.h"
@@ -24,6 +25,7 @@
 #include "drv_pwm.h"
 #include "drv_systick.h"
 #include "log.h"
+#include "srv_boot_ctrl.h"
 #include "srv_com_slv.h"
 #include "srv_pwr_ctrl.h"
 #include "srv_pwr_det.h"
@@ -59,6 +61,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 static sw_timer_t s_timer;
+static bool s_upgrade_pending; /**< 升级请求待处理（ACK 发出后执行跳转） */
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -66,6 +69,7 @@ static void com_timer_cb(void* user_data);
 static void com_send_frame(const uint8_t* data, uint32_t len);
 static void com_apply_ctrl(const srv_com_slv_ctrl_t* ctrl);
 static void com_reset_latch(void);
+static void com_upgrade_request(void);
 
 /* Exported functions --------------------------------------------------------*/
 
@@ -82,14 +86,17 @@ void com_task_init(void)
     /* 电源状态检测服务（初始化 drv_status PGOOD 读取） */
     srv_pwr_det_init();
 
-    /* 从机协议服务：read_data/ctrl/reset_latch/send_frame 均由本任务接线 */
+    /* 从机协议服务：read_data/ctrl/reset_latch/upgrade/send_frame 均由本任务接线 */
     const srv_com_slv_config_t cfg = {
         .read_data = app_status_report_fill,
         .ctrl = com_apply_ctrl,
         .reset_latch = com_reset_latch,
+        .upgrade = com_upgrade_request,
         .send_frame = com_send_frame,
     };
     srv_com_slv_init(&cfg);
+
+    s_upgrade_pending = false;
 
     const sw_timer_config_t timer_cfg = {
         .priority = SW_TIMER_PRIO_NORMAL,
@@ -126,6 +133,17 @@ static void com_timer_cb(void* user_data)
 
     /* 3. TX：排空底层帧队列 */
     dev_rs485_tx_flush();
+
+    /* 4. 升级请求：等 ACK 帧发完后写升级标志并复位（跳转 Boot 升级模式） */
+    if (s_upgrade_pending && !dev_rs485_is_tx_busy()) {
+        s_upgrade_pending = false;
+        COM_TASK_LOG_I("升级请求：写 boot 标志并复位进入 Bootloader");
+        if (srv_boot_ctrl_request_upgrade()) {
+            drv_system_reset();
+        } else {
+            COM_TASK_LOG_E("升级标志写入失败，本次不复位");
+        }
+    }
 }
 
 /**
@@ -171,4 +189,13 @@ static void com_apply_ctrl(const srv_com_slv_ctrl_t* ctrl)
 static void com_reset_latch(void)
 {
     srv_pwr_ctrl_clear_latch();
+}
+
+/**
+ * @brief 升级请求回调（0x1F 升级请求）
+ * @note  先置标志等待 ACK 发出（见 com_timer_cb 第 4 步），再写 boot 标志并复位
+ */
+static void com_upgrade_request(void)
+{
+    s_upgrade_pending = true;
 }

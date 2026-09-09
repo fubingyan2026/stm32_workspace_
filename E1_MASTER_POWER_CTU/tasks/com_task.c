@@ -17,6 +17,7 @@
 
 #include "com_task.h"
 
+#include "app_fault_policy.h"
 #include "app_status_report.h"
 #include "drv_buzzer.h"
 #include "dev_rs485.h"
@@ -47,7 +48,7 @@
 
 /* Private constants ---------------------------------------------------------*/
 
-#define TASK_PERIOD_MS (10U)
+#define TASK_PERIOD_MS (1U)
 
 /** @brief 单次从 dev_rs485 读取字节数 */
 #define COM_READ_BUF_SIZE (32U)
@@ -61,6 +62,7 @@ static sw_timer_t s_timer;
 static void com_timer_cb(void* user_data);
 static void com_send_frame(const uint8_t* data, uint32_t len);
 static void com_apply_ctrl(const srv_com_mst_ctrl_t* ctrl);
+static void com_reset_latch(void);
 static void com_read_estop_redun(srv_pwr_det_estop_redun_t* redun);
 static uint8_t com_rail_en_mask(void);
 
@@ -73,17 +75,18 @@ void com_task_init(void)
         COM_TASK_LOG_E("RS485 驱动初始化失败");
     }
 
-    /* 蜂鸣器 PWM 初始化（0x10 控制帧 buzzer_duty 由 ctrl 回调驱动） */
+    /* 蜂鸣器 PWM 初始化（0x04 控制帧 buzzer_duty 由 ctrl 回调驱动） */
     drv_buzzer_init();
 
     /* 电源状态检测服务（初始化 drv_status；E-STOP 冗余/常开轨使能门控经回调注入，
      * 避免 service 层同层互引） */
     srv_pwr_det_init(com_read_estop_redun, com_rail_en_mask);
 
-    /* 主机协议服务：read_data/ctrl/send_frame 均由本任务接线 */
+    /* 主机协议服务：read_data/ctrl/reset_latch/send_frame 均由本任务接线 */
     const srv_com_mst_config_t cfg = {
         .read_data = app_status_report_fill,
         .ctrl = com_apply_ctrl,
+        .reset_latch = com_reset_latch,
         .send_frame = com_send_frame,
     };
     srv_com_mst_init(&cfg);
@@ -105,7 +108,20 @@ static void com_timer_cb(void* user_data)
 {
     (void)user_data;
 
-    /* 1. RX：读取字节喂入 srv_com_mst（内部 protocol_parser 解析 + 应答打包） */
+    /* 解析器空闲超时 tick（RX 搬运/解析/应答已在主循环 com_task_service 高频执行） */
+    srv_com_mst_rx_tick();
+
+    /* 兜底排空 TX（主循环 service 已在每次迭代执行，此处仅保险） */
+    dev_rs485_tx_flush();
+}
+
+/**
+ * @brief 主循环高频服务：搬运 RX 字节 → 解析并应答 → 排空 TX 队列
+ * @note  由 app_main 主循环每次迭代调用，应答延迟不再受 10ms 定时周期限制
+ *        （帧收齐后几乎立即应答）
+ */
+void com_task_service(void)
+{
     uint8_t buf[COM_READ_BUF_SIZE];
     uint32_t n = dev_rs485_rx_available();
     while (n > 0U) {
@@ -118,10 +134,6 @@ static void com_timer_cb(void* user_data)
         n -= rd;
     }
 
-    /* 2. 解析器空闲超时 tick */
-    srv_com_mst_rx_tick();
-
-    /* 3. TX：排空底层帧队列 */
     dev_rs485_tx_flush();
 }
 
@@ -172,7 +184,7 @@ static uint8_t com_rail_en_mask(void)
 }
 
 /**
- * @brief 主机控制命令应用回调（0x10 控制帧）
+ * @brief 主机控制命令应用回调（0x04 控制帧）
  */
 static void com_apply_ctrl(const srv_com_mst_ctrl_t* ctrl)
 {
@@ -181,4 +193,13 @@ static void com_apply_ctrl(const srv_com_mst_ctrl_t* ctrl)
     }
     COM_TASK_LOG_I("控制命令: buzzer_duty=%u", (unsigned)ctrl->buzzer_duty);
     drv_buzzer_set(ctrl->buzzer_duty);
+}
+
+/**
+ * @brief 清除故障锁存回调（0x05 清除故障锁存命令）
+ * @note  等价于急停释放沿的自动解锁（app_fault_policy），清除后按当前条件自动重试使能
+ */
+static void com_reset_latch(void)
+{
+    app_fault_policy_reset();
 }

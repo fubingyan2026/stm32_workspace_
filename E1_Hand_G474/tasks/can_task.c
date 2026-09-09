@@ -111,7 +111,7 @@ static void can_rx_callback(drv_can_channel_t ch, const drv_can_msg_t* msg);
 
 void can_task_init(void)
 {
-    delay_ms(2000);
+    delay_ms(1000);
     drv_can_error_t err = drv_can_init();
     if (err != DRV_CAN_OK) {
         LOG_E("can_task", "drv_can_init failed: %d (FDCAN start error?)", (int)err);

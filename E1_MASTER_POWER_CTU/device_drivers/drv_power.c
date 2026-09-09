@@ -15,7 +15,7 @@
 /* 模块日志开关 ----------------------------------------------------------------*/
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
-#define DRV_POWER_LOG_ENABLE 1
+#define DRV_POWER_LOG_ENABLE 0
 
 #if DRV_POWER_LOG_ENABLE
 #define DRV_POWER_LOG_E(...) LOG_E("drv_power", __VA_ARGS__)
@@ -33,9 +33,9 @@
 
 typedef struct {
     GPIO_TypeDef* port;
-    uint16_t      pin;
-    bool          active_low; /**< true 表示低电平有效（拉低使能） */
-    const char*   name;
+    uint16_t pin;
+    bool active_low; /**< true 表示低电平有效（拉低使能） */
+    const char* name;
 } drv_power_rail_pin_t;
 
 /* Private constants ---------------------------------------------------------*/
@@ -47,9 +47,9 @@ typedef struct {
  */
 static const drv_power_rail_pin_t s_pins[DRV_POWER_RAIL_NUM] = {
     [DRV_POWER_RAIL_VIN_DCDC] = { VIN_DC_DC_EN_GPIO_Port, VIN_DC_DC_EN_Pin, false, "VIN_DC-DC_EN" },
-    [DRV_POWER_RAIL_DC24V]    = { DC_DC_24V_EN_GPIO_Port, DC_DC_24V_EN_Pin, false, "DC_DC_24V_EN" },
-    [DRV_POWER_RAIL_AUX]      = { AUX_POWER_EN_GPIO_Port, AUX_POWER_EN_Pin, false, "AUX_EN" },
-    [DRV_POWER_RAIL_MOTOR]    = { MOTOR_POWER_EN_GPIO_Port, MOTOR_POWER_EN_Pin, false, "MOTOR_EN" },
+    [DRV_POWER_RAIL_DC24V] = { DC_DC_24V_EN_GPIO_Port, DC_DC_24V_EN_Pin, false, "DC_DC_24V_EN" },
+    [DRV_POWER_RAIL_AUX] = { AUX_POWER_EN_GPIO_Port, AUX_POWER_EN_Pin, false, "AUX_EN" },
+    [DRV_POWER_RAIL_MOTOR] = { MOTOR_POWER_EN_GPIO_Port, MOTOR_POWER_EN_Pin, false, "MOTOR_EN" },
 };
 
 /* Private variables ---------------------------------------------------------*/
@@ -100,8 +100,7 @@ void drv_power_set(drv_power_rail_t rail, bool on)
     }
 
     if (s_pins[rail].port && s_pins[rail].pin) {
-        GPIO_PinState level =
-            (on ^ s_pins[rail].active_low) ? GPIO_PIN_SET : GPIO_PIN_RESET;
+        GPIO_PinState level = (on ^ s_pins[rail].active_low) ? GPIO_PIN_SET : GPIO_PIN_RESET;
         HAL_GPIO_WritePin(s_pins[rail].port, s_pins[rail].pin, level);
     }
 

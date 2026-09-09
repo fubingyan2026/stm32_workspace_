@@ -1,11 +1,14 @@
 /**
  * @file    srv_com_mst.c
  * @author  maximillian
- * @version V2.0.0
- * @date    2026-09-03
+ * @version V5.0.0
+ * @date    2026-09-09
  * @brief   RS485 主机协议服务实现（E1_MASTER_POWER_CTU）
  *
- * 帧格式（与 G0 一致）：[ 'z' ][cmd][data_len][payload][CRC8][ '\n' ]
+ * 帧格式（两兄弟板共用帧头，设备用 payload 首字节 ID 区分/定向）：
+ *   [ 'z' ][cmd][data_len][payload][CRC8][ '\n' ]，总长 = data_len + 5
+ *   请求 payload[0]=目标 ID；应答 payload[0]=源 ID（本板）。
+ * 命令码与 E1_SLAVER 统一（0x02 电压 / 0x03 温度 / 0x05 清锁存 / 0x06 升级预留）。
  * 解析 protocol_parser、打包 protocol_packer（公共 m_middlewares）。
  */
 
@@ -29,7 +32,7 @@
 #define SRV_COM_MST_LOG_E(...) LOG_E("srv_com_mst", __VA_ARGS__)
 #define SRV_COM_MST_LOG_W(...) LOG_W("srv_com_mst", __VA_ARGS__)
 #define SRV_COM_MST_LOG_I(...) LOG_I("srv_com_mst", __VA_ARGS__)
-#define SRV_COM_MST_LOG_D(...) LOG_D("srv_com_mst", __VA_ARGS__)
+#define SRV_COM_MST_LOG_D(...) ((void)0)//LOG_D("srv_com_mst", __VA_ARGS__)
 #else
 #define SRV_COM_MST_LOG_E(...) ((void)0)
 #define SRV_COM_MST_LOG_W(...) ((void)0)
@@ -39,7 +42,7 @@
 
 /* Private constants ---------------------------------------------------------*/
 
-/** @brief 帧头/帧尾（协议定义，与 G0 上位机协议一致） */
+/** @brief 帧头/帧尾（两兄弟板共用，仅 'z'；设备区分在 payload 首字节 ID） */
 static const uint8_t s_header[] = { 'z' };
 static const uint8_t s_footer[] = { '\n' };
 
@@ -62,10 +65,11 @@ static protocol_packer_context_t s_packer;
 static uint8_t s_input_buf[SRV_COM_MST_INPUT_BUF_SIZE];
 static uint8_t s_parse_out[SRV_COM_MST_OUTPUT_BUF_SIZE];
 static uint8_t s_pack_out[SRV_COM_MST_OUTPUT_BUF_SIZE];
-static uint8_t s_cmd_buf[SRV_COM_MST_MAX_PAYLOAD_LEN + 2U]; /* cmd + dlen占位 + payload */
+static uint8_t s_cmd_buf[SRV_COM_MST_MAX_PAYLOAD_LEN + 4U]; /* cmd + dlen + id占位 + payload */
 
 static srv_com_mst_read_cb_t s_read_data;
 static srv_com_mst_ctrl_cb_t s_ctrl_cb;
+static srv_com_mst_reset_cb_t s_reset_cb;
 static srv_com_mst_send_cb_t s_send_frame;
 
 static uint32_t s_last_err_log; /**< 错误日志限频时间戳 (ms) */
@@ -90,6 +94,7 @@ void srv_com_mst_init(const srv_com_mst_config_t* config)
 {
     s_read_data = NULL;
     s_ctrl_cb = NULL;
+    s_reset_cb = NULL;
     s_send_frame = NULL;
     s_initialized = false;
 
@@ -100,9 +105,10 @@ void srv_com_mst_init(const srv_com_mst_config_t* config)
 
     s_read_data = config->read_data;
     s_ctrl_cb = config->ctrl;
+    s_reset_cb = config->reset_latch;
     s_send_frame = config->send_frame;
 
-    /* protocol_parser：接收下行帧 */
+    /* protocol_parser：接收下行帧（帧头仅 'z'） */
     const protocol_parser_config_t parser_cfg = {
         .name = "srv_com_mst_rx",
         .header = s_header,
@@ -111,8 +117,8 @@ void srv_com_mst_init(const srv_com_mst_config_t* config)
         .input_buffer = s_input_buf,
         .get_len_cb = com_get_len_cb,
         .check_cb = com_check_cb,
-        .header_len = sizeof(s_header),
-        .footer_len = sizeof(s_footer),
+        .header_len = 1,
+        .footer_len = 1,
         .input_buffer_len = (uint16_t)sizeof(s_input_buf),
         .output_buffer_len = (uint16_t)sizeof(s_parse_out),
     };
@@ -126,8 +132,8 @@ void srv_com_mst_init(const srv_com_mst_config_t* config)
         .output_buffer = s_pack_out,
         .checksum_cb = com_checksum_cb,
         .fill_len_cb = com_fill_len_cb,
-        .header_len = sizeof(s_header),
-        .footer_len = sizeof(s_footer),
+        .header_len = 1,
+        .footer_len = 1,
         .checksum_len = 1,
         .output_buffer_len = (uint16_t)sizeof(s_pack_out),
     };
@@ -136,7 +142,8 @@ void srv_com_mst_init(const srv_com_mst_config_t* config)
     s_last_err_log = 0;
     s_initialized = true;
 
-    SRV_COM_MST_LOG_I("主机协议服务初始化完成 (z-frame + CRC8)");
+    SRV_COM_MST_LOG_I("主机协议服务初始化完成 (z-frame + payload ID=0x%02X + CRC8)",
+        (unsigned)SRV_COM_MST_DEV_ID);
 }
 
 void srv_com_mst_deinit(void)
@@ -146,6 +153,7 @@ void srv_com_mst_deinit(void)
 
     s_read_data = NULL;
     s_ctrl_cb = NULL;
+    s_reset_cb = NULL;
     s_send_frame = NULL;
     s_initialized = false;
 
@@ -292,7 +300,21 @@ static protocol_packer_error_t com_checksum_cb(const uint8_t* data, uint16_t len
  */
 static void com_handle_frame(uint8_t cmd, const uint8_t* payload, uint8_t plen)
 {
-    SRV_COM_MST_LOG_D("收到命令: 0x%02X len=%u", (unsigned)cmd, (unsigned)plen);
+    /* 调试：打印帧中设备 ID（payload 首字节）及是否匹配本板 */
+    const uint8_t rx_id = (plen >= 1U && payload != NULL) ? payload[0] : 0xFFU;
+    SRV_COM_MST_LOG_D("RX cmd=0x%02X dev_id=0x%02X%s",
+        (unsigned)cmd, (unsigned)rx_id,
+        (rx_id == SRV_COM_MST_DEV_ID) ? " (本板)" : " (忽略)");
+
+    /* 定向：payload[0] 必须为本板设备 ID，否则忽略（其它板查询流量，不响应） */
+    if (plen < 1U || payload == NULL || payload[0] != SRV_COM_MST_DEV_ID) {
+        return;
+    }
+
+    const uint8_t* body = &payload[1];
+    const uint8_t body_len = (uint8_t)(plen - 1U);
+
+    SRV_COM_MST_LOG_D("收到命令: 0x%02X len=%u", (unsigned)cmd, (unsigned)body_len);
 
     uint8_t reply_payload[SRV_COM_MST_MAX_PAYLOAD_LEN];
     uint8_t reply_len = 0;
@@ -307,6 +329,19 @@ static void com_handle_frame(uint8_t cmd, const uint8_t* payload, uint8_t plen)
         }
         memcpy(reply_payload, report.status.bytes, 2U);
         reply_len = 2U;
+        break;
+    }
+    case SRV_COM_MST_CMD_READ_VOLT: {
+        srv_com_mst_report_t report;
+        memset(&report, 0, sizeof(report));
+        if (s_read_data) {
+            s_read_data(&report);
+        }
+        reply_payload[0] = (uint8_t)(report.vin_mv & 0xFFU);
+        reply_payload[1] = (uint8_t)(report.vin_mv >> 8);
+        reply_payload[2] = (uint8_t)(report.vin_dcdc_mv & 0xFFU);
+        reply_payload[3] = (uint8_t)(report.vin_dcdc_mv >> 8);
+        reply_len = 4U;
         break;
     }
     case SRV_COM_MST_CMD_READ_TEMP: {
@@ -324,31 +359,32 @@ static void com_handle_frame(uint8_t cmd, const uint8_t* payload, uint8_t plen)
         reply_len = 6U;
         break;
     }
-    case SRV_COM_MST_CMD_READ_VOLT: {
-        srv_com_mst_report_t report;
-        memset(&report, 0, sizeof(report));
-        if (s_read_data) {
-            s_read_data(&report);
-        }
-        reply_payload[0] = (uint8_t)(report.vin_mv & 0xFFU);
-        reply_payload[1] = (uint8_t)(report.vin_mv >> 8);
-        reply_payload[2] = (uint8_t)(report.vin_dcdc_mv & 0xFFU);
-        reply_payload[3] = (uint8_t)(report.vin_dcdc_mv >> 8);
-        reply_len = 4U;
-        break;
-    }
     case SRV_COM_MST_CMD_CTRL: {
-        if (plen != 1U) {
+        if (body_len != 1U) {
             com_reply_err(SRV_COM_MST_ERR_BAD_LEN);
             return;
         }
         if (s_ctrl_cb) {
             srv_com_mst_ctrl_t ctrl;
-            ctrl.buzzer_duty = payload[0];
+            ctrl.buzzer_duty = body[0];
             s_ctrl_cb(&ctrl);
         }
         reply_payload[0] = SRV_COM_MST_ERR_NONE;
         reply_len = 1U;
+        break;
+    }
+    case SRV_COM_MST_CMD_RESET_LATCH: {
+        if (body_len < 1U || body[0] != 0x01U) {
+            com_reply_err(SRV_COM_MST_ERR_BAD_LEN);
+            return;
+        }
+        if (s_reset_cb) {
+            s_reset_cb();
+            reply_payload[0] = SRV_COM_MST_ERR_NONE;
+            reply_len = 1U;
+        } else {
+            com_reply_err(SRV_COM_MST_ERR_NOT_SUPPORTED);
+        }
         break;
     }
     case SRV_COM_MST_CMD_UPGRADE:
@@ -366,19 +402,21 @@ static void com_handle_frame(uint8_t cmd, const uint8_t* payload, uint8_t plen)
 
 /**
  * @brief 经 protocol_packer 打包并发送应答帧
+ * @note  应答 payload 自动前置本板设备 ID（源 ID）
  */
 static void com_reply(uint8_t reply_cmd, const uint8_t* payload, uint8_t plen)
 {
     s_cmd_buf[0] = reply_cmd;
     s_cmd_buf[1] = 0; /* data_len 占位，由 fill_len_cb 回填 */
+    s_cmd_buf[2] = SRV_COM_MST_DEV_ID; /* 源设备 ID */
     if (plen > 0U && payload != NULL) {
-        memcpy(&s_cmd_buf[2], payload, plen);
+        memcpy(&s_cmd_buf[3], payload, plen);
     }
 
     uint8_t* frame = NULL;
     uint16_t frame_len = 0;
     const protocol_packer_error_t err = protocol_packer_pack(&s_packer,
-        s_cmd_buf, (uint16_t)(2U + plen), &frame, &frame_len);
+        s_cmd_buf, (uint16_t)(3U + plen), &frame, &frame_len);
 
     if (err != PROTOCOL_PACKER_OK) {
         com_log_error("应答打包失败", (int32_t)err);

@@ -43,7 +43,7 @@
 * **Pin 16 (PA2) — `LSD1_IN`**：推挽输出（GPIO Output），控制低边驱动开关 Q601（ZXMS6004FFTA）栅极（高电平开通，低电平关断）。
 * **Pin 17 (PA3) — `LSD2_IN`**：推挽输出（GPIO Output），控制低边驱动开关 Q602（ZXMS6004FFTA）栅极。
 * **Pin 20 (PA4) — `12V_ISO_EN`**：推挽输出（GPIO Output），控制隔离 12V 模块（URB2412S-6WR3）的 CTRL 引脚（**拉低使能，拉高关闭**；实测确认，与光耦/驱动级反相有关）。
-* **Pin 21 (PA5) — `12V_ISO_PGOOD`**：输入（GPIO Input），经比较器 LM193 与光耦隔离反馈，检测 12V_ISO 是否在正常窗口范围（11.4V ~ 12.6V）（**高电平正常，低电平异常**；实测确认）。
+* **Pin 21 (PA5) — `12V_ISO_PGOOD`**：输入（GPIO Input），经比较器 LM193 与光耦隔离反馈，检测 12V_ISO 是否在正常窗口范围（11.4V ~ 12.6V）（**低电平正常，高电平异常**；实测确认，光耦反相）。
 * **Pin 24 (PC5) — `RS485_EN`**：推挽输出（GPIO Output），控制 RS485 收发器（SP3485）的收发切换控制引脚。
 * **Pin 59 (PB6) — `LED_PWM`**：TIM4_CH1 PWM 输出（状态灯，经数字三极管 Q201/DTC143ZCA 驱动板载蓝色 LED201，亮度由占空比控制；TIM4 组频率 20kHz）。
 * **Pin 61 (PB8) — `FILL_LED_PWM`**：TIM4_CH3 PWM 输出（推荐 20kHz），输出至第 7 页补光灯驱动芯片 PT4115 的 DIM 端，经板载 RC 滤波转为模拟电平以调节补光灯电流（0 ~ 1A）。

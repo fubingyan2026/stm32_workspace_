@@ -106,8 +106,8 @@ typedef struct {
 #define LOG_COLOR_UNDERLINE "\033[4m"
 
 /* 默认配置 */
-#define LOG_DEFAULT_FORMAT_BUFFER_SIZE (256)
-#define LOG_DEFAULT_TX_BUFFER_SIZE     (1024 * 4)
+#define LOG_DEFAULT_FORMAT_BUFFER_SIZE (256U)
+#define LOG_DEFAULT_TX_BUFFER_SIZE     (1024U)
 #define LOG_DEFAULT_LEVEL              LOG_LEVEL_INFO
 #define LOG_DEFAULT_ENABLE_COLOR       (true)
 #define LOG_DEFAULT_ENABLE_TIMESTAMP   (true)

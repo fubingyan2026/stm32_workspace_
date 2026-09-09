@@ -9,7 +9,7 @@
  * 配置表内置在 drv_status.c 中，外部只需调用 init。
  * 副电源模块状态输入 2 路：
  *   - EXT_PCOOG_24V (LM5146 24V 输出 PGOOD, PA1, 高=好)
- *   - ISO_PGOOD_12V (12V_ISO 窗口比较器 11.4~12.6V, PA5, 高=好)
+ *   - ISO_PGOOD_12V (12V_ISO 窗口比较器 11.4~12.6V, PA5, 经光耦反相: 低=好)
  */
 
 #ifndef __DRV_STATUS_H
@@ -26,7 +26,7 @@ extern "C" {
 
 typedef enum {
     DRV_STATUS_24V_PGD,         /**< EXT_PCOOG_24V — 24V 降压输出正常 (PA1, 高有效) */
-    DRV_STATUS_ISO12V_PGD,      /**< ISO_PGOOD_12V — 12V_ISO 输出正常 (PA5, 高有效) */
+    DRV_STATUS_ISO12V_PGD,      /**< ISO_PGOOD_12V — 12V_ISO 输出正常 (PA5, 低有效) */
 
     DRV_STATUS_NUM,
 } drv_status_signal_t;
