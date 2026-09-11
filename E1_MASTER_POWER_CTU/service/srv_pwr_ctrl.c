@@ -184,6 +184,8 @@ void srv_pwr_ctrl_step(uint16_t elapsed_ms)
 
     s_pc.step_elapsed_ms = elapsed_ms;
     fsm_step(&s_pc.fsm);
+            // drv_power_set(DRV_POWER_RAIL_MOTOR, true);
+
 }
 
 void srv_pwr_ctrl_motor_set(bool on)

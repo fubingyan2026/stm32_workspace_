@@ -11,6 +11,11 @@
 
 #include "boot_flash.h"
 
+/* Private constants ---------------------------------------------------------*/
+
+/** @brief 本机 485 设备 ID（写入 metadata.reserved，供 Boot 定向寻址应答） */
+#define SRV_BOOT_DEV_ID (0x02U)
+
 /* Private variables ---------------------------------------------------------*/
 
 static boot_flash_context_t s_flash_ctx;
@@ -28,6 +33,8 @@ bool srv_boot_ctrl_request_upgrade(void)
     }
 
     s_meta.upgrade_flag = 1U;
+    /* 记录本机设备 ID（低字节），Boot 据此只应答寻址到本机的帧 */
+    s_meta.reserved = (s_meta.reserved & 0xFFFFFF00U) | (uint32_t)SRV_BOOT_DEV_ID;
     if (boot_flash_write_metadata(&s_flash_ctx, &s_meta) != BOOT_FLASH_OK) {
         return false;
     }

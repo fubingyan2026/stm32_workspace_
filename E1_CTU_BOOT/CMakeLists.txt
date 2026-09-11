@@ -49,15 +49,16 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     device_drivers/dev_rs485.c
     device_drivers/drv_systick.c
     device_drivers/drv_log_uart.c
+    device_drivers/drv_led.c
     tasks/app_main.c
     tasks/boot_task.c
     tasks/log_task.c
-    service/boot_ymodem.c
+    service/boot_proto.c
     # --- public_layer 共享 Flash/boot 栈 ---
     ../public_layer/device_drivers/hal_flash/hal_flash.c
     ../public_layer/device_drivers/hal_flash/drv_stm32f1_flash.c
     ../public_layer/device_drivers/hal_flash/ring_storage_port.c
-    ../public_layer/service/boot/boot_flash.c
+    service/boot_flash.c
     ../public_layer/m_middlewares/Third_Party/ring_storage/ring_storage.c
     ../public_layer/m_middlewares/Third_Party/ring_storage/rs_crc32.c
     ../public_layer/m_middlewares/Third_Party/mpaland_printf/printf.c
@@ -73,8 +74,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     device_drivers
     tasks
     service
-    # --- 共享 public_layer ---
-    ../public_layer/service/boot
+    # --- 共享 public_layer（仅 middleware/flash 驱动，不含 service|task） ---
     ../public_layer/device_drivers/hal_flash
     ../public_layer/m_middlewares
     ../public_layer/m_middlewares/log

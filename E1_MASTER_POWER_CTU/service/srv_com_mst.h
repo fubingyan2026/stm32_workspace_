@@ -27,6 +27,8 @@
  *       .read_data = app_status_report_fill,   // 数据读取回调
  *       .ctrl      = my_ctrl_cb,               // 控制命令应用回调
  *       .reset_latch = my_reset_cb,            // 清除故障锁存回调（可选）
+ *       .upgrade   = my_upgrade_cb,            // 升级请求回调（可选）
+ *       .info      = my_info_cb,               // 0x07 信息查询回调（可选）
  *       .send_frame= my_send_cb,               // 原始帧发送回调（task 层 → dev_rs485）
  *   };
  *   srv_com_mst_init(&cfg);
@@ -66,7 +68,7 @@ extern "C" {
 typedef enum {
     SRV_COM_MST_ERR_NONE = 0x00, /**< 无错误 */
     SRV_COM_MST_ERR_UNKNOWN_CMD = 0x01, /**< 未知命令 */
-    SRV_COM_MST_ERR_NOT_SUPPORTED = 0x02, /**< 功能暂不支持（如升级请求） */
+    SRV_COM_MST_ERR_NOT_SUPPORTED = 0x02, /**< 功能暂不支持 */
     SRV_COM_MST_ERR_BAD_LEN = 0x03, /**< 帧长度与命令不匹配 */
 } srv_com_mst_err_code_t;
 
@@ -77,7 +79,8 @@ typedef enum {
     SRV_COM_MST_CMD_READ_TEMP = 0x03, /**< 读温度（6B：NTC1/NTC2/MCU ×100℃） */
     SRV_COM_MST_CMD_CTRL = 0x04, /**< 控制（蜂鸣器占空比） */
     SRV_COM_MST_CMD_RESET_LATCH = 0x05, /**< 清除故障锁存（1B magic=0x01） */
-    SRV_COM_MST_CMD_UPGRADE = 0x06, /**< 升级请求（预留，本阶段应答不支持） */
+    SRV_COM_MST_CMD_UPGRADE = 0x06, /**< 升级请求（1B magic=0x01 → 跳转 Boot） */
+    SRV_COM_MST_CMD_READ_INFO = 0x07, /**< 读 Boot/固件信息（15B，见 srv_com_mst_info_t） */
 } srv_com_mst_cmd_t;
 
 /* Exported types ------------------------------------------------------------*/
@@ -134,8 +137,27 @@ typedef void (*srv_com_mst_read_cb_t)(srv_com_mst_report_t* report);
 /** @brief 控制命令应用回调（task 层实现，如蜂鸣器占空比 → drv_buzzer） */
 typedef void (*srv_com_mst_ctrl_cb_t)(const srv_com_mst_ctrl_t* ctrl);
 
+/**
+ * @brief Boot/固件信息（0x07 查询，read_info 回调填充）
+ * @note  取自共享 metadata（只读 peek，不写 Flash）+ 编译期 App 版本
+ */
+typedef struct {
+    uint16_t app_version;    /**< App 编译期版本 */
+    uint16_t meta_version;   /**< Boot metadata 记录的固件版本 */
+    uint32_t fw_size;        /**< metadata 记录的有效固件大小 */
+    uint32_t fw_checksum;    /**< metadata 记录的 32-bit 累加和 */
+    uint16_t reboot_counts;  /**< metadata 记录的上电次数（截断为 16 位） */
+    uint8_t  flags;          /**< bit0=metadata 有效; bit1=upgrade_flag==1; bit2=upgrade_flag==2 */
+} srv_com_mst_info_t;
+
+/** @brief 信息查询回调（task 层实现 → boot_flash_peek_metadata + 版本）；可空 */
+typedef void (*srv_com_mst_info_cb_t)(srv_com_mst_info_t* info);
+
 /** @brief 清除故障锁存回调（task 层实现 → app_fault_policy_reset） */
 typedef void (*srv_com_mst_reset_cb_t)(void);
+
+/** @brief 升级请求回调（task 层实现 → srv_boot_ctrl 写升级标志并复位；可空） */
+typedef void (*srv_com_mst_upgrade_cb_t)(void);
 
 /** @brief 应答帧发送回调（task 层实现 → dev_rs485_send） */
 typedef void (*srv_com_mst_send_cb_t)(const uint8_t* data, uint32_t len);
@@ -145,6 +167,8 @@ typedef struct {
     srv_com_mst_read_cb_t read_data; /**< 数据读取回调（必填） */
     srv_com_mst_ctrl_cb_t ctrl; /**< 控制命令回调（必填） */
     srv_com_mst_reset_cb_t reset_latch; /**< 清除故障锁存回调（可选，缺省应答不支持） */
+    srv_com_mst_upgrade_cb_t upgrade; /**< 升级请求回调（可选，缺省应答不支持） */
+    srv_com_mst_info_cb_t info; /**< 信息查询回调（可选，缺省应答不支持） */
     srv_com_mst_send_cb_t send_frame; /**< 原始帧发送回调（必填） */
 } srv_com_mst_config_t;
 

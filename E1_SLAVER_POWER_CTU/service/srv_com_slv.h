@@ -26,6 +26,7 @@
  *       .ctrl        = my_ctrl_cb,             // 0x04 输出控制应用回调
  *       .reset_latch = my_reset_cb,            // 0x05 清除锁存回调
  *       .upgrade     = my_upgrade_cb,          // 0x06 升级请求回调（可选）
+ *       .info        = my_info_cb,             // 0x07 信息查询回调（可选）
  *       .send_frame  = my_send_cb,             // 原始帧发送回调（task 层 → dev_rs485）
  *   };
  *   srv_com_slv_init(&cfg);
@@ -80,6 +81,7 @@ typedef enum {
     SRV_COM_SLV_CMD_CTRL = 0x04, /**< 输出控制（4B：输出掩码 + 补光亮度） */
     SRV_COM_SLV_CMD_RESET_LATCH = 0x05, /**< 清除故障锁存（1B magic=0x01） */
     SRV_COM_SLV_CMD_UPGRADE = 0x06, /**< 升级请求（1B magic=0x01 → 跳转 Boot） */
+    SRV_COM_SLV_CMD_READ_INFO = 0x07, /**< 读 Boot/固件信息（15B） */
 } srv_com_slv_cmd_t;
 
 /* Exported types ------------------------------------------------------------*/
@@ -139,6 +141,19 @@ typedef void (*srv_com_slv_read_cb_t)(srv_com_slv_report_t* report);
 /** @brief 控制命令应用回调（task 层实现：输出掩码 → srv_pwr_ctrl、补光 → drv_pwm） */
 typedef void (*srv_com_slv_ctrl_cb_t)(const srv_com_slv_ctrl_t* ctrl);
 
+/** @brief Boot/固件信息（0x07 查询，read_info 回调填充） */
+typedef struct {
+    uint16_t app_version;    /**< App 编译期版本 */
+    uint16_t meta_version;   /**< Boot metadata 记录的固件版本 */
+    uint32_t fw_size;        /**< metadata 记录的有效固件大小 */
+    uint32_t fw_checksum;    /**< metadata 记录的 32-bit 累加和 */
+    uint16_t reboot_counts;  /**< metadata 记录的上电次数（截断为 16 位） */
+    uint8_t  flags;          /**< bit0=metadata 有效; bit1=upgrade_flag==1; bit2=upgrade_flag==2 */
+} srv_com_slv_info_t;
+
+/** @brief 信息查询回调（task 层实现 → boot_flash_peek_metadata + 版本）；可空 */
+typedef void (*srv_com_slv_info_cb_t)(srv_com_slv_info_t* info);
+
 /** @brief 清除故障锁存回调（task 层实现 → srv_pwr_ctrl_clear_latch；可空） */
 typedef void (*srv_com_slv_reset_cb_t)(void);
 
@@ -154,6 +169,7 @@ typedef struct {
     srv_com_slv_ctrl_cb_t ctrl; /**< 控制命令回调（必填） */
     srv_com_slv_reset_cb_t reset_latch; /**< 清除锁存回调（可选） */
     srv_com_slv_upgrade_cb_t upgrade; /**< 升级请求回调（可选） */
+    srv_com_slv_info_cb_t info; /**< 信息查询回调（可选，缺省应答不支持） */
     srv_com_slv_send_cb_t send_frame; /**< 原始帧发送回调（必填） */
 } srv_com_slv_config_t;
 

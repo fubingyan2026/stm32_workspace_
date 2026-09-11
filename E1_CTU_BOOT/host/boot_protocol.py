@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""E1_CTU_BOOT YMODEM 传输协议层 — 无 GUI 依赖，供 CLI 与上位机(GUI)复用
+"""E1_CTU_BOOT 上位机协议层（方案 B：z 帧寻址分块升级，无 GUI 依赖）
 
-与 docs/boot_485_ymodem.md 对齐：
-  - 标准 YMODEM 接收端邀请流程（板端发 'C'）→ 本端作为发送端
-  - SOH(128B)/STX(1024B) 分包、CRC-16/xmodem（poly 0x1021, init 0）
-  - block0 携带文件名 + 长度；EOT → NAK → EOT → ACK 结束
-  - 另含"请求进入 Boot"的 z 帧构建/应答辅助（带设备地址：
-    Master addr=0x01 cmd=0x06 / Slaver addr=0x02 cmd=0x06；命令码两板统一为 0x06）
+与 docs/boot_485_ymodem.md 及固件 boot_proto 对齐：
+  帧: [ 'z' ][ cmd ][ len ][ payload... ][ CRC8 ][ '\n' ]
+      CRC8 = poly 0x8C, init 0xFF，覆盖 z..payload
+  payload[0] = 目标设备 ID（0x01=MASTER / 0x02=SLAVER / 0x00=广播）
+  数据传输：块内 16 位块号 + CRC16；每帧由设备单独应答 → 多节点 485 安全
+  Boot 【不主动发送】，仅被寻址帧校验通过才回帧（无 'C' 心跳）
 
 依赖: pyserial
 """
@@ -19,50 +19,58 @@ from typing import Callable, Optional
 
 import serial
 
-# ---- YMODEM 控制字符 ----
-SOH = 0x01
-STX = 0x02
-EOT = 0x04
-ACK = 0x06
-NAK = 0x15
-CAN = 0x18
-C = 0x43
-
-MAX_RETRY = 10
-SILENT_TIMEOUT = 5.0        # 逐包应答等待（秒）
-C_WAIT_TIMEOUT = 30.0       # 等待板端 'C' 邀请（秒）
-MAX_FW_SIZE = 0x18000       # App 分区容量 96KB
-
-# ---- App 侧"进入升级"命令（兄弟工程预留，见 docs/boot_485_ymodem.md §5） ----
-DEVICE_MASTER = "master"    # 主电源板 E1_MASTER_POWER_CTU，地址 0x01，升级命令 0x06（两板统一）
-DEVICE_SLAVER = "slaver"    # 副电源板 E1_SLAVER_POWER_CTU，地址 0x02，升级命令 0x06
-DEVICE_BOOT = "boot"        # 直连 Boot（板端已在升级模式，不需请求）
-
-DEVICE_NAMES = {
-    DEVICE_MASTER: "Master 主电源板 (0x01/0x06)",
-    DEVICE_SLAVER: "Slaver 副电源板 (0x02/0x06)",
-    DEVICE_BOOT: "直连 Boot（已在升级模式）",
-}
-
-DEVICE_ADDR = {DEVICE_MASTER: 0x01, DEVICE_SLAVER: 0x02}
-UPGRADE_CMD = {DEVICE_MASTER: 0x06, DEVICE_SLAVER: 0x06}
+# ---- z 帧信封 ----
 Z_HEADER = 0x7A             # 'z'
+Z_FOOT = 0x0A               # '\n'
 Z_REPLY_FLAG = 0x80
 Z_ERR = 0x7F
+
+# ---- 设备 ----
+DEVICE_MASTER = "master"    # Id=0x01，升级命令 0x06（App/Boot 通用）
+DEVICE_SLAVER = "slaver"    # Id=0x02，升级命令 0x06
+DEVICE_BOOT = "boot"        # 广播 Id=0x00（Boot 未定 ID 时仍可选中）
+
+DEVICE_NAMES = {
+    DEVICE_MASTER: "Master 主电源板 (0x01)",
+    DEVICE_SLAVER: "Slaver 副电源板 (0x02)",
+    DEVICE_BOOT: "广播 / 直连 Boot (0x00)",
+}
+DEVICE_ADDR = {DEVICE_MASTER: 0x01, DEVICE_SLAVER: 0x02, DEVICE_BOOT: 0x00}
+# 0x06 对 App = 请求升级并复位；对 Boot = SELECT 选中会话（两者同码，幂等）
+UPGRADE_CMD = {DEVICE_MASTER: 0x06, DEVICE_SLAVER: 0x06, DEVICE_BOOT: 0x06}
+
+# ---- 升级分块协议 ----
+CMD_SELECT = 0x06
+CMD_START = 0x08
+CMD_DATA = 0x09
+CMD_END = 0x0A
+CMD_ABORT = 0x0B
+
+ERR_NONE = 0x00
 ERR_TEXT = {
-    0x00: "无错误",
-    0x01: "未知命令",
-    0x02: "功能暂不支持",
-    0x03: "帧长度与命令不匹配",
+    0x01: "帧长非法",
+    0x02: "状态错/未选中",
+    0x03: "块号错",
+    0x04: "数据 CRC16 错",
+    0x05: "Flash 写失败",
+    0x06: "长度/容量错",
 }
 
-LogCb = Callable[[str, str], None]          # (文本, 级别: info/warn/error/tx)
-PhaseCb = Callable[[str], None]             # 阶段文本
-ProgressCb = Callable[[float], None]        # 0..1 进度
+DATA_MAX = 248              # 每块最大数据字节（与固件 BOOT_PROTO_DATA_MAX 一致；4 字节对齐）
+MAX_FW_SIZE = 0x18000       # App 分区容量 96KB
+
+# ---- App 镜像预检（链接到 AppA 的向量表 sanity） ----
+APP_VECT_ADDR = 0x08008000
+APP_END_ADDR = 0x08008000 + 0x18000
+RAM_BASE = 0x20000000
+RAM_END = 0x20000000 + 48 * 1024
+
+LogCb = Callable[[str, str], None]
+PhaseCb = Callable[[str], None]
+ProgressCb = Callable[[float], None]
 
 
 def crc16_xmodem(data: bytes, crc: int = 0) -> int:
-    """CRC-16/xmodem：多项式 0x1021，初值 0"""
     for byte in data:
         crc ^= byte << 8
         for _ in range(8):
@@ -73,7 +81,6 @@ def crc16_xmodem(data: bytes, crc: int = 0) -> int:
     return crc
 
 
-# ---- z 帧 CRC8（与兄弟固件 m_middlewares crc.c / host *_protocol.py 一致） ----
 _CRC8_TABLE: list[int] = []
 for _i in range(256):
     _crc = _i
@@ -92,36 +99,47 @@ def crc8(data: bytes) -> int:
     return crc
 
 
-def build_upgrade_frame(device: str) -> Optional[bytes]:
-    """构建"请求进入 Boot" z 帧（Master 0x01/0x06、Slaver 0x02/0x06，payload magic=0x01）
+def check_app_image(data: bytes) -> Optional[str]:
+    """预检是否为链接到 AppA 的有效固件（向量表 sanity）。返回 None=通过。"""
+    if len(data) < 16:
+        return "文件过小，不是有效固件"
+    sp = int.from_bytes(data[0:4], "little")
+    pc = int.from_bytes(data[4:8], "little")
+    if not (RAM_BASE <= sp <= RAM_END):
+        return f"向量表栈顶 0x{sp:08X} 不在 RAM 范围（疑似非本 App 固件）"
+    if (pc & 1) == 0 or not (APP_VECT_ADDR <= pc < APP_END_ADDR):
+        return (f"复位向量 0x{pc:08X} 不在 AppA 区间 "
+                f"[0x{APP_VECT_ADDR:08X}, 0x{APP_END_ADDR:08X})")
+    return None
 
-    [z][addr][cmd][data_len=1][0x01][crc8][0x0A]
-    """
+
+def build_frame(cmd: int, payload: bytes) -> bytes:
+    """构建 z 帧：[z][cmd][len][payload][crc8(z..payload)][\\n]"""
+    body = bytes([Z_HEADER, cmd, len(payload)]) + payload
+    return body + bytes([crc8(body), Z_FOOT])
+
+
+def build_upgrade_frame(device: str) -> Optional[bytes]:
+    """构建"请求进入升级"帧（两板 0x06，payload=[目标ID][magic=0x01]）"""
     cmd = UPGRADE_CMD.get(device)
     addr = DEVICE_ADDR.get(device)
     if cmd is None or addr is None:
         return None
-    body = bytes([Z_HEADER, addr, cmd, 0x01, 0x01])
-    return body + bytes([crc8(body), 0x0A])
+    return build_frame(cmd, bytes([addr, 0x01]))
 
 
-def _frame_hex(frame: bytes) -> str:
-    return " ".join(f"{b:02X}" for b in frame)
+def _hex(data: bytes) -> str:
+    return " ".join(f"{b:02X}" for b in data)
 
 
-class YmodemSender:
-    """YMODEM 发送端（阻塞式同步运行，须在独立线程调用）
+class BootProtoSender:
+    """寻址分块升级发送端（阻塞同步，须在独立线程运行）
 
-    用法:
-        ser = serial.Serial(port, baud, timeout=0)
-        sender = YmodemSender(ser, log_cb=..., phase_cb=..., progress_cb=...)
-        ok = sender.send_file("app.bin")
-
-    中止: 另一线程调用 sender.cancel()（内部在安全点发 CAN(0x18)）。
+    流程：SELECT(0x06) → START(0x08) → DATA(0x09)×N → END(0x0A)
+    每步等待设备应答并重试；设备若 ABORT/超时则失败。
     """
 
-    def __init__(self,
-                 serial_handle: serial.Serial,
+    def __init__(self, serial_handle: serial.Serial,
                  log_cb: Optional[LogCb] = None,
                  phase_cb: Optional[PhaseCb] = None,
                  progress_cb: Optional[ProgressCb] = None) -> None:
@@ -129,212 +147,216 @@ class YmodemSender:
         self._log = log_cb or (lambda _t, _l: None)
         self._phase = phase_cb or (lambda _t: None)
         self._progress = progress_cb or (lambda _f: None)
-        self._cancel_flag = False
+        self._cancel = False
+        self._rx = bytearray()
 
-    # ---- 对外控制 ----
     def cancel(self) -> None:
-        """请求中止（线程安全；发送端会在安全点发出 CAN）"""
-        self._cancel_flag = True
+        self._cancel = True
 
-    # ---- 传输 ----
-    def send_file(self, filepath: str, data: Optional[bytes] = None,
-                  use_1k: bool = True) -> bool:
-        """阻塞发送一个固件文件。成功返回 True。
-
-        use_1k=True 用 STX(1024B) 数据包（默认，YMODEM 常规）；置 False 用
-        SOH(128B) 小包，用于定位 1KB 突发相关的链路问题。
-        """
+    # ---------- 对外主流程 ----------
+    def transfer(self, device: str, filepath: str,
+                 data: Optional[bytes] = None) -> bool:
+        addr = DEVICE_ADDR.get(device)
+        if addr is None:
+            self._log("未知设备类型", "error")
+            return False
         if data is None:
             with open(filepath, "rb") as f:
                 data = f.read()
         size = len(data)
         if size == 0 or size > MAX_FW_SIZE:
-            self._log(f"固件大小 {size}B 非法（0 < size ≤ {MAX_FW_SIZE}）", "error")
+            self._log(f"固件大小 {size}B 非法（≤{MAX_FW_SIZE}）", "error")
             return False
+        reason = check_app_image(data)
+        if reason is not None:
+            self._log(f"固件预检失败：{reason}", "error")
+            return False
+        checksum = sum(data) & 0xFFFFFFFF
         fname = os.path.basename(filepath)
 
-        block = 1024 if use_1k else 128
-        block_hdr = STX if use_1k else SOH
-
-        # 1) 等待板端 'C' 邀请
-        self._phase("等待板端进入升级模式 ('C')...")
-        self._log("等待接收端 'C'（板端 Boot 升级模式）...", "info")
-        if not self._wait_for_c(C_WAIT_TIMEOUT):
-            self._log("超时：未收到接收端邀请（确认板端已进入升级模式、波特率一致）",
-                      "error")
+        # 1) SELECT
+        self._phase("选中设备并进入升级会话")
+        if not self._select(addr):
             return False
-        self._log("收到 'C'，开始传输", "info")
+        self._log(f"已选中设备 0x{addr:02X}（{fname}, {size}B, sum=0x{checksum:08X}）",
+                  "info")
 
-        # 2) block0 头包（文件名 + 长度）
-        self._phase("发送头包 block0")
-        hdr = bytearray(128)
-        name = fname.encode("utf-8")[:90]
-        hdr[:len(name)] = name
-        hdr[len(name)] = 0
-        hdr[124] = (size >> 16) & 0xFF
-        hdr[125] = (size >> 8) & 0xFF
-        hdr[126] = size & 0xFF
-        if not self._send_packet(SOH, 0, bytes(hdr)):
+        # 2) START
+        self._phase("擦除暂存区并开始下载")
+        if not self._cmd_start(addr, size, checksum):
             return False
-        self._log(f"block0 已 ACK（{fname}, {size} 字节）", "info")
 
-        # 3) 数据包
+        # 3) DATA
         self._phase("传输固件数据")
-        seq = 1
+        total_blk = (size + DATA_MAX - 1) // DATA_MAX
+        blk = 0
         offset = 0
-        total_pkts = (size + block - 1) // block
         while offset < size:
-            if self._cancel_flag:
-                self._abort()
+            if self._cancel:
+                self._send_abort(addr)
                 return False
-            chunk = data[offset:offset + block]
-            pad = chunk + b"\x1A" * (block - len(chunk))
-            if not self._send_packet(block_hdr, seq, pad):
+            chunk = data[offset:offset + DATA_MAX]
+            if not self._cmd_data(addr, blk, chunk):
+                self._send_abort(addr)
                 return False
             offset += len(chunk)
-            seq = (seq + 1) & 0xFF
+            blk += 1
             self._progress(min(offset / size, 1.0))
-            self._log(f"块 {(seq - 1 + total_pkts) % 256}/{total_pkts} 已 ACK"
-                      f"（{(offset / max(size, 1)) * 100:.0f}%）", "tx")
-        self._log("全部数据已 ACK", "info")
+            if (blk % 8 == 0) or (blk == total_blk):
+                self._log(f"块 {blk}/{total_blk}（{offset * 100 // size}%）", "tx")
+        self._log("数据全部写入", "info")
 
-        # 4) EOT → NAK → EOT → ACK
-        self._phase("结束传输（EOT），板端校验并提交")
-        self._send_byte(EOT)
-        if self._recv_byte(SILENT_TIMEOUT) != NAK:
-            self._log("首个 EOT 未收到 NAK（继续）", "warn")
-        self._send_byte(EOT)
-        if self._recv_byte(SILENT_TIMEOUT) != ACK:
-            self._log("第二个 EOT 未收到 ACK（板端可能已进入提交，稍后自动复位）",
-                      "warn")
-        self._log("传输结束。板端正在校验并提升 A 分区，随后自动复位运行新固件...",
-                  "info")
+        # 4) END（板端提交并复位）
+        self._phase("提交固件（校验→提升→复位）")
+        if not self._cmd_end(addr):
+            return False
+        self._log("升级完成，板端复位运行新固件", "info")
         return True
 
-    # ---- 内部 ----
-    def _send_byte(self, byte: int) -> None:
+    # ---------- 各命令 ----------
+    def _select(self, addr: int) -> bool:
+        frame = build_frame(CMD_SELECT, bytes([addr, 0x01]))
+        for attempt in range(8):
+            if self._cancel:
+                return False
+            self._tx(frame)
+            rep = self._wait_reply(CMD_SELECT, 2.0)
+            if rep is not None:
+                err = rep[1] if len(rep) > 1 else 0xFF
+                if err == ERR_NONE:
+                    return True
+                self._log(f"SELECT 失败: {ERR_TEXT.get(err, hex(err))}", "warn")
+            time.sleep(0.3)
+        self._log("SELECT 超时：未收到 Boot 应答（确认设备在升级模式/ID 正确）",
+                  "error")
+        return False
+
+    def _cmd_start(self, addr: int, size: int, checksum: int) -> bool:
+        pl = bytes([addr]) + size.to_bytes(4, "little") \
+            + checksum.to_bytes(4, "little")
+        return self._cmd_err_only(CMD_START, pl, 5.0, "START")
+
+    def _cmd_data(self, addr: int, blk: int, chunk: bytes) -> bool:
+        for attempt in range(8):
+            if self._cancel:
+                return False
+            crc = crc16_xmodem(chunk)
+            pl = (bytes([addr]) + blk.to_bytes(2, "little")
+                  + crc.to_bytes(2, "little") + chunk)
+            self._tx(build_frame(CMD_DATA, pl))
+            rep = self._wait_reply(CMD_DATA, 2.0)
+            if rep is None:
+                self._log(f"块 {blk} 应答超时，重发...", "warn")
+                continue
+            err = rep[1] if len(rep) > 1 else 0xFF
+            if err == ERR_NONE:
+                return True
+            self._log(f"块 {blk} 失败: {ERR_TEXT.get(err, hex(err))}，重发...",
+                      "warn")
+        return False
+
+    def _cmd_end(self, addr: int) -> bool:
+        return self._cmd_err_only(CMD_END, bytes([addr]), 30.0, "END")
+
+    def _send_abort(self, addr: int) -> None:
         try:
-            self._ser.write(bytes([byte]))
+            self._tx(build_frame(CMD_ABORT, bytes([addr])))
+            self._wait_reply(CMD_ABORT, 1.0)
+        except Exception:  # noqa: BLE001
+            pass
+        self._log("已发送 ABORT 中止", "warn")
+
+    def _cmd_err_only(self, cmd: int, payload: bytes, timeout: float,
+                      name: str) -> bool:
+        for attempt in range(4):
+            if self._cancel:
+                return False
+            self._tx(build_frame(cmd, payload))
+            rep = self._wait_reply(cmd, timeout)
+            if rep is not None:
+                err = rep[1] if len(rep) > 1 else 0xFF
+                if err == ERR_NONE:
+                    return True
+                self._log(f"{name} 失败: {ERR_TEXT.get(err, hex(err))}", "error")
+                return False
+            self._log(f"{name} 应答超时，重试...", "warn")
+        return False
+
+    # ---------- 收发 ----------
+    def _tx(self, frame: bytes) -> None:
+        try:
+            self._ser.write(frame)
         except Exception as exc:  # noqa: BLE001
             self._log(f"发送失败: {exc}", "error")
 
-    def _abort(self) -> None:
-        try:
-            self._ser.write(bytes([CAN]))
-        except Exception:  # noqa: BLE001
-            pass
-        self._log("已中止传输（发送 CAN）", "warn")
-        self._phase("已中止")
-
-    def _recv_byte(self, timeout: float, skip_c: bool = True) -> Optional[int]:
-        """读取单字节；skip_c=True 时跳过冗余的 'C'（接收端心跳提示/续发邀请）"""
+    def _wait_reply(self, cmd: int, timeout: float) -> Optional[bytes]:
         deadline = time.time() + timeout
+        want = cmd | Z_REPLY_FLAG
         while time.time() < deadline:
-            if self._cancel_flag:
-                self._abort()
+            if self._cancel:
                 return None
-            n = self._ser.in_waiting
-            if n > 0:
-                b = self._ser.read(1)
-                if not b:
-                    continue
-                v = b[0]
-                if skip_c and v == C:
-                    continue
-                return v
-            time.sleep(0.002)
+            frame = self._read_frame(deadline)
+            if frame is None:
+                return None
+            rcmd, payload = frame
+            if rcmd == want:
+                return payload
+            if rcmd == Z_ERR:
+                code = payload[1] if len(payload) > 1 else 0xFF
+                self._log(f"设备错误应答: {ERR_TEXT.get(code, hex(code))}", "error")
+                return None
         return None
 
-    def _wait_for_c(self, timeout: float) -> bool:
-        """等待接收端进入传输的 'C' 邀请。
-
-        板端 Boot 升级模式会周期性发 'C'；此阶段必须返回 'C' 本身，
-        其他噪声字节忽略后继续等待。返回 True=已收到 'C'。
-        """
-        deadline = time.time() + timeout
+    def _read_frame(self, deadline: float) -> Optional[tuple[int, bytes]]:
+        """从串口解析一帧完整 z 帧（CRC8 校验通过）；超时返回 None"""
         while time.time() < deadline:
-            if self._cancel_flag:
-                self._abort()
-                return False
+            if self._cancel:
+                return None
             n = self._ser.in_waiting
-            if n > 0:
-                b = self._ser.read(1)
-                if not b:
+            if n <= 0:
+                time.sleep(0.002)
+                continue
+            self._rx.extend(self._ser.read(n))
+            # 查找完整帧
+            while True:
+                idx = self._rx.find(bytes([Z_HEADER]))
+                if idx < 0:
+                    self._rx.clear()
+                    break
+                if idx > 0:
+                    del self._rx[:idx]
+                if len(self._rx) < 3:
+                    break
+                plen = self._rx[2]
+                total = plen + 5
+                if len(self._rx) < total:
+                    break
+                frame = bytes(self._rx[:total])
+                del self._rx[:total]
+                if frame[-1] != Z_FOOT:
                     continue
-                if b[0] == C:
-                    return True
-                # 非 'C' 噪声（如请求跳转后遗留应答/总线杂讯）：忽略继续等
-            time.sleep(0.002)
-        return False
-
-    def _send_packet(self, header: int, seq: int, data: bytes) -> bool:
-        """发送单包并等待 ACK/NAK（含重试）。True=ACK。"""
-        payload = bytes([header, seq & 0xFF, (~seq) & 0xFF]) + data
-        crc = crc16_xmodem(data)
-        frame = payload + bytes([crc & 0xFF, (crc >> 8) & 0xFF])
-
-        for attempt in range(MAX_RETRY):
-            if self._cancel_flag:
-                self._abort()
-                return False
-            try:
-                self._ser.write(frame)
-            except Exception as exc:  # noqa: BLE001
-                self._log(f"发送失败: {exc}", "error")
-                return False
-            resp = self._recv_byte(SILENT_TIMEOUT)
-            if resp == ACK:
-                return True
-            if resp == NAK:
-                self._log(f"NAK seq={seq & 0xFF} attempt={attempt + 1}，重发...",
-                          "warn")
-                continue
-            if resp == CAN:
-                self._log("接收端 CAN 中止", "error")
-                return False
-            if resp is None:
-                self._log(f"等待应答超时 seq={seq & 0xFF}，重发...", "warn")
-                continue
-            # 其他字符忽略后重发
-        self._log(f"seq={seq & 0xFF} 重试次数超限", "error")
-        return False
+                if crc8(frame[:-2]) != frame[-2]:
+                    continue
+                return frame[1], frame[3:3 + plen]
+        return None
 
 
-def request_boot(serial_handle: serial.Serial,
-                 device: str,
+def request_boot(serial_handle: serial.Serial, device: str,
                  log_cb: Optional[LogCb] = None) -> bool:
-    """向运行中的 App 发送"请求进入 Boot"命令（z 帧），并简短读取应答/状态
-
-    device: DEVICE_MASTER / DEVICE_SLAVER。返回是否已发出（不校验后续复位）。
-    """
+    """发送 0x06 邀请：对 App=请求升级并复位；对 Boot=SELECT 选中会话（幂等）"""
     log = log_cb or (lambda _t, _l: None)
     frame = build_upgrade_frame(device)
     if frame is None:
-        log("未知设备类型，无法构建升级请求", "error")
+        log("该目标不支持 0x06（检查设备类型）", "error")
         return False
-    log(f"TX  {_frame_hex(frame)}", "tx")
+    log(f"TX  {_hex(frame)}", "tx")
     try:
         serial_handle.write(frame)
     except Exception as exc:  # noqa: BLE001
         log(f"发送失败: {exc}", "error")
         return False
-
-    # 短暂读取 App 应答（0x7F 错误 / 0x9x ACK），不阻塞等待复位后的 Boot
-    deadline = time.time() + 0.5
-    buf = bytearray()
-    while time.time() < deadline:
-        n = serial_handle.in_waiting
-        if n > 0:
-            buf.extend(serial_handle.read(n))
-        time.sleep(0.01)
-    if buf:
-        log(f"RX  {_frame_hex(bytes(buf))}", "tx")
-        if len(buf) >= 6 and buf[2] == Z_ERR:
-            code = buf[4] if len(buf) > 4 else 0xFF
-            log(f"App 应答不支持升级命令: {ERR_TEXT.get(code, '未知')} (0x{code:02X})",
-                "warn")
-        else:
-            log("App 已应答，将复位进入 Boot...", "info")
-    else:
-        log("已发送升级请求（App 将复位进入 Boot）", "info")
+    time.sleep(0.4)
+    n = serial_handle.in_waiting
+    if n > 0:
+        log(f"RX  {_hex(serial_handle.read(n))}", "tx")
     return True

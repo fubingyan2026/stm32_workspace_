@@ -21,6 +21,7 @@
 #include "com_task.h"
 
 #include "app_status_report.h"
+#include "boot_flash.h"
 #include "dev_rs485.h"
 #include "drv_pwm.h"
 #include "drv_systick.h"
@@ -64,6 +65,12 @@
 static sw_timer_t s_timer;
 static bool s_upgrade_pending; /**< 升级请求待处理（ACK 发出后执行跳转） */
 
+/** @brief 本板 App 版本（0x07 查询上报，可按发布修改） */
+#define COM_APP_FW_VERSION (0x001U)
+
+/** @brief metadata 只读查询上下文（首次调用初始化；不写 Flash） */
+static boot_flash_context_t s_boot_flash_ctx;
+
 /* Private function prototypes -----------------------------------------------*/
 
 static void com_timer_cb(void* user_data);
@@ -71,6 +78,7 @@ static void com_send_frame(const uint8_t* data, uint32_t len);
 static void com_apply_ctrl(const srv_com_slv_ctrl_t* ctrl);
 static void com_reset_latch(void);
 static void com_upgrade_request(void);
+static void com_read_info(srv_com_slv_info_t* info);
 static void com_exec_upgrade(void);
 
 /* Exported functions --------------------------------------------------------*/
@@ -94,6 +102,7 @@ void com_task_init(void)
         .ctrl = com_apply_ctrl,
         .reset_latch = com_reset_latch,
         .upgrade = com_upgrade_request,
+        .info = com_read_info,
         .send_frame = com_send_frame,
     };
     srv_com_slv_init(&cfg);
@@ -203,11 +212,37 @@ static void com_reset_latch(void)
 
 /**
  * @brief 升级请求回调（0x06 升级请求）
- * @note  先置标志等待 ACK 排空（见 com_exec_upgrade），再写 boot 标志并复位
+ * @note  先置标志等待 ACK 发出（见 com_timer_cb），再写 boot 标志并复位
  */
 static void com_upgrade_request(void)
 {
     s_upgrade_pending = true;
+}
+
+/**
+ * @brief 信息查询回调（0x07）：只读 metadata + 编译期 App 版本
+ * @note  使用 boot_flash_peek_metadata（不累加启动次数/不写 Flash）
+ */
+static void com_read_info(srv_com_slv_info_t* info)
+{
+    boot_metadata_t meta;
+
+    info->app_version = COM_APP_FW_VERSION;
+    info->flags = 0U;
+    if (boot_flash_peek_metadata(&s_boot_flash_ctx, &meta) == BOOT_FLASH_OK) {
+        info->meta_version = meta.version;
+        info->fw_size = meta.fw_size;
+        info->fw_checksum = meta.fw_checksum;
+        info->reboot_counts = (uint16_t)meta.reboot_counts;
+        if (meta.magic == BOOT_METADATA_MAGIC) {
+            info->flags |= 0x01U;
+        }
+        if (meta.upgrade_flag == 1U) {
+            info->flags |= 0x02U;
+        } else if (meta.upgrade_flag == 2U) {
+            info->flags |= 0x04U;
+        }
+    }
 }
 
 /**

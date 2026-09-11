@@ -39,7 +39,8 @@ enable_language(C ASM)
 #   - 通信：RS485 主机查询应答式；日志：USART1
 #   - 共享层：../public_layer/m_middlewares（sw_timer/msg_fifo/protocol_parser 等）
 #             ../public_layer/service/srv_signal（状态灯效引擎）
-#             ../public_layer/service/boot + hal_flash（升级跳转的 metadata 读写）
+#             ../E1_CTU_BOOT/service/boot_flash + hal_flash（升级跳转的 metadata 读写，
+#             boot 相关代码统一由 E1_CTU_BOOT 工程持有）
 #   - log_task 为工程内本地副本（UART 输出，见 tasks/log_task.c）
 # ==============================================================================
 
@@ -73,7 +74,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # 共享服务（public_layer）：状态灯效引擎
     ${CMAKE_SOURCE_DIR}/../public_layer/service/srv_signal.c
     # 共享 boot 栈（metadata/升级跳转；ring_storage/crc 已在 m_middlewares 库内）
-    ${CMAKE_SOURCE_DIR}/../public_layer/service/boot/boot_flash.c
+    # Boot 相关代码统一由 E1_CTU_BOOT 工程持有（不再取 public_layer/service）
+    ${CMAKE_SOURCE_DIR}/../E1_CTU_BOOT/service/boot_flash.c
     ${CMAKE_SOURCE_DIR}/../public_layer/device_drivers/hal_flash/hal_flash.c
     ${CMAKE_SOURCE_DIR}/../public_layer/device_drivers/hal_flash/drv_stm32f1_flash.c
     ${CMAKE_SOURCE_DIR}/../public_layer/device_drivers/hal_flash/ring_storage_port.c
@@ -87,7 +89,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     service
     applications
     ../public_layer/service
-    ../public_layer/service/boot
+    ../E1_CTU_BOOT/service
     ../public_layer/device_drivers/hal_flash
 )
 
@@ -101,7 +103,7 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     HAL_FLASH_CHIP_STM32F1
     # Boot 适配：向量表偏移（main() 在 HAL_Init 前执行 SCB->VTOR=FLASH_BASE|VECT_TAB_OFFSET；
     #            App 链接于 A 分区 0x08008000，布局见 ../E1_CTU_BOOT/docs/boot_485_ymodem.md）
-    VECT_TAB_OFFSET=0x00000000U
+    VECT_TAB_OFFSET=0x00008000U
     # 分区布局（与 E1_CTU_BOOT 一致，见 ../E1_CTU_BOOT/docs/boot_485_ymodem.md）
     BOOT_FLASH_BOOT_SIZE=0x8000U
     BOOT_FLASH_APP_SIZE=0x18000U

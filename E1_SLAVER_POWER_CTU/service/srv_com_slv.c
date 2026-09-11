@@ -70,6 +70,7 @@ static srv_com_slv_read_cb_t s_read_data;
 static srv_com_slv_ctrl_cb_t s_ctrl_cb;
 static srv_com_slv_reset_cb_t s_reset_cb;
 static srv_com_slv_upgrade_cb_t s_upgrade_cb;
+static srv_com_slv_info_cb_t s_info_cb;
 static srv_com_slv_send_cb_t s_send_frame;
 
 static uint32_t s_last_err_log; /**< 错误日志限频时间戳 (ms) */
@@ -96,6 +97,7 @@ void srv_com_slv_init(const srv_com_slv_config_t* config)
     s_ctrl_cb = NULL;
     s_reset_cb = NULL;
     s_upgrade_cb = NULL;
+    s_info_cb = NULL;
     s_send_frame = NULL;
     s_initialized = false;
 
@@ -108,6 +110,7 @@ void srv_com_slv_init(const srv_com_slv_config_t* config)
     s_ctrl_cb = config->ctrl;
     s_reset_cb = config->reset_latch;
     s_upgrade_cb = config->upgrade;
+    s_info_cb = config->info;
     s_send_frame = config->send_frame;
 
     /* protocol_parser：接收下行帧 */
@@ -157,6 +160,7 @@ void srv_com_slv_deinit(void)
     s_ctrl_cb = NULL;
     s_reset_cb = NULL;
     s_upgrade_cb = NULL;
+    s_info_cb = NULL;
     s_send_frame = NULL;
     s_initialized = false;
 
@@ -308,6 +312,7 @@ static void com_handle_frame(uint8_t cmd, const uint8_t* payload, uint8_t plen)
     SRV_COM_SLV_LOG_D("RX cmd=0x%02X dev_id=0x%02X%s",
         (unsigned)cmd, (unsigned)rx_id,
         (rx_id == SRV_COM_SLV_DEV_ID) ? " (本板)" : " (忽略)");
+    (void)rx_id; /* 当 SRV_COM_SLV_LOG_D 被编译裁剪时避免未用告警 */
 
     /* 定向：payload[0] 必须为本板设备 ID，否则忽略（其它板查询流量，不响应） */
     if (plen < 1U || payload == NULL || payload[0] != SRV_COM_SLV_DEV_ID) {
@@ -407,6 +412,31 @@ static void com_handle_frame(uint8_t cmd, const uint8_t* payload, uint8_t plen)
         } else {
             com_reply_err(SRV_COM_SLV_ERR_NOT_SUPPORTED);
         }
+        break;
+    }
+    case SRV_COM_SLV_CMD_READ_INFO: {
+        if (!s_info_cb) {
+            com_reply_err(SRV_COM_SLV_ERR_NOT_SUPPORTED);
+            return;
+        }
+        srv_com_slv_info_t info = { 0 };
+        s_info_cb(&info);
+        reply_payload[0] = (uint8_t)(info.app_version & 0xFFU);
+        reply_payload[1] = (uint8_t)(info.app_version >> 8);
+        reply_payload[2] = (uint8_t)(info.meta_version & 0xFFU);
+        reply_payload[3] = (uint8_t)(info.meta_version >> 8);
+        reply_payload[4] = (uint8_t)(info.fw_size & 0xFFU);
+        reply_payload[5] = (uint8_t)((info.fw_size >> 8) & 0xFFU);
+        reply_payload[6] = (uint8_t)((info.fw_size >> 16) & 0xFFU);
+        reply_payload[7] = (uint8_t)((info.fw_size >> 24) & 0xFFU);
+        reply_payload[8] = (uint8_t)(info.fw_checksum & 0xFFU);
+        reply_payload[9] = (uint8_t)((info.fw_checksum >> 8) & 0xFFU);
+        reply_payload[10] = (uint8_t)((info.fw_checksum >> 16) & 0xFFU);
+        reply_payload[11] = (uint8_t)((info.fw_checksum >> 24) & 0xFFU);
+        reply_payload[12] = (uint8_t)(info.reboot_counts & 0xFFU);
+        reply_payload[13] = (uint8_t)(info.reboot_counts >> 8);
+        reply_payload[14] = info.flags;
+        reply_len = 15U;
         break;
     }
     default:

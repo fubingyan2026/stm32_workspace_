@@ -64,7 +64,8 @@
 | 0x03 | 主机→板 | 读温度 | `[目标ID]`（1） | `0x83` |
 | 0x04 | 主机→板 | 控制（蜂鸣器） | `[目标ID][占空比]`（2） | `0x84` |
 | 0x05 | 主机→板 | 清除故障锁存 | `[目标ID][0x01]`（2） | `0x85` |
-| 0x06 | 主机→板 | 升级请求（预留） | `[目标ID][0x01]`（2） | `0x7F`（暂不支持） |
+| 0x06 | 主机→板 | 升级请求（跳转 Boot） | `[目标ID][0x01]`（2） | `0x86`（已实现） |
+| 0x07 | 主机→板 | 读 Boot/固件信息 | `[目标ID]`（1） | `0x87`：`[源ID][app_ver u16][meta_ver u16][fw_size u32][fw_sum u32][reboot u16][flags u8]`（16） |
 | 0x7F | 板→主机 | 错误应答 | — | — |
 
 > 命令码与 E1_SLAVER 完全相同，两板只是应答里的数据内容不同。
@@ -146,12 +147,34 @@
 
 应答：`payload = [源ID] [0x00]`（len=2）
 
-### 5.6 升级请求（0x06，预留）
+### 5.6 升级请求（0x06，已实现）
 
 请求：`payload = [目标ID] [0x01]`（len=2）
-本阶段**不支持**，应答：`cmd=0x7F，payload=[源ID] [0x02]`（0x02=功能暂不支持）。
 
-### 5.7 错误应答（0x7F）
+板应答 `0x86`，payload=`[源ID] [0x00]`，随后写入共享 Boot Metadata
+（`0x0803E000`，`upgrade_flag=1`）并复位进入 Bootloader
+（`E1_CTU_BOOT`，RS485 YMODEM 升级模式）。
+
+升级全流程（详见 `../E1_CTU_BOOT/docs/boot_485_ymodem.md`）：
+1. 主机发 `0x06`（payload `[0x01][0x01]`）→ 本板 ACK 后复位；
+2. Bootloader 周期发 `'C'`（115200-8N1），主机选择 App 固件（链接地址 0x08008000）
+   以 YMODEM 发送；
+3. Boot 写入 B 槽 → 校验 → 提升 A 槽 → 自动复位运行新固件。
+
+### 5.7 读 Boot/固件信息（0x07，已实现）
+
+请求：`payload = [目标ID]`（len=1）
+
+应答 `0x87`，payload（16B，含源 ID）：
+`[源ID][app_ver u16][meta_ver u16][fw_size u32][fw_checksum u32][reboot_counts u16][flags u8]`
+
+- `app_ver`：App 编译期版本（`COM_APP_FW_VERSION`）；
+- `meta_ver / fw_size / fw_checksum / reboot_counts`：读共享 Boot Metadata（`0x0803E000`，**只读 peek，不写 Flash、不累加启动次数**）；
+- `flags`：bit0=metadata 有效、bit1=`upgrade_flag==1`、bit2=`upgrade_flag==2`。
+
+> Boot 模式（无 App）下 0x07 无应答；**`0x08–0x0F` 保留给 Boot 升级传输专用**，App 不得占用。
+
+### 5.8 错误应答（0x7F）
 
 `payload = [源ID] [错误码]`（len=2）
 
@@ -202,6 +225,8 @@ z 81 03 01 B0 B1 CRC \n
 | V2.0.0 | 2026-09-03 | 改 G0 同构 z 帧 `[z][cmd][len][payload][CRC8][\n]`，用 protocol_parser/packer |
 | V3.x | 2026-09-08 | 曾引入帧头 addr 字节做两板寻址 |
 | V5.0.0 | 2026-09-09 | **去掉帧头 addr，恢复统一帧头**；设备 ID 放 payload 首字节（下行=目标、上行=源），避免帧头不一致导致解析失败与撞线 |
+| V5.1.0 | 2026-09-11 | Boot 适配：App 移至 AppA 0x08008000；0x06 升级请求已实现（写共享 metadata → 复位进 E1_CTU_BOOT） |
+| V5.2.0 | 2026-09-11 | 新增 0x07 读 Boot/固件信息（只读 metadata + App 版本）；0x08–0x0F 保留给 Boot 传输 |
 
 ## 9. 待实机确认
 

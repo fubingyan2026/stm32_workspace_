@@ -24,6 +24,8 @@
 #include "drv_systick.h"
 #include "log.h"
 #include "srv_adc.h"
+#include "boot_flash.h"
+#include "srv_boot_ctrl.h"
 #include "srv_com_mst.h"
 #include "srv_pwr_ctrl.h"
 #include "srv_pwr_det.h"
@@ -56,6 +58,13 @@
 /* Private variables ---------------------------------------------------------*/
 
 static sw_timer_t s_timer;
+static bool s_upgrade_pending; /**< 升级请求待处理（ACK 发出后执行跳转） */
+
+/** @brief 本板 App 版本（0x07 查询上报，可按发布修改） */
+#define COM_APP_FW_VERSION (0x0100U)
+
+/** @brief metadata 只读查询上下文（首次调用初始化；不写 Flash） */
+static boot_flash_context_t s_boot_flash_ctx;
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -63,6 +72,8 @@ static void com_timer_cb(void* user_data);
 static void com_send_frame(const uint8_t* data, uint32_t len);
 static void com_apply_ctrl(const srv_com_mst_ctrl_t* ctrl);
 static void com_reset_latch(void);
+static void com_upgrade_request(void);
+static void com_read_info(srv_com_mst_info_t* info);
 static void com_read_estop_redun(srv_pwr_det_estop_redun_t* redun);
 static uint8_t com_rail_en_mask(void);
 
@@ -82,14 +93,17 @@ void com_task_init(void)
      * 避免 service 层同层互引） */
     srv_pwr_det_init(com_read_estop_redun, com_rail_en_mask);
 
-    /* 主机协议服务：read_data/ctrl/reset_latch/send_frame 均由本任务接线 */
+    /* 主机协议服务：read_data/ctrl/reset_latch/upgrade/send_frame 均由本任务接线 */
     const srv_com_mst_config_t cfg = {
         .read_data = app_status_report_fill,
         .ctrl = com_apply_ctrl,
         .reset_latch = com_reset_latch,
+        .upgrade = com_upgrade_request,
+        .info = com_read_info,
         .send_frame = com_send_frame,
     };
     srv_com_mst_init(&cfg);
+    s_upgrade_pending = false;
 
     const sw_timer_config_t timer_cfg = {
         .priority = SW_TIMER_PRIO_NORMAL,
@@ -135,6 +149,17 @@ void com_task_service(void)
     }
 
     dev_rs485_tx_flush();
+
+    /* 升级请求：等 ACK 帧发完后写升级标志并复位（跳转 Boot 升级模式） */
+    if (s_upgrade_pending && !dev_rs485_is_tx_busy()) {
+        s_upgrade_pending = false;
+        COM_TASK_LOG_I("升级请求：写 boot 标志并复位进入 Bootloader");
+        if (srv_boot_ctrl_request_upgrade()) {
+            drv_system_reset();
+        } else {
+            COM_TASK_LOG_E("升级标志写入失败，本次不复位");
+        }
+    }
 }
 
 /**
@@ -202,4 +227,39 @@ static void com_apply_ctrl(const srv_com_mst_ctrl_t* ctrl)
 static void com_reset_latch(void)
 {
     app_fault_policy_reset();
+}
+
+/**
+ * @brief 升级请求回调（0x06 升级请求）
+ * @note  先置标志等待 ACK 发出（见 com_task_service 尾部），再写 boot 标志并复位
+ */
+static void com_upgrade_request(void)
+{
+    s_upgrade_pending = true;
+}
+
+/**
+ * @brief 信息查询回调（0x07）：只读 metadata + 编译期 App 版本
+ * @note  使用 boot_flash_peek_metadata（不累加启动次数/不写 Flash）
+ */
+static void com_read_info(srv_com_mst_info_t* info)
+{
+    boot_metadata_t meta;
+
+    info->app_version = COM_APP_FW_VERSION;
+    info->flags = 0U;
+    if (boot_flash_peek_metadata(&s_boot_flash_ctx, &meta) == BOOT_FLASH_OK) {
+        info->meta_version = meta.version;
+        info->fw_size = meta.fw_size;
+        info->fw_checksum = meta.fw_checksum;
+        info->reboot_counts = (uint16_t)meta.reboot_counts;
+        if (meta.magic == BOOT_METADATA_MAGIC) {
+            info->flags |= 0x01U;
+        }
+        if (meta.upgrade_flag == 1U) {
+            info->flags |= 0x02U;
+        } else if (meta.upgrade_flag == 2U) {
+            info->flags |= 0x04U;
+        }
+    }
 }

@@ -39,6 +39,8 @@ void log_task_init(void)
     };
     log_init(&log_cfg);
     log_set_level(LOG_LEVEL_DEBUG);
+    /* Boot 日志关闭 ANSI 颜色，避免部分串口工具显示为乱码/控制字符 */
+    (void)log_set_color_enable(false);
 
     /* UART 后端驱动初始化（本任务是 drv_log_uart 的唯一消费者；
        置于 log_init 之后，避免其内部初始化日志被静默丢弃） */

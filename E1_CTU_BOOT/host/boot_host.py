@@ -4,10 +4,9 @@
 界面风格参考兄弟工程合并后的 `ctu_host/ctu_host.py`（米色底 + 绿色强调）。
 
 功能:
-  1. 连接串口（USB-RS485，115200-8N1）做被动监听（可看到 App/Boot 主动帧与 'C'）
-  2. 可选"请求进入 Boot"：向运行中的 App 发 z 帧升级命令（带设备地址：
-     Master 0x01/0x06、Slaver 0x02/0x06；命令码两板统一为 0x06）
-  3. 选择 .bin 固件 → YMODEM 发送 → 板端校验并提升 A 分区后自动复位
+  1. 连接串口（USB-RS485，115200-8N1）做被动监听
+  2. 统一先发一帧 0x06：运行中的 App 会复位进入 Boot；已在 Boot 则等同 SELECT（幂等）
+  3. 选择 .bin 固件 → 寻址分块传输（SELECT/START/DATA/END）→ 板端校验提升后复位
 
 依赖: pyserial + PySide6
 运行: python host/boot_host.py
@@ -26,12 +25,12 @@ from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QGroupBox, QLabel, QPushButton, QComboBox, QPlainTextEdit,
-    QFileDialog, QProgressBar, QCheckBox,
+    QFileDialog, QProgressBar,
 )
 
 from boot_protocol import (
     DEVICE_BOOT, DEVICE_MASTER, DEVICE_SLAVER, DEVICE_NAMES,
-    MAX_FW_SIZE, YmodemSender, request_boot,
+    MAX_FW_SIZE, BootProtoSender, check_app_image, request_boot,
 )
 
 STYLE = """
@@ -131,17 +130,14 @@ class UpgradeWorker(QThread):
     done = Signal(bool, str)        # (成功, 描述)
 
     def __init__(self, port: str, baud: int, device: str,
-                 filepath: str, request: bool, use_1k: bool = True,
-                 parent=None) -> None:
+                 filepath: str, parent=None) -> None:
         super().__init__(parent)
         self._port = port
         self._baud = baud
         self._device = device
         self._filepath = filepath
-        self._request = request and device in (DEVICE_MASTER, DEVICE_SLAVER)
-        self._use_1k = use_1k
         self._serial: serial.Serial | None = None
-        self._sender: YmodemSender | None = None
+        self._sender: BootProtoSender | None = None
 
     def cancel(self) -> None:
         if self._sender:
@@ -159,21 +155,22 @@ class UpgradeWorker(QThread):
 
         ok = False
         try:
-            if self._request:
-                dev = DEVICE_NAMES.get(self._device, self._device)
-                self.log_line.emit(f"向运行中的 {dev} 发送升级请求...", "info")
-                if not request_boot(self._serial, self._device,
-                                    lambda t, l: self.log_line.emit(t, l)):
-                    self.done.emit(False, "升级请求发送失败")
-                    return
+            # 统一先发一帧 0x06：App 会复位进入 Boot；已在 Boot 则等同 SELECT（幂等）
+            dev = DEVICE_NAMES.get(self._device, self._device)
+            self.log_line.emit(f"发送 0x06 邀请给 {dev}...", "info")
+            if not request_boot(self._serial, self._device,
+                                lambda t, l: self.log_line.emit(t, l)):
+                self.done.emit(False, "0x06 邀请发送失败")
+                return
+            self.phase.emit("等待板端进入/确认 Boot...")
+            time.sleep(0.5)
 
-            self._sender = YmodemSender(
+            self._sender = BootProtoSender(
                 self._serial,
                 log_cb=lambda t, l: self.log_line.emit(t, l),
                 phase_cb=lambda t: self.phase.emit(t),
                 progress_cb=lambda f: self.progress.emit(int(f * 100)))
-            ok = self._sender.send_file(self._filepath,
-                                        use_1k=self._use_1k)
+            ok = self._sender.transfer(self._device, self._filepath)
         except Exception as exc:  # noqa: BLE001
             self.log_line.emit(f"异常: {exc}", "error")
         finally:
@@ -197,6 +194,7 @@ class MainWindow(QMainWindow):
         self._monitor: MonitorWorker | None = None
         self._worker: UpgradeWorker | None = None
         self._filepath: str = ""
+        self._app_ok: bool = False
         self._log: QPlainTextEdit | None = None
         self._build_ui()
 
@@ -239,11 +237,7 @@ class MainWindow(QMainWindow):
         for dev in (DEVICE_MASTER, DEVICE_SLAVER, DEVICE_BOOT):
             self._device_cb.addItem(DEVICE_NAMES[dev], dev)
         self._device_cb.setCurrentIndex(2)  # 默认直连 Boot
-        self._device_cb.currentIndexChanged.connect(self._on_device_changed)
         bl.addWidget(self._device_cb, 0, 1, 1, 2)
-
-        self._request_cb = QCheckBox("先向运行中的 App 发送升级请求（0x01/0x06、0x02/0x06）")
-        bl.addWidget(self._request_cb, 1, 1, 1, 2)
 
         bl.addWidget(QLabel("固件文件:"), 2, 0)
         self._file_lbl = QLabel("--")
@@ -255,11 +249,6 @@ class MainWindow(QMainWindow):
 
         self._size_lbl = QLabel("")
         bl.addWidget(self._size_lbl, 3, 1, 1, 2)
-
-        self._use_1k_cb = QCheckBox("128B 小包模式（链路差时更稳，更慢）")
-        self._use_1k_cb.setToolTip(
-            "勾选后数据块用 SOH(128B) 发送，用于规避 1KB 长包在差链路/噪声下的损坏")
-        bl.addWidget(self._use_1k_cb, 4, 1, 1, 2)
         box.setLayout(bl)
         root.addWidget(box)
 
@@ -300,7 +289,6 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         self.setStyleSheet(STYLE)
         self._update_conn_ui(False, "")
-        self._on_device_changed()
 
     # ---------- 串口 ----------
     def _refresh_ports(self) -> None:
@@ -354,7 +342,6 @@ class MainWindow(QMainWindow):
         self._port_cb.setEnabled(not ok)
         self._baud_cb.setEnabled(not ok)
         self._device_cb.setEnabled(not ok)
-        self._request_cb.setEnabled(not ok)
         self._conn_btn.setObjectName("danger" if not ok else "")
         self._conn_btn.style().unpolish(self._conn_btn)
         self._conn_btn.style().polish(self._conn_btn)
@@ -362,12 +349,6 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(f"E1_CTU_BOOT — RS485 固件升级 ({text})")
 
     # ---------- 文件/设备 ----------
-    def _on_device_changed(self) -> None:
-        dev = self._device_cb.currentData()
-        self._request_cb.setEnabled(dev in (DEVICE_MASTER, DEVICE_SLAVER))
-        if dev == DEVICE_BOOT:
-            self._request_cb.setChecked(False)
-
     def _on_browse(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self, "选择固件", "",
@@ -379,8 +360,21 @@ class MainWindow(QMainWindow):
         self._file_lbl.setToolTip(path)
         size = os.path.getsize(path)
         ok = size <= MAX_FW_SIZE
-        color = "#4C9B73" if ok else "#E0563F"
         note = "" if ok else "（超出 96KB App 分区容量！）"
+        color = "#4C9B73" if ok else "#E0563F"
+
+        # 固件向量表预检：防止误发 Boot 镜像或链接地址不符的 bin
+        try:
+            with open(path, "rb") as f:
+                reason = check_app_image(f.read())
+        except OSError as exc:  # noqa: BLE001
+            reason = f"读取失败: {exc}"
+        self._app_ok = ok and (reason is None)
+        if reason is not None:
+            color = "#E0563F"
+            note = f"（{reason}）"
+            self._log_line(f"固件预检失败：{reason}", "error")
+
         self._size_lbl.setText(
             f"<span style='color:{color};'>大小 {size}B{note}</span>")
         if not ok:
@@ -390,6 +384,9 @@ class MainWindow(QMainWindow):
     def _on_start(self) -> None:
         if not self._filepath:
             self._log_line("请先选择固件 .bin", "warn")
+            return
+        if not self._app_ok:
+            self._log_line("固件未通过预检（非 AppA 链接的有效固件），已阻止升级", "error")
             return
         if self._worker and self._worker.isRunning():
             self._log_line("升级进行中，请先中止", "warn")
@@ -404,16 +401,13 @@ class MainWindow(QMainWindow):
             self._disconnect_monitor()
 
         dev = self._device_cb.currentData()
-        req = self._request_cb.isChecked() and dev in (DEVICE_MASTER,
-                                                       DEVICE_SLAVER)
-        if dev != DEVICE_BOOT and not req:
-            self._log_line("提示：板端仍运行 App 时应勾选“发送升级请求”；"
-                           "或复位到 Boot 后选“直连 Boot”", "warn")
+        if dev == DEVICE_BOOT:
+            self._log_line("目标为广播(0x00)：仅适用于已在 Boot/空片；"
+                           "升级运行中的 App 请选 Master/Slaver", "info")
 
         self._log_line(f"开始升级：{os.path.basename(self._filepath)}", "info")
         self._worker = UpgradeWorker(port, int(self._baud_cb.currentText()),
-                                     dev, self._filepath, req,
-                                     not self._use_1k_cb.isChecked())
+                                     dev, self._filepath)
         self._worker.log_line.connect(self._log_line)
         self._worker.progress.connect(self._progress.setValue)
         self._worker.phase.connect(self._phase_lbl.setText)

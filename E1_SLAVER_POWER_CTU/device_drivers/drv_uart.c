@@ -28,7 +28,7 @@
 /* 模块日志开关 ----------------------------------------------------------------*/
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
-#define UART_LOG_ENABLE 1
+#define UART_LOG_ENABLE 0
 
 #if UART_LOG_ENABLE
 #define UART_LOG_E(...) LOG_E("drv_uart", __VA_ARGS__)

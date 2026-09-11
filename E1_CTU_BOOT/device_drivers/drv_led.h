@@ -1,10 +1,10 @@
 /**
  * @file    drv_led.h
- * @brief   LED PWM 驱动 — 单颗状态指示灯 (PB6 → TIM4_CH1, 经 drv_pwm 输出)
+ * @brief   LED 设备驱动 — 单颗状态指示灯 (PB6 → TIM4_CH1)
  * @attention
  *
- * TIM4 由 drv_pwm 统一管理（默认 25kHz），本驱动仅按亮度占空比映射
- * 到 TIM4_CH1。亮度 0-1023 对应 srv_signal 的输出范围。
+ * 本驱动直接管理 TIM4_CH1（原 drv_pwm 最小实现已合并入 drv_led.c）。
+ * 亮度 0-1023 线性映射到 PWM 占空比（0=灭，1023=恒亮）。
  */
 
 #ifndef __DRV_LED_H
@@ -23,10 +23,10 @@ typedef enum {
     DRV_LED_CH_NUM,
 } drv_led_ch_t;
 
-/** @brief 初始化 LED PWM（经 drv_pwm 启动 TIM4_CH1 并置灭） */
+/** @brief 初始化 LED（启动 TIM4_CH1 并置灭；幂等） */
 void drv_led_init(void);
 
-/** @brief 反初始化（占空比清零，不影响同组其他通道） */
+/** @brief 反初始化（占空比清零并停止输出） */
 void drv_led_deinit(void);
 
 /**

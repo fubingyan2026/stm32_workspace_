@@ -17,7 +17,7 @@
 /* 模块日志开关 ----------------------------------------------------------------*/
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
-#define DEV_RS485_LOG_ENABLE 1
+#define DEV_RS485_LOG_ENABLE 0
 
 #if DEV_RS485_LOG_ENABLE
 #define DEV_RS485_LOG_E(...) LOG_E("dev_rs485", __VA_ARGS__)

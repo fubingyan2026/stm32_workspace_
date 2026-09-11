@@ -60,6 +60,7 @@
 | 0x04 | 主机→板 | 输出控制 | `[目标ID][位域][预留][亮度2B]`（5） | `0x84` |
 | 0x05 | 主机→板 | 清除故障锁存 | `[目标ID][0x01]`（2） | `0x85` |
 | 0x06 | 主机→板 | 升级请求（跳转 Boot） | `[目标ID][0x01]`（2） | `0x86`（已实现） |
+| 0x07 | 主机→板 | 读 Boot/固件信息 | `[目标ID]`（1） | `0x87`：`[源ID][app_ver u16][meta_ver u16][fw_size u32][fw_sum u32][reboot u16][flags u8]`（16） |
 | 0x7F | 板→主机 | 错误应答 | — | — |
 
 > 命令码与 E1_MASTER 完全相同；本板升级 0x06 已实现（见 §5.6）。
@@ -137,14 +138,24 @@
 应答：`payload = [0x02] [0x00]`（len=2）
 
 ### 5.6 升级请求（0x06 → 0x86，已实现）
-
 请求：`payload = [0x02] [0x01]`（len=2）
 应答：`payload = [0x02] [0x00]`，随后本板写升级标志并**复位进 Bootloader**。
 
 > 相关 Boot/App 布局：Boot @ 0x08000000，AppA @ 0x08008000（详见
 > `E1_CTU_BOOT/docs/boot_485_ymodem.md`）。
 
-### 5.7 错误应答（0x7F）
+### 5.7 读 Boot/固件信息（0x07 → 0x87，已实现）
+
+请求：`payload = [0x02]`（len=1）
+
+应答 `0x87`，payload（16B，含源 ID）：
+`[源ID][app_ver u16][meta_ver u16][fw_size u32][fw_checksum u32][reboot_counts u16][flags u8]`
+
+- 读取共享 Boot Metadata（`0x0803E000`，**只读 peek，不写 Flash、不累加启动次数**）+ App 编译期版本；
+- `flags`：bit0=metadata 有效、bit1=`upgrade_flag==1`、bit2=`upgrade_flag==2`；
+- Boot 模式（无 App）下无应答；**`0x08–0x0F` 保留给 Boot 升级传输专用**。
+
+### 5.8 错误应答（0x7F）
 
 `payload = [0x02] [错误码]`（len=2）
 
@@ -184,6 +195,8 @@ z 04 05 02 0F 00 E8 03 CRC \n
 | V1.x | 2026-09-03 | 初版 z 帧 + 读状态/电压/温度/输出控制/清锁存/升级预留 |
 | V2.x | 2026-09-08 | 曾引入帧头 addr 寻址、命令码连续化（0x04/0x05/0x06） |
 | V5.0.0 | 2026-09-09 | 去掉帧头 addr，恢复统一帧头；设备 ID 放 payload 首字节（下行=目标、上行=源） |
+| V5.1.0 | 2026-09-11 | Boot 适配：App 移至 AppA 0x08008000；0x06 升级请求已实现 |
+| V5.2.0 | 2026-09-11 | 新增 0x07 读 Boot/固件信息（只读 metadata + App 版本）；0x08–0x0F 保留给 Boot 传输 |
 
 ## 9. 待实机确认
 
