@@ -1,10 +1,11 @@
 /**
  * @file    boot_task.h
- * @brief   Boot 主任务 — 启动决策 + RS485 YMODEM 升级接收（胶水层）
+ * @brief   Boot 主任务 — 启动决策 + RS485 寻址分块升级接收（胶水层）
  * @attention
  *
- * 串联 YMODEM 接收器(boot_ymodem) → Flash 分区(boot_flash/hal_flash)，
+ * 串联升级会话(boot_session) → Flash 分区(boot_flash/hal_flash)，
  * 实现 485 升级状态机与"下载到 B 槽 → 校验 → 提升到 A 槽 → 复位"的提交流程。
+ * 下载状态机与 App 侧共用（App 内直接下载时只写 B 槽，由 Boot 上电续提交）。
  *
  * ## 使用
  * @code

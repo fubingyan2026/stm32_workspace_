@@ -2,9 +2,11 @@
 """串口传输层：负责实际 I/O 的 Qt 工作线程。
 
 - :class:`SerialWorker`   常驻收发线程，流式解析 z 帧并在读到的第一时间打时间戳。
-- :class:`UpgradeWorker`  Boot 固件升级线程（独占串口，与轮询互斥）。
+- :class:`UpgradeWorker`  固件升级线程（独占串口，与轮询互斥）。
 
 固件升级协议层直接复用 ``E1_CTU_BOOT/host/boot_protocol.py``（单一来源）。
+运行中的 App 收到 0x06 后进入 App 内升级会话（不跳转、电源不断），
+下载结束写 flag=2 并复位，由 Boot 续提交完成 B→A。
 """
 
 from __future__ import annotations
@@ -99,7 +101,7 @@ class SerialWorker(QThread):
 
 
 class UpgradeWorker(QThread):
-    """Boot 寻址分块升级：0x06 邀请 → SELECT/START/DATA/END。
+    """寻址分块升级：0x06 邀请 → SELECT/START/DATA/END（App 内下载或 Boot 兜底）。
 
     与轮询互斥：调用前须停止 :class:`SerialWorker` 释放串口，本线程独占串口；
     完成后再由上层重新连接并恢复轮询，避免半双工总线上帧交错冲突。
@@ -135,9 +137,9 @@ class UpgradeWorker(QThread):
 
         ok = False
         try:
-            # 统一先发一帧 0x06：App→复位进 Boot；已在 Boot→SELECT（幂等）
-            self.phase.emit("发送 0x06 邀请 / 等待 Boot")
-            self.log_line.emit("发送 0x06 邀请（App 复位进 Boot / Boot 选中）", "info")
+            # 统一先发一帧 0x06：运行中 App→进入 App 内升级会话（不跳转）；已在 Boot→SELECT（幂等）
+            self.phase.emit("发送 0x06 邀请 / 进入升级会话")
+            self.log_line.emit("发送 0x06 邀请（App 进入会话 / Boot 选中）", "info")
             if not request_boot(self._serial, self._device,
                                 lambda t, l: self.log_line.emit(t, l)):
                 self.done.emit(False, "0x06 邀请发送失败")
@@ -161,4 +163,4 @@ class UpgradeWorker(QThread):
             self._serial = None
             self._sender = None
 
-        self.done.emit(ok, "升级完成，板端复位运行新固件" if ok else "升级失败")
+        self.done.emit(ok, "固件已写入暂存槽，重新上电后生效" if ok else "升级失败")

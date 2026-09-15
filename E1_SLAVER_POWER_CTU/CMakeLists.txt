@@ -76,6 +76,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # 共享 boot 栈（metadata/升级跳转；ring_storage/crc 已在 m_middlewares 库内）
     # Boot 相关代码统一由 E1_CTU_BOOT 工程持有（不再取 public_layer/service）
     ${CMAKE_SOURCE_DIR}/../E1_CTU_BOOT/service/boot_flash.c
+    # 升级下载状态机（与 Boot 共用）：寻址分块协议 + B 槽暂存
+    ${CMAKE_SOURCE_DIR}/../E1_CTU_BOOT/service/boot_proto.c
+    ${CMAKE_SOURCE_DIR}/../E1_CTU_BOOT/service/boot_session.c
     ${CMAKE_SOURCE_DIR}/../public_layer/device_drivers/hal_flash/hal_flash.c
     ${CMAKE_SOURCE_DIR}/../public_layer/device_drivers/hal_flash/drv_stm32f1_flash.c
     ${CMAKE_SOURCE_DIR}/../public_layer/device_drivers/hal_flash/ring_storage_port.c
@@ -110,6 +113,8 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     BOOT_FLASH_META_SIZE=0x2000U
     BOOT_META_OFFSET=0x3E000U
     BOOT_META_SECTOR_SIZE=0x800U
+    # 共用升级会话 boot_session 的日志/进度输出：App 侧开启（Boot 32K 余量小，默认关）
+    BOOT_SESSION_LOG_ENABLE=1
 )
 
 # Remove wrong libob.a library dependency when using cpp files

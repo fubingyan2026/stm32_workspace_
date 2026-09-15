@@ -170,8 +170,10 @@ class BoardPage(QWidget):
         answer = QMessageBox.warning(
             self, "确认升级",
             f"向 {dev} 发送升级请求 (0x06)？\n\n"
-            "板端将写入升级标志并复位进入 Bootloader；"
-            "随后请在『固件升级』页选择固件并开始升级。",
+            "运行中的 App 将进入『App 内升级会话』：不跳转、电源保持输出，"
+            "但会暂停应答普通查询；\n"
+            "请在『固件升级』页选择固件并开始传输。"
+            "（发送 0x0B 中止可退出会话、恢复运行）",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No)
         if answer == QMessageBox.StandardButton.Yes:
@@ -226,7 +228,7 @@ class BoardPage(QWidget):
         elif base == CMD_RESET_LATCH:
             self.log.emit(f"{dev} 清除锁存 ACK 已收到", "info")
         elif base == CMD_UPGRADE:
-            self.log.emit(f"{dev} 升级请求 ACK 已收到，板将复位进入 Bootloader",
+            self.log.emit(f"{dev} 升级会话已进入（不跳转），请到『固件升级』页传输固件",
                           "warn")
         else:
             self.log.emit(f"{dev} 收到未知命令 cmd=0x{cmd:02X}", "warn")

@@ -38,7 +38,7 @@ void log_task_init(void)
         .get_timestamp_cb = millis,
     };
     log_init(&log_cfg);
-    log_set_level(LOG_LEVEL_DEBUG);
+    log_set_level(LOG_LEVEL_INFO);
     /* Boot 日志关闭 ANSI 颜色，避免部分串口工具显示为乱码/控制字符 */
     (void)log_set_color_enable(false);
 

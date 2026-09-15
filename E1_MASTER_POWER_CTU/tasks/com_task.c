@@ -55,16 +55,16 @@
 /** @brief 单次从 dev_rs485 读取字节数 */
 #define COM_READ_BUF_SIZE (32U)
 
+/** @brief 升级会话空闲超时 (ms)：主机中途消失则自动退出会话，避免 App 卡在升级态不应答 */
+#define COM_UPGRADE_IDLE_TIMEOUT_MS (10000U)
+
 /* Private variables ---------------------------------------------------------*/
 
 static sw_timer_t s_timer;
-static bool s_upgrade_pending; /**< 升级请求待处理（ACK 发出后执行跳转） */
+static uint32_t s_upgrade_last_ms; /**< 升级会话最近一次收到数据的时刻 (ms) */
 
 /** @brief 本板 App 版本（0x07 查询上报，可按发布修改） */
 #define COM_APP_FW_VERSION (0x0100U)
-
-/** @brief metadata 只读查询上下文（首次调用初始化；不写 Flash） */
-static boot_flash_context_t s_boot_flash_ctx;
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -103,7 +103,14 @@ void com_task_init(void)
         .send_frame = com_send_frame,
     };
     srv_com_mst_init(&cfg);
-    s_upgrade_pending = false;
+
+    /* 升级控制：App 内直接下载到 B 槽（不跳转、不断电）；
+       END 校验通过后写 metadata{flag=2}，下次重新上电由 Boot 提升 B→A 生效 */
+    const srv_boot_ctrl_config_t boot_cfg = {
+        .tx = com_send_frame,
+        .dev_id = SRV_COM_MST_DEV_ID,
+    };
+    srv_boot_ctrl_init(&boot_cfg);
 
     const sw_timer_config_t timer_cfg = {
         .priority = SW_TIMER_PRIO_NORMAL,
@@ -132,7 +139,8 @@ static void com_timer_cb(void* user_data)
 /**
  * @brief 主循环高频服务：搬运 RX 字节 → 解析并应答 → 排空 TX 队列
  * @note  由 app_main 主循环每次迭代调用，应答延迟不再受 10ms 定时周期限制
- *        （帧收齐后几乎立即应答）
+ *        （帧收齐后几乎立即应答）。升级会话期间字节改由 srv_boot_ctrl 解析；
+ *        会话结束（END/ABORT）后自动恢复普通协议，App 不复位、继续运行。
  */
 void com_task_service(void)
 {
@@ -144,21 +152,22 @@ void com_task_service(void)
         if (rd == 0U) {
             break;
         }
-        srv_com_mst_rx_feed(buf, rd);
+        if (srv_boot_ctrl_is_upgrade_active()) {
+            srv_boot_ctrl_feed(buf, rd); /* 升级会话：SELECT/START/DATA/END */
+            s_upgrade_last_ms = millis();
+        } else {
+            srv_com_mst_rx_feed(buf, rd);
+        }
         n -= rd;
     }
 
     dev_rs485_tx_flush();
 
-    /* 升级请求：等 ACK 帧发完后写升级标志并复位（跳转 Boot 升级模式） */
-    if (s_upgrade_pending && !dev_rs485_is_tx_busy()) {
-        s_upgrade_pending = false;
-        COM_TASK_LOG_I("升级请求：写 boot 标志并复位进入 Bootloader");
-        if (srv_boot_ctrl_request_upgrade()) {
-            drv_system_reset();
-        } else {
-            COM_TASK_LOG_E("升级标志写入失败，本次不复位");
-        }
+    /* 会话空闲超时：主机中途消失（如上位机崩溃/断线）时退出，恢复常规应答 */
+    if (srv_boot_ctrl_is_upgrade_active()
+        && (uint32_t)(millis() - s_upgrade_last_ms) > COM_UPGRADE_IDLE_TIMEOUT_MS) {
+        COM_TASK_LOG_W("升级会话空闲超时，退出会话恢复常规运行");
+        srv_boot_ctrl_abort_session();
     }
 }
 
@@ -231,11 +240,16 @@ static void com_reset_latch(void)
 
 /**
  * @brief 升级请求回调（0x06 升级请求）
- * @note  先置标志等待 ACK 发出（见 com_task_service 尾部），再写 boot 标志并复位
+ * @note  App 内直接进入升级会话：后续 485 字节由 srv_boot_ctrl 解析写入 B 槽，
+ *        下载期间不跳转、不断电；END 通过后仅写 flag=2，重新上电才生效。
  */
 static void com_upgrade_request(void)
 {
-    s_upgrade_pending = true;
+    if (!srv_boot_ctrl_enter_upgrade()) {
+        COM_TASK_LOG_E("进入 App 内升级会话失败");
+        return;
+    }
+    s_upgrade_last_ms = millis();
 }
 
 /**
@@ -248,7 +262,7 @@ static void com_read_info(srv_com_mst_info_t* info)
 
     info->app_version = COM_APP_FW_VERSION;
     info->flags = 0U;
-    if (boot_flash_peek_metadata(&s_boot_flash_ctx, &meta) == BOOT_FLASH_OK) {
+    if (srv_boot_ctrl_peek_metadata(&meta)) {
         info->meta_version = meta.version;
         info->fw_size = meta.fw_size;
         info->fw_checksum = meta.fw_checksum;

@@ -27,15 +27,36 @@
 ## 2. 运行模型（单链接 A + B 暂存提升）
 
 App 永远按 **A 槽（0x08008000）** 链接（一套链接脚本即可）。
-升级流程：
+
+**App 内直接下载（推荐，升级全程电源板不断电）**：
 
 ```
-App 收到升级命令（Master 0x06 / Slaver 0x06，两板命令码统一）→ 置 metadata upgrade_flag=1 + 本机 ID → 复位
-Boot 启动 → 读到 flag=1 → 静默等待主机寻址 SELECT(0x06)
-   ↓ START(0x08) 擦除 B → DATA(0x09)×N 写入 B → END(0x0A)
-写 metadata {flag=2, fw_size, fw_checksum}  →  promote_to_a(B→A)  →  写 {flag=0}  →  复位
+App 收到升级命令（Master 0x06 / Slaver 0x06，两板命令码统一）
+  → App 内直接下载，不跳转（电源轨保持输出）：
+      SELECT(0x06) → START(0x08) 擦 B → DATA(0x09)×N 写 B → END(0x0A)
+  → 写 metadata {flag=2, fw_size, fw_checksum, 本机 ID}
+  → 退出会话，继续以【当前固件】运行（不复位、不断电，重新上电前不生效）
+（重新上电）
+Boot 启动 → 读到 flag=2 → promote_to_a(B→A) → 写 {flag=0} → 复位
 Boot 启动 → A 校验通过 → 跳转 A 运行新固件
 ```
+
+> 下载状态机由 `E1_CTU_BOOT/service/boot_session.{c,h}` 提供，Boot 与两个 App 共用
+> （App 侧经 `service/srv_boot_ctrl` 接线）。App 运行于 A 槽，只写 B 暂存槽，
+> **绝不擦写 A**；因此掉电中断下载不变砖（A 完好，B 为脏数据，下次 START 重擦）。
+> **升级过程与提交前均不跳转、不断电**；新固件在下次上电由 Boot 提升 B→A 后生效。
+>
+> ⚠ 该流程依赖 Boot 的 `flag==2` 续提交，因此 Boot 必须 **`BOOT_SKIP_APP_VERIFY=0`**
+> 构建；置 1（调试模式）会跳过续提交，App 侧写入的新固件永远不会生效。
+>
+> ⚠ 会话期间 F1 无 RWW，Flash 擦写会阻塞主循环（START 擦 96K 约 1–2s）；
+> 电源轨由 GPIO 锁存保持，但周期采样/故障策略计时会被拉伸，需容忍该盲窗。
+
+**无 App 兜底（A 无效 / 空片）**：Boot 读不到有效 A → 常驻升级模式，
+SELECT/START/DATA/END 全程在 Boot 内下载到 B → 立即提交提升并复位运行。
+
+**旧流程（App 请求跳转，兼容保留）**：App 写 `flag=1` + 复位 → Boot 进升级模式
+（`boot_task_try_boot_app` 的 flag==1 分支仍保留；`srv_boot_ctrl` 不再使用该路径）。
 
 > **多节点/半双工安全**：Boot 绝不主动发送（无 'C' 心跳），只在被寻址帧
 > （payload 首字节 = 本机 ID，或 0x00 广播）校验通过后回一帧；同一总线多个
@@ -113,7 +134,8 @@ python host/boot_host.py
 ### 触发板端进入升级模式
 
 - 上位机**统一先发一帧 `0x06`**（与设备 ID 定向）：
-  - 目标在运行 App：App 视为升级请求 → 写标志并复位进入 Boot；
+  - 目标在运行 App：App 进入「App 内升级会话」并回 `0x86`（**不复位**）；
+    其后 `transfer()` 的首帧 `SELECT(0x06)` 由 App 内的 boot_session 处理；
   - 目标已在 Boot：Boot 视为 `SELECT` → 选中会话并回 `0x86`（幂等，可重复）。
 - 广播 ID `0x00` 对运行中的 App 无效（App 按 ID 过滤），仅用于已在 Boot/空片。
 - 空片/无法启动的板：直接上电，Boot 静默等待被寻址 → 直接用工具发（可先 0x06 选中）。
@@ -124,10 +146,16 @@ python host/boot_host.py
 **App（Master/Slaver 各自）：**
 1. 链接脚本：FLASH ORIGIN=`0x08008000`、LENGTH=`0x18000`；工程启动早期设
    `SCB->VTOR = 0x08008000`（F103 支持 VTOR）。
-2. `srv_com_mst/srv_com_slv` 将预留的升级命令（Master `0x06` / Slaver `0x06`，命令码两板已统一）
-   改为：写 metadata（`upgrade_flag=1` 且 `reserved` 低字节=本机 ID 0x01/0x02）→ 应答 ACK → 复位；
-   升级跳转服务 `srv_boot_ctrl` 复用 Boot 工程持有的 `boot_flash`/`ring_storage`/`hal_flash`
-   （选 `HAL_FLASH_CHIP_STM32F1`）以复用同一字节契约。
+2. `srv_com_mst/srv_com_slv` 升级命令（Master `0x06` / Slaver `0x06`，命令码两板已统一）：
+   改为调用 `srv_boot_ctrl_enter_upgrade()` 进入 App 内升级会话（应答 ACK，**不复位**）；
+   会话内的字节经 `srv_boot_ctrl_feed()` 转 `boot_session`，END 通过后写
+   metadata（`upgrade_flag=2`、`fw_size/fw_checksum`、`reserved` 低字节=本机 ID）
+   并**退出会话继续运行当前固件**（不自动复位）；下次上电由 Boot `flag==2`
+   续提交完成 B→A 后生效。
+   `srv_boot_ctrl`/`com_task` 复用 Boot 工程持有的
+   `boot_session`/`boot_proto`/`boot_flash`/`ring_storage`/`hal_flash`
+   （选 `HAL_FLASH_CHIP_STM32F1`），下载状态机与 Boot 完全一致。
+   ⚠ 需 Boot 以 `BOOT_SKIP_APP_VERIFY=0` 构建。
 3. 应用侧记录/展示自身版本可由本契约 `version` 扩展。
 4. `0x07` 读 Boot/固件信息（App 侧实现）：只读 metadata（`boot_flash_peek_metadata`，不写 Flash）
    返回 app_ver/meta_ver/fw_size/fw_checksum/reboot/flags，便于升级前确认。
@@ -141,9 +169,11 @@ python host/boot_host.py
 > 同时处于 Boot 也可安全寻址升级。
 
 **Host（`boot_host.py` / `boot_send.py`）：**
-1. 升级流程：发定向升级命令（payload 首字节=目标 ID）→ 等 App 复位 → `SELECT(0x06)`
-   选中 Boot → `START(0x08)` → 循环 `DATA(0x09)`（按块应答/重传）→ `END(0x0A)` →
-   等待 Boot 提交复位 → 重新读状态确认新固件运行。
+1. 升级流程：发定向升级命令（payload 首字节=目标 ID）→ App 直接进入会话（无需等复位）→
+   `SELECT(0x06)`（App 或 Boot）→ `START(0x08)` → 循环 `DATA(0x09)`（按块应答/重传）→
+   `END(0x0A)` → **App 内下载至此结束，板端不复位、继续运行；重新上电后新固件生效**
+   （Boot 兜底时 END 会立即提交复位）→ 重新上电后读状态确认新固件运行。
+   （`host/boot_protocol.py` 已是该顺序：发 0x06 后直接 `transfer()`，无需等待 App 复位。）
 
 ### 5.1 调试模式：J-Link/调试器直接烧写 A 槽（跳过校验）
 
@@ -184,3 +214,4 @@ BOOT_SKIP_APP_VERIFY=1
 | V2.0.0 | 2026-09-11 | **方案 B**：Boot 升级传输由 YMODEM 改为 z 帧寻址分块（SELECT/START/DATA/END/ABORT，含设备 ID + 块 CRC16）；取消 `'C'` 心跳与自发发送，支持多节点同时 Boot；App 请求升级时写 meta.reserved=本机 ID；host 更新为 `boot_protocol.py`+`boot_host.py`+`boot_send.py` |
 | V2.1.0 | 2026-09-14 | 新增调试开关 `BOOT_SKIP_APP_VERIFY`：置 1 时跳过 metadata 校验与 flag==2 续提交，改为“向量表 sanity + App 镜像签名（A+0x200 魔数 0x41505031）”，防止误跳半写入镜像；App 侧新增 `.app_sig` 段 |
 | V2.2.0 | 2026-09-15 | 调试模式用复位来源区分升级请求：仅“`flag==1` 且软件复位(SFTRSTF)”进入升级模式，上电残留 flag 忽略并运行有效 A 槽；跳转点打印 `App.app_sig` |
+| V2.3.0 | 2026-09-15 | **App 内直接下载**：抽出共用 `boot_session`（Boot/两个 App 同一套下载状态机）；App 收到 0x06 不再跳转，直接写 B 槽，END 写 `flag=2` 后**不复位、继续运行当前固件**，重新上电由 Boot 续提交 B→A（升级全程不断电）；`boot_proto` tx 回调增加 `user` 参数；host 无需等待 App 复位；App 侧改用统一 metadata ring 实例 |

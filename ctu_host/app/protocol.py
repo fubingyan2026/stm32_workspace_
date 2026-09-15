@@ -301,7 +301,7 @@ def build_read_info(addr: int = DEV_ADDR_MASTER) -> bytes:
 
 
 def build_upgrade(addr: int = DEV_ADDR_MASTER) -> bytes:
-    """0x06 升级请求：payload=[id, magic 0x01]；板应答 ACK 后复位进 Bootloader。"""
+    """0x06 升级请求：payload=[id, magic 0x01]；运行中的 App 进入 App 内升级会话（不跳转）。"""
     return build_frame(CMD_UPGRADE, bytes([addr, 0x01]))
 
 

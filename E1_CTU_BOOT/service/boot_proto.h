@@ -67,8 +67,13 @@ typedef enum {
 
 /* Exported types ------------------------------------------------------------*/
 
-/** @brief 整帧发送回调（经 dev_rs485，需自带半双工方向控制） */
-typedef uint8_t (*boot_proto_tx_cb_t)(const uint8_t* frame, uint32_t len);
+/** @brief 整帧发送回调（经 dev_rs485，需自带半双工方向控制）
+ *  @param user  boot_proto_config_t::user（调用者上下文）
+ *  @param frame 帧首地址
+ *  @param len   帧长（字节）
+ *  @return 0=成功，非 0=失败（当前实现忽略返回值） */
+typedef uint8_t (*boot_proto_tx_cb_t)(void* user, const uint8_t* frame,
+    uint32_t len);
 
 /** @brief START 回调：擦除暂存槽并准备接收；返回错误码 */
 typedef uint8_t (*boot_proto_start_cb_t)(void* user, uint32_t size, uint32_t checksum);

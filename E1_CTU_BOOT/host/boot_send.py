@@ -7,7 +7,7 @@
 
     master/slaver : 目标设备 ID 0x01/0x02（Boot 据此定向应答）
     boot          : 广播 ID 0x00（未定 ID / 空片 Boot 也可选中）
-    统一先发一帧 0x06：App 会复位进入 Boot；已在 Boot 则等同 SELECT（幂等）
+    统一先发一帧 0x06：App 进入 App 内升级会话（不跳转，电源不断）；已在 Boot 则等同 SELECT（幂等）
 """
 
 import sys

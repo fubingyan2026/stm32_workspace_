@@ -5,7 +5,8 @@
 
 功能:
   1. 连接串口（USB-RS485，115200-8N1）做被动监听
-  2. 统一先发一帧 0x06：运行中的 App 会复位进入 Boot；已在 Boot 则等同 SELECT（幂等）
+  2. 统一先发一帧 0x06：运行中的 App 进入 App 内直接下载（不跳转，电源不断）；
+     已在 Boot 则等同 SELECT（幂等）
   3. 选择 .bin 固件 → 寻址分块传输（SELECT/START/DATA/END）→ 板端校验提升后复位
 
 依赖: pyserial + PySide6
@@ -155,7 +156,7 @@ class UpgradeWorker(QThread):
 
         ok = False
         try:
-            # 统一先发一帧 0x06：App 会复位进入 Boot；已在 Boot 则等同 SELECT（幂等）
+            # 统一先发一帧 0x06：App 进入 App 内升级会话（不跳转）；已在 Boot 则等同 SELECT（幂等）
             dev = DEVICE_NAMES.get(self._device, self._device)
             self.log_line.emit(f"发送 0x06 邀请给 {dev}...", "info")
             if not request_boot(self._serial, self._device,
@@ -182,7 +183,7 @@ class UpgradeWorker(QThread):
             self._serial = None
             self._sender = None
 
-        self.done.emit(ok, "升级完成，板端复位运行新固件" if ok else "升级失败")
+        self.done.emit(ok, "固件已写入暂存槽（App 内下载需重新上电生效）" if ok else "升级失败")
 
 
 # ---------------- 主窗口 ----------------

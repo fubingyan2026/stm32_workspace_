@@ -27,7 +27,7 @@
 #define SRV_ADC_LOG_E(...) LOG_E("srv_adc", __VA_ARGS__)
 #define SRV_ADC_LOG_W(...) LOG_W("srv_adc", __VA_ARGS__)
 #define SRV_ADC_LOG_I(...) LOG_I("srv_adc", __VA_ARGS__)
-#define SRV_ADC_LOG_D(...) LOG_D("srv_adc", __VA_ARGS__)
+#define SRV_ADC_LOG_D(...) //LOG_D("srv_adc", __VA_ARGS__)
 #else
 #define SRV_ADC_LOG_E(...) ((void)0)
 #define SRV_ADC_LOG_W(...) ((void)0)

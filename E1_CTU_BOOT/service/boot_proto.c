@@ -61,7 +61,7 @@ static void proto_reply(boot_proto_context_t* ctx, uint8_t cmd,
     frame[n] = get_CRC8_check_sum(frame, n, 0xFF);
     frame[n + 1U] = P_FOOT;
     if (ctx->cfg->tx) {
-        (void)ctx->cfg->tx(frame, (uint32_t)(n + 2U));
+        (void)ctx->cfg->tx(ctx->cfg->user, frame, (uint32_t)(n + 2U));
     }
 }
 

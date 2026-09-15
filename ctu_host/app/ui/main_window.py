@@ -285,8 +285,9 @@ class MainWindow(QMainWindow):
         name = os.path.basename(filepath)
         answer = QMessageBox.warning(
             self, "确认升级",
-            f"将通过 Bootloader 升级 {self._upgrade_page.device_display()}\n"
+            f"将升级 {self._upgrade_page.device_display()}\n"
             f"固件: {name}\n\n"
+            "板端 App 内直接下载（不跳转、电源不断），完成后重新上电由 Boot 提交生效；\n"
             "升级期间将暂停轮询并独占串口，完成后自动恢复。是否继续？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No)

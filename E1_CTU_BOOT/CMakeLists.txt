@@ -54,6 +54,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     tasks/boot_task.c
     tasks/log_task.c
     service/boot_proto.c
+    service/boot_session.c
     # --- public_layer 共享 Flash/boot 栈 ---
     ../public_layer/device_drivers/hal_flash/hal_flash.c
     ../public_layer/device_drivers/hal_flash/drv_stm32f1_flash.c
@@ -102,6 +103,9 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # 调试开关：1=跳过 App 校验（调试器/J-Link 直烧 A 槽 0x08008000 后可直接运行），
     #          0=量产完整校验（含 metadata fw_size/fw_checksum，防砖自愈）。
     #          调试时改 1，发布前改回 0。
+    # 注意：App 内直接下载（srv_boot_ctrl → boot_session）END 后只写 flag=2，
+    #       依赖 Boot 的 flag==2 续提交完成 B→A 提升；置 1 会跳过续提交，
+    #       导致 App 侧下载完成后新固件不生效。使用 App 内升级必须 =0。
     BOOT_SKIP_APP_VERIFY=1
 )
 

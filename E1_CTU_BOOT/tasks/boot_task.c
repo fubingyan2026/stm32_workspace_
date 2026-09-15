@@ -10,6 +10,7 @@
  *   新固件经寻址分块协议写入 B 槽 → 校验 → promote_to_a(B→A) → 复位从 A 启动。
  *   upgrade_flag：0=正常；1=下载中（B 可整槽重来）；2=提交中（断电可自愈续提交）。
  *
+ * 下载状态机统一由 service/boot_session 提供（与 App 侧共用）。
  * 多节点安全：Boot 绝不主动发送（无 'C' 心跳），只在被寻址帧校验通过后回帧。
  */
 
@@ -17,7 +18,7 @@
 #include "boot_task.h"
 
 #include "boot_flash.h"
-#include "boot_proto.h"
+#include "boot_session.h"
 #include "dev_rs485.h"
 #include "drv_led.h"
 #include "drv_log_uart.h"
@@ -44,7 +45,7 @@
 #define BOOT_LOG_SYNC_MS (500U)
 
 /** @brief 指示灯亮度（drv_led 0~1023） */
-#define BOOT_LED_ON_DUTY  (1023U)
+#define BOOT_LED_ON_DUTY  (256)
 #define BOOT_LED_OFF_DUTY (0U)
 
 /** @brief 调试开关：置 1 跳过 App 校验（仅保留向量表 sanity）
@@ -66,10 +67,9 @@
 
 static boot_flash_context_t s_flash_ctx;
 static boot_metadata_t s_meta;
-static boot_proto_context_t s_proto;
 
-static uint32_t s_upg_offset; /**< 已写入 B 槽的字节数（最终 fw_size） */
-static uint32_t s_upg_checksum; /**< 已写入字节的 32-bit 累加和 */
+static boot_session_t s_session;
+static boot_session_config_t s_session_cfg;
 
 static bool s_led_on;
 static uint32_t s_led_tick;
@@ -91,28 +91,10 @@ static void boot_reset_to_normal(void);
 static void boot_log_sync(void);
 static void boot_tx_sync(void);
 
-static uint8_t boot_proto_tx(const uint8_t* frame, uint32_t len);
-static uint8_t boot_proto_start(void* user, uint32_t size, uint32_t checksum);
-static uint8_t boot_proto_data(void* user, uint16_t blk,
-    const uint8_t* data, uint32_t len);
-static void boot_proto_end(void* user, uint32_t size, uint32_t checksum);
-static void boot_proto_abort(void* user);
-static void boot_proto_id(void* user, uint8_t id);
-
-static void boot_do_commit(void);
-static void boot_session_abort(void);
-
-/** @brief 协议配置（文件级静态：boot_proto 保存其指针，必须长生命周期） */
-static boot_proto_config_t s_proto_cfg = {
-    .tx = boot_proto_tx,
-    .on_start = boot_proto_start,
-    .on_data = boot_proto_data,
-    .on_end = boot_proto_end,
-    .on_abort = boot_proto_abort,
-    .on_id = boot_proto_id,
-    .user = NULL,
-    .my_id = 0U,
-};
+static void boot_tx(const uint8_t* frame, uint32_t len);
+static void boot_commit(void* user, uint32_t size, uint32_t checksum);
+static void boot_abort(void* user);
+static void boot_id(void* user, uint8_t id);
 
 /* Exported functions --------------------------------------------------------*/
 
@@ -217,11 +199,17 @@ void boot_task_init(void)
     s_meta.upgrade_flag = 1U;
     (void)boot_flash_write_metadata(&s_flash_ctx, &s_meta);
 
-    s_upg_offset = 0U;
-    s_upg_checksum = 0U;
+    /* 下载状态机（与 App 侧共用 boot_session） */
+    s_session_cfg.flash = &s_flash_ctx;
+    s_session_cfg.target = BOOT_PARTITION_B;
+    s_session_cfg.tx = boot_tx;
+    s_session_cfg.on_commit = boot_commit;
+    s_session_cfg.on_abort = boot_abort;
+    s_session_cfg.on_id = boot_id;
+    s_session_cfg.my_id = my_id;
+    s_session_cfg.user = NULL;
+    boot_session_init(&s_session, &s_session_cfg);
 
-    s_proto_cfg.my_id = my_id;
-    boot_proto_init(&s_proto, &s_proto_cfg);
     BOOT_LOG_I("boot_task", "就绪 ID=0x%02X", (unsigned)my_id);
 }
 
@@ -237,7 +225,7 @@ void boot_task_poll(void)
             break;
         }
         for (uint32_t i = 0U; i < got; i++) {
-            boot_proto_feed(&s_proto, rx_buf[i]);
+            boot_session_feed(&s_session, rx_buf[i]);
         }
         if (got < sizeof(rx_buf)) {
             break;
@@ -264,7 +252,7 @@ static void boot_led_set(bool on)
 static void boot_led_poll(uint32_t now_ms)
 {
     /* 未下载：500ms 慢闪；下载/提交中：常亮（由回调控制） */
-    if (s_proto.downloading) {
+    if (boot_session_downloading(&s_session)) {
         if ((now_ms - s_led_tick) >= 20U) {
             s_led_tick = now_ms;
             boot_led_set(!s_led_on);
@@ -431,111 +419,40 @@ static void boot_tx_sync(void)
     }
 }
 
-/* --- 协议回调 --- */
+/* --- 会话回调 --- */
 
-static uint8_t boot_proto_tx(const uint8_t* frame, uint32_t len)
+static void boot_tx(const uint8_t* frame, uint32_t len)
 {
-    return (dev_rs485_send(frame, len) == DEV_RS485_OK) ? 0U : 1U;
+    (void)dev_rs485_send(frame, len);
 }
-
-static uint8_t boot_proto_start(void* user, uint32_t size, uint32_t checksum)
-{
-    (void)user;
-    (void)checksum;
-    if (size < 16U || size > BOOT_FLASH_APP_SIZE) {
-        return BOOT_PROTO_ERR_SIZE;
-    }
-    if (boot_flash_erase_partition(&s_flash_ctx, BOOT_PARTITION_B)
-        != BOOT_FLASH_OK) {
-        BOOT_LOG_E("boot_task", "擦除失败");
-        return BOOT_PROTO_ERR_FLASH;
-    }
-    s_upg_offset = 0U;
-    s_upg_checksum = 0U;
-    BOOT_LOG_I("boot_task", "START %lu/0x%08lX",
-        (unsigned long)size, (unsigned long)checksum);
-    return BOOT_PROTO_ERR_NONE;
-}
-
-static uint8_t boot_proto_data(void* user, uint16_t blk,
-    const uint8_t* data, uint32_t len)
-{
-    (void)user;
-    const uint32_t offset = (uint32_t)blk * BOOT_PROTO_DATA_MAX;
-    if ((len == 0U) || (offset + len > BOOT_FLASH_APP_SIZE)) {
-        return BOOT_PROTO_ERR_SIZE;
-    }
-    if (boot_flash_write_block(&s_flash_ctx, BOOT_PARTITION_B, offset,
-            data, len)
-        != BOOT_FLASH_OK) {
-        return BOOT_PROTO_ERR_FLASH;
-    }
-    if (boot_flash_verify_block(&s_flash_ctx, BOOT_PARTITION_B, offset,
-            data, len)
-        != BOOT_FLASH_OK) {
-        return BOOT_PROTO_ERR_FLASH;
-    }
-    for (uint32_t i = 0U; i < len; i++) {
-        s_upg_checksum += data[i];
-    }
-    s_upg_offset = offset + len;
-    return BOOT_PROTO_ERR_NONE;
-}
-
-static void boot_proto_end(void* user, uint32_t size, uint32_t checksum)
-{
-    (void)user;
-    (void)checksum;
-    if (size != s_upg_offset) {
-        BOOT_LOG_E("boot_task", "END 长度不符");
-        boot_session_abort();
-        return;
-    }
-    boot_do_commit();
-}
-
-static void boot_proto_abort(void* user)
-{
-    (void)user;
-    BOOT_LOG_W("boot_task", "ABORT");
-    boot_session_abort();
-}
-
-static void boot_proto_id(void* user, uint8_t id)
-{
-    (void)user;
-    s_meta.reserved = (s_meta.reserved & 0xFFFFFF00U) | (uint32_t)id;
-    (void)boot_flash_write_metadata(&s_flash_ctx, &s_meta);
-    BOOT_LOG_I("boot_task", "ID=0x%02X", (unsigned)id);
-}
-
-/* --- 提交 / 中止 --- */
 
 /**
  * @brief 提交升级：写提交标志(flag=2) → B→A 提升 → 清标志 → 复位
  *
  * 步骤间任意断电均可在下次上电自愈（flag==1/2 语义见文件头）。
  */
-static void boot_do_commit(void)
+static void boot_commit(void* user, uint32_t size, uint32_t checksum)
 {
-    if (s_upg_offset < 16U || s_upg_offset > BOOT_FLASH_APP_SIZE) {
-        boot_session_abort();
+    (void)user;
+
+    if (size < 16U || size > BOOT_FLASH_APP_SIZE) {
+        boot_abort(NULL);
         return;
     }
 
     s_meta.upgrade_flag = 2U;
     s_meta.boot_partition = (uint8_t)BOOT_PARTITION_A;
     s_meta.version = (uint16_t)(s_meta.version + 1U);
-    s_meta.fw_size = s_upg_offset;
-    s_meta.fw_checksum = s_upg_checksum;
+    s_meta.fw_size = size;
+    s_meta.fw_checksum = checksum;
     (void)boot_flash_write_metadata(&s_flash_ctx, &s_meta);
 
     BOOT_LOG_I("boot_task", "提交 %lu/0x%08lX",
-        (unsigned long)s_upg_offset, (unsigned long)s_upg_checksum);
+        (unsigned long)size, (unsigned long)checksum);
     boot_log_sync();
     boot_tx_sync();
 
-    if (boot_flash_promote_to_a(&s_flash_ctx, BOOT_PARTITION_B, s_upg_offset)
+    if (boot_flash_promote_to_a(&s_flash_ctx, BOOT_PARTITION_B, size)
         != BOOT_FLASH_OK) {
         BOOT_LOG_E("boot_task", "提升失败");
         s_meta.upgrade_flag = 0U;
@@ -555,10 +472,19 @@ static void boot_do_commit(void)
 }
 
 /** @brief 中止升级会话：清标志 → 复位（回 A 或重新进入升级态） */
-static void boot_session_abort(void)
+static void boot_abort(void* user)
 {
+    (void)user;
     s_meta.upgrade_flag = 0U;
     (void)boot_flash_write_metadata(&s_flash_ctx, &s_meta);
     BOOT_LOG_W("boot_task", "中止");
     boot_reset_to_normal();
+}
+
+static void boot_id(void* user, uint8_t id)
+{
+    (void)user;
+    s_meta.reserved = (s_meta.reserved & 0xFFFFFF00U) | (uint32_t)id;
+    (void)boot_flash_write_metadata(&s_flash_ctx, &s_meta);
+    BOOT_LOG_I("boot_task", "ID=0x%02X", (unsigned)id);
 }

@@ -36,7 +36,7 @@ DEVICE_NAMES = {
     DEVICE_BOOT: "广播 / 直连 Boot (0x00)",
 }
 DEVICE_ADDR = {DEVICE_MASTER: 0x01, DEVICE_SLAVER: 0x02, DEVICE_BOOT: 0x00}
-# 0x06 对 App = 请求升级并复位；对 Boot = SELECT 选中会话（两者同码，幂等）
+# 0x06 对 App = 请求进入 App 内升级会话（不跳转）；对 Boot = SELECT 选中会话（两者同码，幂等）
 UPGRADE_CMD = {DEVICE_MASTER: 0x06, DEVICE_SLAVER: 0x06, DEVICE_BOOT: 0x06}
 
 # ---- 升级分块协议 ----
@@ -206,11 +206,13 @@ class BootProtoSender:
                 self._log(f"块 {blk}/{total_blk}（{offset * 100 // size}%）", "tx")
         self._log("数据全部写入", "info")
 
-        # 4) END（板端提交并复位）
-        self._phase("提交固件（校验→提升→复位）")
+        # 4) END：板端校验并写入暂存槽
+        #    - App 内下载：写 flag=2 后不复位，重新上电由 Boot 提升生效；
+        #    - Boot 兜底：直接提升提交并复位。
+        self._phase("提交固件（校验→写入暂存槽）")
         if not self._cmd_end(addr):
             return False
-        self._log("升级完成，板端复位运行新固件", "info")
+        self._log("固件已写入暂存槽；App 内下载需重新上电生效", "info")
         return True
 
     # ---------- 各命令 ----------
@@ -343,7 +345,7 @@ class BootProtoSender:
 
 def request_boot(serial_handle: serial.Serial, device: str,
                  log_cb: Optional[LogCb] = None) -> bool:
-    """发送 0x06 邀请：对 App=请求升级并复位；对 Boot=SELECT 选中会话（幂等）"""
+    """发送 0x06 邀请：对 App=进入 App 内升级会话（不跳转）；对 Boot=SELECT 选中会话（幂等）"""
     log = log_cb or (lambda _t, _l: None)
     frame = build_upgrade_frame(device)
     if frame is None:

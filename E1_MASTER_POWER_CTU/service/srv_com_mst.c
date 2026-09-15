@@ -46,11 +46,17 @@
 static const uint8_t s_header[] = { 'z' };
 static const uint8_t s_footer[] = { '\n' };
 
-/** @brief parser 输入 kfifo 缓冲（必须为 2 的幂） */
-#define SRV_COM_MST_INPUT_BUF_SIZE (256U)
+/** @brief 总线上可能出现的最大帧（兄弟板升级 DATA 帧 = 248 数据 + 5 负载头 + 5 信封 = 258B）
+ *  @note  MASTER/SLAVER 共用一条 485 总线：给对端升级时本机会收到 258B 大帧。
+ *         解析缓冲若装不下会报 BUFFER_OVERFLOW(5) / HEADER_MISMATCH(8) 并打断接收同步，
+ *         因此按总线最大帧放大，使外机帧能被完整解析后按 payload ID 静默丢弃。 */
+#define SRV_COM_MST_BUS_MAX_FRAME_LEN (258U)
 
-/** @brief parser/packer 输出缓冲 */
-#define SRV_COM_MST_OUTPUT_BUF_SIZE (SRV_COM_MST_MAX_FRAME_LEN)
+/** @brief parser 输入 kfifo 缓冲（必须为 2 的幂，且 ≥ 单帧 258B） */
+#define SRV_COM_MST_INPUT_BUF_SIZE (512U)
+
+/** @brief parser/packer 输出缓冲（需容纳总线最大帧） */
+#define SRV_COM_MST_OUTPUT_BUF_SIZE (SRV_COM_MST_BUS_MAX_FRAME_LEN + 32U)
 
 /** @brief 单次 feed 最多解析的帧数（防止单次调用占用主循环过长） */
 #define SRV_COM_MST_MAX_PARSE_PER_FEED (4U)
@@ -199,9 +205,15 @@ void srv_com_mst_rx_feed(const uint8_t* data, uint32_t len)
             }
 
             const uint8_t data_len = frame[2];
-            if (data_len != (uint8_t)(frame_len - 5U)
-                || data_len > SRV_COM_MST_MAX_PAYLOAD_LEN) {
+            if (data_len != (uint8_t)(frame_len - 5U)) {
                 com_log_error("data_len 不一致", (int32_t)err);
+                parsed++;
+                continue;
+            }
+
+            /* 超长负载：非本机协议帧（如同总线上对端设备的升级 DATA 帧），静默丢弃：
+             * 完整解析以保持接收同步，但不回包（设备 ID 过滤在 com_handle_frame）。 */
+            if (data_len > SRV_COM_MST_MAX_PAYLOAD_LEN) {
                 parsed++;
                 continue;
             }
