@@ -49,13 +49,15 @@ class SerialSession(QObject):
         self._connected = False
 
         self._poll_suppliers: list[PollSupplier] = []
+        self._manual_queue: deque[tuple[bytes, str, bool]] = deque()
         self._auto_poll = False
-        self._poll_interval_ms = 100
+        self._poll_interval_ms = 10
         self._seq_index = 0
 
         self._pending_id: int | None = None
         self._pending_expected: tuple[int, int] | None = None
         self._pending_tx_ts = 0.0
+        self._pending_is_poll = False
         self._id_counter = 0
 
         self._tx_count = 0
@@ -134,6 +136,7 @@ class SerialSession(QObject):
         self._loss_timer.stop()
         self._pending_id = None
         self._pending_expected = None
+        self._manual_queue.clear()
 
         worker, self._worker = self._worker, None
         if worker:
@@ -149,18 +152,46 @@ class SerialSession(QObject):
             self._connected = False
             self.connection_changed.emit(False, "已断开")
 
-    def send(self, frame: bytes, tag: str = "") -> bool:
+    def send(self, frame: bytes, tag: str = "", always_log: bool = False) -> bool:
+        """发送一帧。
+
+        ``always_log=True`` 时无论是否处于轮询都记录 TX 十六进制（用于控制等
+        用户主动命令）；普通手动查询仍遵循「轮询期间不刷屏」的规则。
+        """
+        if self._auto_poll:
+            self._manual_queue.append((frame, tag, always_log))
+            self._try_send_manual()
+            return True
+        return self._send_frame(frame, tag, always_log=always_log)
+
+    def _send_frame(self, frame: bytes, tag: str = "", track_reply: bool = False,
+                    is_poll: bool = False, always_log: bool = False) -> bool:
         worker = self._worker
         if worker is None or not worker.isRunning():
             self.log_message.emit("未连接串口", "warn")
             return False
-        if self.frames_log_enabled():
+        if always_log or self.frames_log_enabled():
             text = f"TX  {tag}: {frame_hex(frame)}" if tag else f"TX  {frame_hex(frame)}"
             self.log_message.emit(text, "tx")
         if not worker.send(frame):
             self.log_message.emit(f"发送失败: {tag or frame_hex(frame)}", "error")
             return False
+        if track_reply:
+            self._id_counter += 1
+            self._pending_id = self._id_counter
+            self._pending_expected = (parse_addr(frame),
+                                      parse_cmd(frame) & ~CMD_REPLY_FLAG)
+            self._pending_tx_ts = time.perf_counter()
+            self._pending_is_poll = is_poll
+            self._loss_timer.start(REPLY_TIMEOUT_MS)
         return True
+
+    def _try_send_manual(self) -> None:
+        if not self._auto_poll or self._pending_id is not None:
+            return
+        if self._manual_queue:
+            frame, tag, always_log = self._manual_queue.popleft()
+            self._send_frame(frame, tag, track_reply=True, always_log=always_log)
 
     # ------------------------------------------------------------ 自动轮询
     def set_auto_poll(self, enabled: bool) -> None:
@@ -180,6 +211,7 @@ class SerialSession(QObject):
             self._loss_timer.stop()
             self._pending_id = None
             self._pending_expected = None
+            self._manual_queue.clear()
         self.auto_poll_changed.emit(enabled)
 
     def set_poll_interval(self, ms: int) -> None:
@@ -199,7 +231,10 @@ class SerialSession(QObject):
         return sequence
 
     def _on_poll_step(self) -> None:
-        if not self._connected:
+        if not self._connected or self._pending_id is not None:
+            return
+        if self._manual_queue:
+            self._try_send_manual()
             return
         sequence = self._build_sequence()
         if not sequence:
@@ -210,23 +245,16 @@ class SerialSession(QObject):
         self._seq_index = (self._seq_index + 1) % len(sequence)
 
         self._tx_count += 1
-        self._id_counter += 1
-        self._pending_id = self._id_counter
-        self._pending_expected = (parse_addr(frame),
-                                  parse_cmd(frame) & ~CMD_REPLY_FLAG)
-        self._pending_tx_ts = time.perf_counter()
-
-        worker = self._worker
-        if worker:
-            worker.send(frame)
-        self._loss_timer.start(REPLY_TIMEOUT_MS)
+        self._send_frame(frame, track_reply=True, is_poll=True)
 
     def _on_loss_timeout(self) -> None:
         """超时未收到应答：记一次丢包并清理待决状态。"""
         if self._pending_id is not None:
-            self._loss_count += 1
+            if self._pending_is_poll:
+                self._loss_count += 1
             self._pending_id = None
             self._pending_expected = None
+            self._pending_is_poll = False
 
     # ------------------------------------------------------------ 接收处理
     def _on_worker_connected(self, ok: bool, text: str) -> None:
@@ -260,9 +288,11 @@ class SerialSession(QObject):
                 elapsed_ms = (rx_ts - self._pending_tx_ts) * 1000.0
                 self._loss_timer.stop()
                 if elapsed_ms > float(REPLY_TIMEOUT_MS):
-                    self._loss_count += 1
+                    if self._pending_is_poll:
+                        self._loss_count += 1
                 self._pending_id = None
                 self._pending_expected = None
+                self._pending_is_poll = False
 
         self.frame_received.emit(frame, rx_ts)
 

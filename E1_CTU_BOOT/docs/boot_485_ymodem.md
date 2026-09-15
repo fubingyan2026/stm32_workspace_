@@ -145,6 +145,34 @@ python host/boot_host.py
    选中 Boot → `START(0x08)` → 循环 `DATA(0x09)`（按块应答/重传）→ `END(0x0A)` →
    等待 Boot 提交复位 → 重新读状态确认新固件运行。
 
+### 5.1 调试模式：J-Link/调试器直接烧写 A 槽（跳过校验）
+
+开发期可用调试器把 App 直接下载到 `0x08008000`，无需先经 485 升级提交。开一个
+编译宏即可让 Boot 放行——直接写在 `CMakeLists.txt` 的
+`target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE ...)` 中：
+
+```cmake
+# 1=跳过 App 校验（调试）；0=量产完整校验
+BOOT_SKIP_APP_VERIFY=1
+```
+
+调试改 `1`，发布前改回 `0` 并重新构建（`cmake --preset Release && cmake --build build/Release`）。
+
+行为（`BOOT_SKIP_APP_VERIFY=1` 时）：
+- **不盲跳**：`boot_app_ok()` 依次校验
+  1. **向量表 sanity**：初值 SP 在 RAM（含栈顶）、复位向量在 A 区且为 Thumb；
+  2. **App 镜像签名**：读取 `A 槽 + 0x200` 的魔数 `0x41505031`（App 侧 `.app_sig`
+     段，链接器固定放置）——擦除态/半写入/损坏镜像会因签名或向量失败而**留在升级模式**，
+     不会跳进去死机；
+- **485 升级仍可用**：调试模式下用“复位来源”区分——
+  - App `0x06` 请求升级时经 `NVIC_SystemReset`（**软件复位**）→ Boot 认定有效升级请求，进入升级模式；
+  - 上电/引脚复位（J-Link 烧录后重新上电）时若 metadata 残留 `flag=1`，一律忽略并直接运行 A 槽有效镜像。
+  （判据：`RCC_CSR.SFTRSTF`，读取后清 `RMVF`。）
+- 不比较 `metadata.fw_size` / `fw_checksum`，也不执行 `flag==2` 的“续提交”
+  （避免覆盖调试镜像）；
+- 注意：没有签名的旧 App 在此模式下会被拒绝（安全优先）；需用带签名的 App 构建。
+- 无防砖保障，仅用于调试；发布前务必恢复 `BOOT_SKIP_APP_VERIFY=0`。
+
 ## 6. 版本记录
 
 | 版本 | 日期 | 变更 |
@@ -154,3 +182,5 @@ python host/boot_host.py
 | V1.2.0 | 2026-09-08 | 命令码连续化同步：Master 升级 0x11→0x05、Slaver 升级 0x1F→0x06 |
 | V1.3.0 | 2026-09-08 | 命令码两板统一同步：Master 升级 0x05→0x06（与 Slaver 一致）；Host GUI 文件名单更新为 `ctu_host/ctu_host.py` + `boot_host.py` |
 | V2.0.0 | 2026-09-11 | **方案 B**：Boot 升级传输由 YMODEM 改为 z 帧寻址分块（SELECT/START/DATA/END/ABORT，含设备 ID + 块 CRC16）；取消 `'C'` 心跳与自发发送，支持多节点同时 Boot；App 请求升级时写 meta.reserved=本机 ID；host 更新为 `boot_protocol.py`+`boot_host.py`+`boot_send.py` |
+| V2.1.0 | 2026-09-14 | 新增调试开关 `BOOT_SKIP_APP_VERIFY`：置 1 时跳过 metadata 校验与 flag==2 续提交，改为“向量表 sanity + App 镜像签名（A+0x200 魔数 0x41505031）”，防止误跳半写入镜像；App 侧新增 `.app_sig` 段 |
+| V2.2.0 | 2026-09-15 | 调试模式用复位来源区分升级请求：仅“`flag==1` 且软件复位(SFTRSTF)”进入升级模式，上电残留 flag 忽略并运行有效 A 槽；跳转点打印 `App.app_sig` |

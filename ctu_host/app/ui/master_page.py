@@ -64,6 +64,7 @@ class MasterPage(BoardPage):
         self._buzzer_value = QLabel("0")
         self._buzzer.valueChanged.connect(
             lambda v: self._buzzer_value.setText(str(v)))
+        self._buzzer.sliderReleased.connect(self._send_buzzer)
         row.addWidget(self._buzzer, 1)
         row.addWidget(self._buzzer_value)
         card.add(row)
@@ -75,7 +76,7 @@ class MasterPage(BoardPage):
         send_btn.clicked.connect(self._send_buzzer)
         mute_btn = QPushButton("静音")
         mute_btn.setObjectName("neutral")
-        mute_btn.clicked.connect(lambda: self._buzzer.setValue(0))
+        mute_btn.clicked.connect(self._mute_buzzer)
         for button in (send_btn, mute_btn, *self._danger_buttons()):
             buttons.addWidget(button)
         buttons.addStretch(1)
@@ -89,9 +90,13 @@ class MasterPage(BoardPage):
         return card
 
     # -------------------------------------------------------------- 控制
+    def _mute_buzzer(self) -> None:
+        self._buzzer.setValue(0)
+        self._send_buzzer()
+
     def _send_buzzer(self) -> None:
         self._session.send(build_mst_ctrl(self._buzzer.value(), self.addr),
-                           "蜂鸣器控制")
+                           "蜂鸣器控制", always_log=True)
 
     # -------------------------------------------------------------- 数据渲染
     def apply_status(self, payload: bytes) -> None:

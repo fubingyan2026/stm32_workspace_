@@ -44,8 +44,23 @@
 #define BOOT_LOG_SYNC_MS (500U)
 
 /** @brief 指示灯亮度（drv_led 0~1023） */
-#define BOOT_LED_ON_DUTY (1023U)
+#define BOOT_LED_ON_DUTY  (1023U)
 #define BOOT_LED_OFF_DUTY (0U)
+
+/** @brief 调试开关：置 1 跳过 App 校验（仅保留向量表 sanity）
+ *  - 用途：调试器（J-Link/ST-Link）直接把 App 烧到 A 槽 0x08008000 后，
+ *          不依赖 metadata（大小/累加和）也能启动；
+ *  - 置 1 后：flag==2 的“续提交”不再执行（避免覆盖调试镜像）；
+ *           App 的 0x06 升级请求仍有效（flag==1 照常进升级模式）；
+ *  - 默认 0（量产校验完整）；经 CMake 选项 BOOT_SKIP_APP_VERIFY 打开 */
+#ifndef BOOT_SKIP_APP_VERIFY
+#define BOOT_SKIP_APP_VERIFY (0)
+#endif
+
+/** @brief App 镜像签名（App 侧 .app_sig 段，链接器固定在分区 +0x200）
+ *  调试模式（跳过 metadata 校验）时用于判定 A 槽是否为“有效固件” */
+#define BOOT_APP_SIG_OFFSET (0x200U)
+#define BOOT_APP_SIG_MAGIC  (0x41505031U)
 
 /* Private variables ---------------------------------------------------------*/
 
@@ -67,6 +82,7 @@ static void boot_led_poll(uint32_t now_ms);
 static bool boot_vector_sane(uint32_t app_addr);
 static bool boot_sum_matches(boot_partition_t partition, uint32_t size,
     uint32_t expected);
+static bool boot_is_software_reset(void);
 static bool boot_app_ok(void);
 static bool boot_backup_matches_meta(void);
 
@@ -112,7 +128,14 @@ bool boot_task_try_boot_app(void)
         return false;
     }
 
-    /* 情形：上次提交（flag=2）被断电打断 → 续完成提升 */
+#if BOOT_SKIP_APP_VERIFY
+    /* 本次复位来源（读取后清标志），用于区分 App 0x06 软复位与上电复位 */
+    const bool sw_reset = boot_is_software_reset();
+#endif
+
+    /* 情形：上次提交（flag=2）被断电打断 → 续完成提升
+     * 调试模式（BOOT_SKIP_APP_VERIFY）：不执行续提交，避免覆盖调试器直烧的 A 槽镜像 */
+#if !BOOT_SKIP_APP_VERIFY
     if (s_meta.upgrade_flag == 2U) {
         BOOT_LOG_W("boot_task", "续提交");
         if (boot_backup_matches_meta()) {
@@ -129,15 +152,32 @@ bool boot_task_try_boot_app(void)
         s_meta.upgrade_flag = 0U;
         (void)boot_flash_write_metadata(&s_flash_ctx, &s_meta);
     }
+#endif /* !BOOT_SKIP_APP_VERIFY */
 
-    /* 情形：App 请求升级（flag=1）或下载中断 → 进入升级模式 */
+    /* 情形：App 请求升级（flag=1）或下载中断 → 进入升级模式
+     * 调试模式（BOOT_SKIP_APP_VERIFY）：仅当本次为“软件复位”时才认为是
+     * App 0x06 的升级请求；上电/引脚复位的残留 flag 一律忽略，保证调试器直烧
+     * 的 App 能直接运行，同时保留 485 升级能力。 */
+#if BOOT_SKIP_APP_VERIFY
+    if (s_meta.upgrade_flag == 1U) {
+        if (sw_reset) {
+            BOOT_LOG_W("boot_task", "App 请求升级(软复位)");
+            return false;
+        }
+        BOOT_LOG_W("boot_task", "忽略残留 flag=1");
+    }
+#else
     if (s_meta.upgrade_flag == 1U) {
         BOOT_LOG_W("boot_task", "App 请求升级");
         return false;
     }
+#endif
 
     /* 正常路径：A 有效直接启动 */
     if (boot_app_ok()) {
+        BOOT_LOG_I("boot_task", "App.app_sig=0x%08lX",
+            (unsigned long)*(volatile uint32_t*)
+            (boot_flash_partition_addr(BOOT_PARTITION_A) + BOOT_APP_SIG_OFFSET));
         BOOT_LOG_I("boot_task", "跳转 App");
         boot_jump_to_app();
         return true; /* 不可达 */
@@ -257,6 +297,16 @@ static bool boot_vector_sane(uint32_t app_addr)
     return true;
 }
 
+/** @brief 读取并清除本次复位来源：是否为“软件复位”(NVIC_SystemReset)
+ *  @note  F1 RCC_CSR.SFTRSTF；读取后置 RMVF 清标志，避免误判。
+ *        用于调试模式区分“App 0x06 请求升级(软复位)”与“上电残留 flag”。 */
+static bool boot_is_software_reset(void)
+{
+    const bool sw = (RCC->CSR & RCC_CSR_SFTRSTF) != 0U;
+    RCC->CSR |= RCC_CSR_RMVF; /* 清复位标志 */
+    return sw;
+}
+
 /** @brief 计算分区前 size 字节的 32-bit 累加和并与期望值比较 */
 static bool boot_sum_matches(boot_partition_t partition, uint32_t size,
     uint32_t expected)
@@ -270,9 +320,27 @@ static bool boot_sum_matches(boot_partition_t partition, uint32_t size,
     return sum == expected;
 }
 
-/** @brief 依据 meta 判定 A 槽镜像是否完整可启动 */
+/** @brief 依据 meta 判定 A 槽镜像是否完整可启动
+ *  @note  BOOT_SKIP_APP_VERIFY=1 时仅做向量表 sanity（调试器直烧 A 槽场景），
+ *         不比较 fw_size/fw_checksum 与 metadata。 */
 static bool boot_app_ok(void)
 {
+#if BOOT_SKIP_APP_VERIFY
+    /* 调试模式（调试器直烧 A 槽）：不看 metadata，但必须
+       1) 向量表 sanity（SP/复位向量合法）  2) App 镜像签名魔数正确 —— 防止
+       半写入/损坏镜像被误跳转导致死机。签名由 App 的 .app_sig 段提供。 */
+    const uint32_t base = boot_flash_partition_addr(BOOT_PARTITION_A);
+    if (!boot_vector_sane(base)) {
+        BOOT_LOG_W("boot_task", "App 向量无效");
+        return false;
+    }
+    const uint32_t sig = *(volatile uint32_t*)(base + BOOT_APP_SIG_OFFSET);
+    if (sig != BOOT_APP_SIG_MAGIC) {
+        BOOT_LOG_W("boot_task", "App 签名无效 0x%08lX", (unsigned long)sig);
+        return false;
+    }
+    return true;
+#else
     if (s_meta.fw_size < 16U || s_meta.fw_size > BOOT_FLASH_APP_SIZE) {
         return false;
     }
@@ -281,6 +349,7 @@ static bool boot_app_ok(void)
         return false;
     }
     return boot_vector_sane(boot_flash_partition_addr(BOOT_PARTITION_A));
+#endif
 }
 
 /** @brief B 槽当前内容是否等于 meta 记录的完整镜像（用于自愈/续提交） */

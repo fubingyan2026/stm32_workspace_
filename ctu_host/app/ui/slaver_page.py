@@ -77,6 +77,7 @@ class SlaverPage(BoardPage):
         self._out_checks: dict[str, QCheckBox] = {}
         for key, text in OUTPUT_KEYS:
             check = QCheckBox(text)
+            check.toggled.connect(lambda _checked: self._send_ctrl())
             row.addWidget(check)
             self._out_checks[key] = check
         row.addStretch(1)
@@ -91,6 +92,7 @@ class SlaverPage(BoardPage):
         self._duty_value = QLabel("0 (0.0%)")
         self._duty.valueChanged.connect(
             lambda v: self._duty_value.setText(f"{v} ({v / 10:.1f}%)"))
+        self._duty.sliderReleased.connect(self._send_ctrl)
         duty_row.addWidget(self._duty, 1)
         duty_row.addWidget(self._duty_value)
         card.add(duty_row)
@@ -131,7 +133,7 @@ class SlaverPage(BoardPage):
     def _send_ctrl(self) -> None:
         self._session.send(
             build_slv_ctrl(self._out_mask(), self._duty.value(), self.addr),
-            "输出控制")
+            "输出控制", always_log=True)
 
     def _set_all(self, enabled: bool) -> None:
         for check in self._out_checks.values():

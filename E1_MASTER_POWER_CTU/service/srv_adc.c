@@ -30,7 +30,7 @@
 #define SRV_ADC_LOG_E(...) LOG_E("srv_adc", __VA_ARGS__)
 #define SRV_ADC_LOG_W(...) LOG_W("srv_adc", __VA_ARGS__)
 #define SRV_ADC_LOG_I(...) LOG_I("srv_adc", __VA_ARGS__)
-#define SRV_ADC_LOG_D(...) ((void)0)//LOG_D("srv_adc", __VA_ARGS__)
+#define SRV_ADC_LOG_D(...) //LOG_D("srv_adc", __VA_ARGS__)
 #else
 #define SRV_ADC_LOG_E(...) ((void)0)
 #define SRV_ADC_LOG_W(...) ((void)0)
@@ -313,6 +313,14 @@ void srv_adc_step(void)
         SRV_ADC_LOG_D("vdda=%umV vin=%umV vin_dcdc=%umV mcuT=%d ntc1=%d ntc2=%d(×100)",
             (unsigned)s.vdda_mv, (unsigned)s.vin_mv, (unsigned)s.vin_dcdc_mv,
             (int)s.mcu_temp_x100, (int)s.ntc1_temp_x100, (int)s.ntc2_temp_x100);
+
+        /* E-STOP CD4051B 8 路原始值（Y0..Y7，12bit）与判稳后闭合掩码 */
+        SRV_ADC_LOG_D("E-STOP mux raw: Y0=%u Y1=%u Y2=%u Y3=%u Y4=%u Y5=%u Y6=%u Y7=%u closed=0x%02X",
+            (unsigned)s_mux_raw[0], (unsigned)s_mux_raw[1],
+            (unsigned)s_mux_raw[2], (unsigned)s_mux_raw[3],
+            (unsigned)s_mux_raw[4], (unsigned)s_mux_raw[5],
+            (unsigned)s_mux_raw[6], (unsigned)s_mux_raw[7],
+            (unsigned)srv_adc_estop_closed_mask());
     }
 
     msg_fifo_push(&s_fifo, &s);

@@ -99,6 +99,10 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     BOOT_FLASH_META_SIZE=0x2000U
     BOOT_META_OFFSET=0x3E000U
     BOOT_META_SECTOR_SIZE=0x800U
+    # 调试开关：1=跳过 App 校验（调试器/J-Link 直烧 A 槽 0x08008000 后可直接运行），
+    #          0=量产完整校验（含 metadata fw_size/fw_checksum，防砖自愈）。
+    #          调试时改 1，发布前改回 0。
+    BOOT_SKIP_APP_VERIFY=1
 )
 
 # Remove wrong libob.a library dependency when using cpp files

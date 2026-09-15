@@ -11,6 +11,15 @@
 
 #include "boot_flash.h"
 
+#include <stdint.h>
+
+/* App 镜像签名 ---------------------------------------------------------------*/
+
+/** App 镜像签名：链接器固定放在 FLASH+0x200（.app_sig 段），
+ *  供 Boot（BOOT_SKIP_APP_VERIFY 调试模式）在不看 metadata 时判定有效固件 */
+__attribute__((section(".app_sig"), used))
+const uint32_t s_app_image_sig = 0x41505031U;
+
 /* Private constants ---------------------------------------------------------*/
 
 /** @brief 本机 485 设备 ID（写入 metadata.reserved，供 Boot 定向寻址应答） */

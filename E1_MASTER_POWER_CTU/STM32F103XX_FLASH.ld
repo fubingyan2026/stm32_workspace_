@@ -76,6 +76,12 @@ SECTIONS
     . = ALIGN(4);
   } >FLASH
 
+  /* App 镜像签名（Boot 跳过校验时用于判定“有效固件”），固定位于 +0x200 */
+  .app_sig ORIGIN(FLASH) + 0x200 :
+  {
+    KEEP(*(.app_sig))
+  } >FLASH
+
   /* The program code and other data goes into FLASH */
   .text :
   {

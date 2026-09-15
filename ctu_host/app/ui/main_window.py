@@ -46,7 +46,7 @@ from .slaver_page import SlaverPage
 from .upgrade_page import UpgradePage
 from .widgets import ConnectionBar, StatusChip
 
-DEFAULT_POLL_MS = 100
+DEFAULT_POLL_MS = 10
 RECONNECT_DELAY_MS = 1500
 
 
@@ -64,6 +64,7 @@ class MainWindow(QMainWindow):
         self._upgrade_was_connected = False
         self._restore_poll = False
         self._pending_restore_poll = False
+        self._reconnecting_after_upgrade = False
 
         self._build_ui()
         self._wire_session()
@@ -202,10 +203,17 @@ class MainWindow(QMainWindow):
 
     def _on_connection_changed(self, ok: bool, text: str) -> None:
         self._update_connection_ui(ok, text)
-        if ok and self._pending_restore_poll:
-            self._pending_restore_poll = False
-            self._restore_poll = False
-            self._auto_poll.setChecked(True)
+        if ok:
+            reconnecting_after_upgrade = self._reconnecting_after_upgrade
+            self._reconnecting_after_upgrade = False
+            if self._pending_restore_poll:
+                self._pending_restore_poll = False
+                self._restore_poll = False
+                self._auto_poll.setChecked(True)
+            elif reconnecting_after_upgrade:
+                self._auto_poll.setChecked(False)
+            else:
+                self._auto_poll.setChecked(True)
 
     def _update_connection_ui(self, ok: bool, text: str) -> None:
         self._conn_bar.set_connected(ok, text)
@@ -324,6 +332,7 @@ class MainWindow(QMainWindow):
     def _reconnect_after_upgrade(self) -> None:
         self._pending_restore_poll = self._restore_poll
         self._restore_poll = False
+        self._reconnecting_after_upgrade = True
         self._session.connect_port(self._upgrade_port, self._upgrade_baud)
 
     # ================================================================= 退出

@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import time
+from queue import Empty, Queue
 
 import serial
 
@@ -32,6 +33,7 @@ class SerialWorker(QThread):
         self._serial: serial.Serial | None = None
         self._parser = FrameParser()
         self._running = False
+        self._tx_queue: Queue[bytes] = Queue()
 
     def stop(self) -> None:
         self._running = False
@@ -44,11 +46,24 @@ class SerialWorker(QThread):
             self.connected.emit(False, f"连接失败: {exc}")
             return
 
-        self.connected.emit(True, f"已连接 {self._port} @ {self._baud}")
         self._running = True
+        self.connected.emit(True, f"已连接 {self._port} @ {self._baud}")
 
         try:
             while self._running:
+                try:
+                    data = self._tx_queue.get_nowait()
+                except Empty:
+                    data = None
+                if data is not None:
+                    try:
+                        self._serial.write(data)
+                        self._serial.flush()
+                    except Exception as exc:  # noqa: BLE001
+                        self.connected.emit(False, f"发送失败: {exc}")
+                        break
+                    continue
+
                 try:
                     pending = self._serial.in_waiting
                 except Exception as exc:  # noqa: BLE001
@@ -66,13 +81,12 @@ class SerialWorker(QThread):
             self._close()
 
     def send(self, data: bytes) -> bool:
-        if self._serial is None:
+        if not self._running:
             return False
         try:
-            self._serial.write(data)
+            self._tx_queue.put_nowait(data)
             return True
-        except Exception as exc:  # noqa: BLE001
-            self.connected.emit(False, f"发送失败: {exc}")
+        except Exception:  # noqa: BLE001
             return False
 
     def _close(self) -> None:

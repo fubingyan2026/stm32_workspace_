@@ -21,7 +21,7 @@
 /* 模块日志开关 ----------------------------------------------------------------*/
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
-#define SRV_ADC_LOG_ENABLE 0
+#define SRV_ADC_LOG_ENABLE 1
 
 #if SRV_ADC_LOG_ENABLE
 #define SRV_ADC_LOG_E(...) LOG_E("srv_adc", __VA_ARGS__)
@@ -199,9 +199,13 @@ void srv_adc_step(void)
     if ((uint32_t)(now_ms - s_tele_log_ts) >= SRV_ADC_TELE_LOG_PERIOD_MS) {
         s_tele_log_ts = now_ms;
 
-        SRV_ADC_LOG_D("vdda=%umV aux=%umV motor=%umV lsd1=%umV lsd2=%umV mcuT=%d(×100)",
-            (unsigned)s.vdda_mv, (unsigned)s.aux_mv, (unsigned)s.motor_mv,
-            (unsigned)s.lsd1_mv, (unsigned)s.lsd2_mv, (int)s.mcu_temp_x100);
+        SRV_ADC_LOG_D("raw: aux=%u motor=%u lsd1=%u lsd2=%u temp=%u vref=%u",
+            (unsigned)raw.raw[DRV_ADC_CH_AUX], (unsigned)raw.raw[DRV_ADC_CH_MOTOR],
+            (unsigned)raw.raw[DRV_ADC_CH_LSD1], (unsigned)raw.raw[DRV_ADC_CH_LSD2],
+            (unsigned)raw.raw[DRV_ADC_CH_TEMPSENSOR], (unsigned)raw.raw[DRV_ADC_CH_VREFINT]);
+        // SRV_ADC_LOG_D("vdda=%umV aux=%umV motor=%umV lsd1=%umV lsd2=%umV mcuT=%d(×100)",
+        //     (unsigned)s.vdda_mv, (unsigned)s.aux_mv, (unsigned)s.motor_mv,
+        //     (unsigned)s.lsd1_mv, (unsigned)s.lsd2_mv, (int)s.mcu_temp_x100);
     }
 
     msg_fifo_push(&s_fifo, &s);
