@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ctu-sdk"
+version = "1.0.0"
+description = "E1 CTU 电源板 RS485 SDK（MASTER + SLAVER 同一总线，含固件升级）"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Proprietary" }
+authors = [{ name = "E1" }]
+keywords = ["rs485", "firmware", "bootloader", "ctu", "e1"]
+dependencies = ["pyserial>=3.5"]
+
+[project.urls]
+Documentation = "docs/SDK.md"
+
+[tool.setuptools]
+# 本项目目录本身就是 ctu_sdk 包（package-dir 把包名映射到当前目录）
+packages = ["ctu_sdk", "ctu_sdk.tests"]
+package-dir = { "ctu_sdk" = "." }
+
+[tool.setuptools.package-data]
+ctu_sdk = ["docs/*.md"]

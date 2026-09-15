@@ -45,8 +45,8 @@
 /* Private constants ---------------------------------------------------------*/
 
 /** @brief MIT 默认刚度/阻尼（合适初值，可按需调整） */
-#define SRV_DM4310_DEFAULT_KP (12.50f)
-#define SRV_DM4310_DEFAULT_KD (2.5f)
+#define SRV_DM4310_DEFAULT_KP (2.50f)
+#define SRV_DM4310_DEFAULT_KD (0.5f)
 
 #define SRV_USER_POS_MIN (0.000f)
 #define SRV_USER_POS_MAX (0.464f)

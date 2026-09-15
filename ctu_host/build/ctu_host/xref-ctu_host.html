@@ -419,6 +419,15 @@ imported by:
  &#8226;   <a href="#app.ui.widgets">app.ui.widgets</a>
  &#8226;   <a href="#boot_protocol">boot_protocol</a>
  &#8226;   <a href="#ctu_host.py">ctu_host.py</a>
+ &#8226;   <a href="#ctu_sdk">ctu_sdk</a>
+ &#8226;   <a href="#ctu_sdk.client">ctu_sdk.client</a>
+ &#8226;   <a href="#ctu_sdk.devices">ctu_sdk.devices</a>
+ &#8226;   <a href="#ctu_sdk.errors">ctu_sdk.errors</a>
+ &#8226;   <a href="#ctu_sdk.firmware">ctu_sdk.firmware</a>
+ &#8226;   <a href="#ctu_sdk.models">ctu_sdk.models</a>
+ &#8226;   <a href="#ctu_sdk.poller">ctu_sdk.poller</a>
+ &#8226;   <a href="#ctu_sdk.protocol">ctu_sdk.protocol</a>
+ &#8226;   <a href="#ctu_sdk.transport">ctu_sdk.transport</a>
  &#8226;   <a href="#serial">serial</a>
  &#8226;   <a href="#serial.serialcli">serial.serialcli</a>
  &#8226;   <a href="#serial.serialjava">serial.serialjava</a>
@@ -1333,9 +1342,7 @@ imported by:
 imports:
     <a href="#__future__">__future__</a>
  &#8226;   <a href="#app">app</a>
- &#8226;   <a href="#boot_protocol">boot_protocol</a>
- &#8226;   <a href="#pathlib">pathlib</a>
- &#8226;   <a href="#sys">sys</a>
+ &#8226;   <a href="#ctu_sdk.firmware">ctu_sdk.firmware</a>
 
   </div>
   <div class="import">
@@ -1354,6 +1361,7 @@ imported by:
 imports:
     <a href="#__future__">__future__</a>
  &#8226;   <a href="#app">app</a>
+ &#8226;   <a href="#ctu_sdk.protocol">ctu_sdk.protocol</a>
 
   </div>
   <div class="import">
@@ -1838,8 +1846,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#app.firmware">app.firmware</a>
- &#8226;   <a href="#ctu_host.py">ctu_host.py</a>
+    <a href="#ctu_host.py">ctu_host.py</a>
+ &#8226;   <a href="#ctu_sdk.firmware">ctu_sdk.firmware</a>
 
   </div>
 
@@ -2085,6 +2093,8 @@ imported by:
  &#8226;   <a href="#collections.abc">collections.abc</a>
  &#8226;   <a href="#contextlib">contextlib</a>
  &#8226;   <a href="#ctu_host.py">ctu_host.py</a>
+ &#8226;   <a href="#ctu_sdk.poller">ctu_sdk.poller</a>
+ &#8226;   <a href="#ctu_sdk.transport">ctu_sdk.transport</a>
  &#8226;   <a href="#dis">dis</a>
  &#8226;   <a href="#email.feedparser">email.feedparser</a>
  &#8226;   <a href="#functools">functools</a>
@@ -2246,6 +2256,225 @@ imported by:
 </div>
 
 <div class="node">
+  <a name="ctu_sdk"></a>
+  <a target="code" href="///C:/Users/32457/Desktop/stm32_workspace_/ctu_host/ctu_sdk/__init__.py" type="text/plain"><tt>ctu_sdk</tt></a>
+<span class="moduletype">Package</span>  <div class="import">
+imports:
+    <a href="#__future__">__future__</a>
+ &#8226;   <a href="#ctu_sdk.client">ctu_sdk.client</a>
+ &#8226;   <a href="#ctu_sdk.devices">ctu_sdk.devices</a>
+ &#8226;   <a href="#ctu_sdk.errors">ctu_sdk.errors</a>
+ &#8226;   <a href="#ctu_sdk.firmware">ctu_sdk.firmware</a>
+ &#8226;   <a href="#ctu_sdk.models">ctu_sdk.models</a>
+ &#8226;   <a href="#ctu_sdk.poller">ctu_sdk.poller</a>
+ &#8226;   <a href="#ctu_sdk.transport">ctu_sdk.transport</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ctu_sdk.client">ctu_sdk.client</a>
+ &#8226;   <a href="#ctu_sdk.devices">ctu_sdk.devices</a>
+ &#8226;   <a href="#ctu_sdk.errors">ctu_sdk.errors</a>
+ &#8226;   <a href="#ctu_sdk.firmware">ctu_sdk.firmware</a>
+ &#8226;   <a href="#ctu_sdk.models">ctu_sdk.models</a>
+ &#8226;   <a href="#ctu_sdk.poller">ctu_sdk.poller</a>
+ &#8226;   <a href="#ctu_sdk.protocol">ctu_sdk.protocol</a>
+ &#8226;   <a href="#ctu_sdk.transport">ctu_sdk.transport</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="ctu_sdk.client"></a>
+  <a target="code" href="///C:/Users/32457/Desktop/stm32_workspace_/ctu_host/ctu_sdk/client.py" type="text/plain"><tt>ctu_sdk.client</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#__future__">__future__</a>
+ &#8226;   <a href="#ctu_sdk">ctu_sdk</a>
+ &#8226;   <a href="#ctu_sdk.devices">ctu_sdk.devices</a>
+ &#8226;   <a href="#ctu_sdk.errors">ctu_sdk.errors</a>
+ &#8226;   <a href="#ctu_sdk.firmware">ctu_sdk.firmware</a>
+ &#8226;   <a href="#ctu_sdk.models">ctu_sdk.models</a>
+ &#8226;   <a href="#ctu_sdk.protocol">ctu_sdk.protocol</a>
+ &#8226;   <a href="#ctu_sdk.transport">ctu_sdk.transport</a>
+ &#8226;   <a href="#os">os</a>
+ &#8226;   <a href="#serial.tools">serial.tools</a>
+ &#8226;   <a href="#serial.tools.list_ports">serial.tools.list_ports</a>
+ &#8226;   <a href="#threading">threading</a>
+ &#8226;   <a href="#time">time</a>
+ &#8226;   <a href="#typing">typing</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ctu_sdk">ctu_sdk</a>
+ &#8226;   <a href="#ctu_sdk.poller">ctu_sdk.poller</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="ctu_sdk.devices"></a>
+  <a target="code" href="///C:/Users/32457/Desktop/stm32_workspace_/ctu_host/ctu_sdk/devices.py" type="text/plain"><tt>ctu_sdk.devices</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#__future__">__future__</a>
+ &#8226;   <a href="#ctu_sdk">ctu_sdk</a>
+ &#8226;   <a href="#ctu_sdk.firmware">ctu_sdk.firmware</a>
+ &#8226;   <a href="#ctu_sdk.protocol">ctu_sdk.protocol</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ctu_sdk">ctu_sdk</a>
+ &#8226;   <a href="#ctu_sdk.client">ctu_sdk.client</a>
+ &#8226;   <a href="#ctu_sdk.poller">ctu_sdk.poller</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="ctu_sdk.errors"></a>
+  <a target="code" href="///C:/Users/32457/Desktop/stm32_workspace_/ctu_host/ctu_sdk/errors.py" type="text/plain"><tt>ctu_sdk.errors</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#__future__">__future__</a>
+ &#8226;   <a href="#ctu_sdk">ctu_sdk</a>
+ &#8226;   <a href="#ctu_sdk.protocol">ctu_sdk.protocol</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ctu_sdk">ctu_sdk</a>
+ &#8226;   <a href="#ctu_sdk.client">ctu_sdk.client</a>
+ &#8226;   <a href="#ctu_sdk.poller">ctu_sdk.poller</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="ctu_sdk.firmware"></a>
+  <a target="code" href="///C:/Users/32457/Desktop/stm32_workspace_/ctu_host/ctu_sdk/firmware.py" type="text/plain"><tt>ctu_sdk.firmware</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#__future__">__future__</a>
+ &#8226;   <a href="#boot_protocol">boot_protocol</a>
+ &#8226;   <a href="#ctu_sdk">ctu_sdk</a>
+ &#8226;   <a href="#os">os</a>
+ &#8226;   <a href="#pathlib">pathlib</a>
+ &#8226;   <a href="#sys">sys</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#app.firmware">app.firmware</a>
+ &#8226;   <a href="#ctu_sdk">ctu_sdk</a>
+ &#8226;   <a href="#ctu_sdk.client">ctu_sdk.client</a>
+ &#8226;   <a href="#ctu_sdk.devices">ctu_sdk.devices</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="ctu_sdk.models"></a>
+  <a target="code" href="///C:/Users/32457/Desktop/stm32_workspace_/ctu_host/ctu_sdk/models.py" type="text/plain"><tt>ctu_sdk.models</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#__future__">__future__</a>
+ &#8226;   <a href="#ctu_sdk">ctu_sdk</a>
+ &#8226;   <a href="#ctu_sdk.protocol">ctu_sdk.protocol</a>
+ &#8226;   <a href="#dataclasses">dataclasses</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ctu_sdk">ctu_sdk</a>
+ &#8226;   <a href="#ctu_sdk.client">ctu_sdk.client</a>
+ &#8226;   <a href="#ctu_sdk.poller">ctu_sdk.poller</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="ctu_sdk.poller"></a>
+  <a target="code" href="///C:/Users/32457/Desktop/stm32_workspace_/ctu_host/ctu_sdk/poller.py" type="text/plain"><tt>ctu_sdk.poller</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#__future__">__future__</a>
+ &#8226;   <a href="#collections">collections</a>
+ &#8226;   <a href="#ctu_sdk">ctu_sdk</a>
+ &#8226;   <a href="#ctu_sdk.client">ctu_sdk.client</a>
+ &#8226;   <a href="#ctu_sdk.devices">ctu_sdk.devices</a>
+ &#8226;   <a href="#ctu_sdk.errors">ctu_sdk.errors</a>
+ &#8226;   <a href="#ctu_sdk.models">ctu_sdk.models</a>
+ &#8226;   <a href="#ctu_sdk.protocol">ctu_sdk.protocol</a>
+ &#8226;   <a href="#threading">threading</a>
+ &#8226;   <a href="#time">time</a>
+ &#8226;   <a href="#typing">typing</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ctu_sdk">ctu_sdk</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="ctu_sdk.protocol"></a>
+  <a target="code" href="///C:/Users/32457/Desktop/stm32_workspace_/ctu_host/ctu_sdk/protocol.py" type="text/plain"><tt>ctu_sdk.protocol</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#__future__">__future__</a>
+ &#8226;   <a href="#ctu_sdk">ctu_sdk</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#app.protocol">app.protocol</a>
+ &#8226;   <a href="#ctu_sdk.client">ctu_sdk.client</a>
+ &#8226;   <a href="#ctu_sdk.devices">ctu_sdk.devices</a>
+ &#8226;   <a href="#ctu_sdk.errors">ctu_sdk.errors</a>
+ &#8226;   <a href="#ctu_sdk.models">ctu_sdk.models</a>
+ &#8226;   <a href="#ctu_sdk.poller">ctu_sdk.poller</a>
+ &#8226;   <a href="#ctu_sdk.transport">ctu_sdk.transport</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="ctu_sdk.transport"></a>
+  <a target="code" href="///C:/Users/32457/Desktop/stm32_workspace_/ctu_host/ctu_sdk/transport.py" type="text/plain"><tt>ctu_sdk.transport</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#__future__">__future__</a>
+ &#8226;   <a href="#collections">collections</a>
+ &#8226;   <a href="#ctu_sdk">ctu_sdk</a>
+ &#8226;   <a href="#ctu_sdk.protocol">ctu_sdk.protocol</a>
+ &#8226;   <a href="#serial">serial</a>
+ &#8226;   <a href="#threading">threading</a>
+ &#8226;   <a href="#time">time</a>
+ &#8226;   <a href="#typing">typing</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ctu_sdk">ctu_sdk</a>
+ &#8226;   <a href="#ctu_sdk.client">ctu_sdk.client</a>
+
+  </div>
+
+</div>
+
+<div class="node">
   <a name="ctypes"></a>
   <a target="code" href="///C:/Users/32457/AppData/Local/Programs/Python/Python312/Lib/ctypes/__init__.py" type="text/plain"><tt>ctypes</tt></a>
 <span class="moduletype">Package</span>  <div class="import">
@@ -2325,7 +2554,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#pprint">pprint</a>
+    <a href="#ctu_sdk.models">ctu_sdk.models</a>
+ &#8226;   <a href="#pprint">pprint</a>
 
   </div>
 
@@ -5718,7 +5948,6 @@ imports:
  &#8226;   <a href="#importlib">importlib</a>
  &#8226;   <a href="#importlib._bootstrap">importlib._bootstrap</a>
  &#8226;   <a href="#importlib._bootstrap_external">importlib._bootstrap_external</a>
- &#8226;   <a href="#importlib.machinery">importlib.machinery</a>
  &#8226;   <a href="#sys">sys</a>
  &#8226;   <a href="#warnings">warnings</a>
 
@@ -5852,8 +6081,7 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#importlib">importlib</a>
- &#8226;   <a href="#importlib.abc">importlib.abc</a>
+    <a href="#importlib.abc">importlib.abc</a>
  &#8226;   <a href="#inspect">inspect</a>
  &#8226;   <a href="#pkgutil">pkgutil</a>
  &#8226;   <a href="#py_compile">py_compile</a>
@@ -6653,6 +6881,8 @@ imported by:
  &#8226;   <a href="#bz2">bz2</a>
  &#8226;   <a href="#contextlib">contextlib</a>
  &#8226;   <a href="#ctu_host.py">ctu_host.py</a>
+ &#8226;   <a href="#ctu_sdk.client">ctu_sdk.client</a>
+ &#8226;   <a href="#ctu_sdk.firmware">ctu_sdk.firmware</a>
  &#8226;   <a href="#ctypes">ctypes</a>
  &#8226;   <a href="#email.utils">email.utils</a>
  &#8226;   <a href="#fnmatch">fnmatch</a>
@@ -6742,7 +6972,7 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#app.firmware">app.firmware</a>
+    <a href="#ctu_sdk.firmware">ctu_sdk.firmware</a>
  &#8226;   <a href="#importlib.metadata">importlib.metadata</a>
  &#8226;   <a href="#importlib.resources._common">importlib.resources._common</a>
  &#8226;   <a href="#importlib.resources._legacy">importlib.resources._legacy</a>
@@ -7251,6 +7481,7 @@ imports:
 imported by:
     <a href="#app.transport">app.transport</a>
  &#8226;   <a href="#boot_protocol">boot_protocol</a>
+ &#8226;   <a href="#ctu_sdk.transport">ctu_sdk.transport</a>
  &#8226;   <a href="#serial.serialcli">serial.serialcli</a>
  &#8226;   <a href="#serial.serialjava">serial.serialjava</a>
  &#8226;   <a href="#serial.serialposix">serial.serialposix</a>
@@ -7389,6 +7620,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#app.ui.widgets">app.ui.widgets</a>
+ &#8226;   <a href="#ctu_sdk.client">ctu_sdk.client</a>
  &#8226;   <a href="#serial.tools.list_ports">serial.tools.list_ports</a>
  &#8226;   <a href="#serial.tools.list_ports_common">serial.tools.list_ports_common</a>
  &#8226;   <a href="#serial.tools.list_ports_linux">serial.tools.list_ports_linux</a>
@@ -7418,6 +7650,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#app.ui.widgets">app.ui.widgets</a>
+ &#8226;   <a href="#ctu_sdk.client">ctu_sdk.client</a>
  &#8226;   <a href="#serial.tools">serial.tools</a>
 
   </div>
@@ -7843,7 +8076,6 @@ imported by:
  &#8226;   <a href="#_pydatetime">_pydatetime</a>
  &#8226;   <a href="#_pydecimal">_pydecimal</a>
  &#8226;   <a href="#_pyi_rth_utils">_pyi_rth_utils</a>
- &#8226;   <a href="#app.firmware">app.firmware</a>
  &#8226;   <a href="#argparse">argparse</a>
  &#8226;   <a href="#ast">ast</a>
  &#8226;   <a href="#base64">base64</a>
@@ -7852,6 +8084,7 @@ imported by:
  &#8226;   <a href="#collections">collections</a>
  &#8226;   <a href="#contextlib">contextlib</a>
  &#8226;   <a href="#ctu_host.py">ctu_host.py</a>
+ &#8226;   <a href="#ctu_sdk.firmware">ctu_sdk.firmware</a>
  &#8226;   <a href="#ctypes">ctypes</a>
  &#8226;   <a href="#ctypes._endian">ctypes._endian</a>
  &#8226;   <a href="#dataclasses">dataclasses</a>
@@ -8027,6 +8260,9 @@ imports:
   <div class="import">
 imported by:
     <a href="#_threading_local">_threading_local</a>
+ &#8226;   <a href="#ctu_sdk.client">ctu_sdk.client</a>
+ &#8226;   <a href="#ctu_sdk.poller">ctu_sdk.poller</a>
+ &#8226;   <a href="#ctu_sdk.transport">ctu_sdk.transport</a>
  &#8226;   <a href="#importlib.util">importlib.util</a>
  &#8226;   <a href="#logging">logging</a>
  &#8226;   <a href="#queue">queue</a>
@@ -8054,6 +8290,9 @@ imported by:
  &#8226;   <a href="#app.ui.overview_page">app.ui.overview_page</a>
  &#8226;   <a href="#app.ui.widgets">app.ui.widgets</a>
  &#8226;   <a href="#boot_protocol">boot_protocol</a>
+ &#8226;   <a href="#ctu_sdk.client">ctu_sdk.client</a>
+ &#8226;   <a href="#ctu_sdk.poller">ctu_sdk.poller</a>
+ &#8226;   <a href="#ctu_sdk.transport">ctu_sdk.transport</a>
  &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#email._parseaddr">email._parseaddr</a>
  &#8226;   <a href="#email.generator">email.generator</a>
@@ -8234,6 +8473,9 @@ imported by:
  &#8226;   <a href="#PyQt6.sip">PyQt6.sip</a>
  &#8226;   <a href="#app.session">app.session</a>
  &#8226;   <a href="#boot_protocol">boot_protocol</a>
+ &#8226;   <a href="#ctu_sdk.client">ctu_sdk.client</a>
+ &#8226;   <a href="#ctu_sdk.poller">ctu_sdk.poller</a>
+ &#8226;   <a href="#ctu_sdk.transport">ctu_sdk.transport</a>
  &#8226;   <a href="#functools">functools</a>
  &#8226;   <a href="#importlib.metadata">importlib.metadata</a>
  &#8226;   <a href="#importlib.metadata._meta">importlib.metadata._meta</a>

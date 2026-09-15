@@ -1,7 +1,8 @@
 # ctu_host — E1 CTU 电源板 RS485 双板调试上位机
 
 E1_MASTER_POWER_CTU（主控板，addr 0x01）与 E1_SLAVER_POWER_CTU（副电源模块，addr 0x02）
-共用一条 RS485 总线时的调试工具。基于 **PyQt6 + pyserial**，多页切换、界面自适应缩放。
+共用一条 RS485 总线时的调试工具。基于 **PyQt6 + pyserial**，多页切换、界面自适应缩放；
+同一仓库内的 `ctu_sdk` 提供等价的 **Linux/跨平台纯 Python SDK**（无 GUI，含固件升级）。
 
 ## 运行
 
@@ -55,14 +56,36 @@ python -m PyInstaller --noconfirm --clean ctu_host.spec
 
 ## 代码结构（分层，仅向下依赖）
 
+协议实现集中在 `ctu_sdk`，GUI（`app`）通过 `app/protocol.py`、`app/firmware.py`
+两个再导出模块复用同一份代码，避免重复实现。
+
 ```
 ctu_host.py            启动入口（High-DPI 策略 + QApplication）
+ctu_sdk/               Linux/跨平台 SDK（纯 Python，无 Qt 依赖）
+  protocol.py          z 帧编解码、命令/错误码、各板数据段解码（协议唯一来源）
+  firmware.py          Boot 协议层适配 + 固件预检（复用 E1_CTU_BOOT）
+  devices.py           设备标识（master/slaver ↔ 地址 / Boot ID）
+  errors.py            异常体系
+  models.py            返回数据模型（不可变 dataclass）
+  transport.py         pyserial 收发 + 帧解析（线程安全）
+  client.py            CtuClient：查询 / 控制 / 清锁存 / 升级
+  poller.py            CtuPoller：周期轮询与丢包统计
+  cli.py               python -m ctu_sdk 命令行
+  docs/SDK.md          接口文档
+  tests/               虚拟板 + 端到端测试（pty，无需硬件）
+ctu_sdk_c/             Linux C11 SDK（静态库 + CLI，无第三方依赖）
+  include/ctu/         公共头文件（ctu.h 为总入口）
+  src/                 protocol / transport / boot / client / poller
+  middleware/          随包发布的共享中间件副本（protocol_parser + kfifo）
+  tools/ctu_cli.c      命令行工具
+  examples/            monitor / upgrade 示例
+  docs/API.md          接口文档
 app/
-  protocol.py          z 帧编解码、命令/错误码、各板数据段解码（无 Qt 依赖）
+  protocol.py          再导出 ctu_sdk.protocol（保持原导入路径）
+  firmware.py          再导出 ctu_sdk.firmware
   transport.py         SerialWorker / UpgradeWorker（Qt 工作线程）
   session.py           连接生命周期、等间隔轮询、10ms 丢包统计（无界面依赖）
-  firmware.py          复用 Boot 工程协议层 + 固件预检入口
-  settings.py          QSettings 持久化（固件路径历史）
+  settings.py          QSettings 持久化（按设备分别保存固件路径历史）
   theme.py             马卡龙调色板与全局 QSS
   ui/
     main_window.py     顶栏 + 侧栏导航 + 多页堆叠（唯一编排者）
@@ -74,6 +97,48 @@ app/
     upgrade_page.py    固件升级页
     log_page.py        通信日志页
 ```
+
+## Linux SDK
+
+无 GUI 场景（Linux 脚本 / 测试台 / 无头监测）使用 `ctu_sdk`，功能与上位机完全一致
+（含固件升级与中止）：
+
+```python
+from ctu_sdk import CtuClient, MASTER, SLAVER
+
+with CtuClient("/dev/ttyUSB0", baud=115200) as ctu:
+    print(ctu.scan())
+    ctu.set_outputs(0x03, fill_duty=500)
+    ctu.upgrade(SLAVER, "E1_SLAVER_POWER_CTU.bin", progress=print)
+```
+
+```bash
+python -m ctu_sdk ports
+python -m ctu_sdk -p /dev/ttyUSB0 monitor --interval 0.5
+```
+
+接口文档见 `ctu_sdk/docs/SDK.md`。无需硬件的端到端验证：
+
+```bash
+python3 -m unittest discover -s ctu_sdk/tests -t . -v
+```
+
+### C SDK（ctu_sdk_c）
+
+面向 Linux 无 GUI 场景另提供 **C11 SDK**（`ctu_sdk_c/`），功能与上位机一致，
+无动态内存、无第三方依赖（termios + poll），**协议解析复用共享中间件 `protocol_parser`
+（与固件端同一实现，副本随包提供，可独立部署）**，含命令行工具与示例：
+
+```bash
+cd ctu_sdk_c
+cmake -S . -B build -DCTU_WARNINGS_AS_ERRORS=ON && cmake --build build -j
+./build/ctu_cli -p /dev/ttyUSB0 scan
+./build/ctu_cli -p /dev/ttyUSB0 -v status --device master
+./build/ctu_cli -p /dev/ttyUSB0 upgrade --device slaver --file fw.bin
+```
+
+接口文档见 `ctu_sdk_c/docs/API.md`。
+
 
 ## 统一命令表
 
