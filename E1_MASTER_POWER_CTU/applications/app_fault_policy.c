@@ -53,10 +53,10 @@ static uint32_t s_motor_pgd_low_since; /**< 稳定后 PGD 掉低起始时刻 (ms
 /* Private constants ---------------------------------------------------------*/
 
 /** @brief MOTOR 使能后 PGD 稳定窗口 (ms)：LM5069 软启动期间 PGD 可能未立即就绪 */
-#define MOTOR_PGD_SETTLE_MS (182U)
+#define MOTOR_PGD_SETTLE_MS (182*2U)
 
 /** @brief 稳定后 PGD 掉低去抖时间 (ms)：持续低才判 MOTOR 电源故障 */
-#define MOTOR_PGD_FAULT_DEBOUNCE_MS (50U)
+#define MOTOR_PGD_FAULT_DEBOUNCE_MS (50*2U)
 
 /* Private function prototypes -----------------------------------------------*/
 

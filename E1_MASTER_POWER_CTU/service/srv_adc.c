@@ -95,9 +95,14 @@
 #define SRV_ADC_MUX_CH_NUM (8U) /**< CD4051B 通道数 (Y0~Y7) */
 #define SRV_ADC_ESTOP_NUM (4U) /**< E-STOP 回路数 (E_STOP1~4) */
 
+/** @brief mux 选通后建立延时 (µs)：trigger 内“选通→延时→启动 ADC”，
+ *         保证本周期 Rank5(PC4) 采样时通道已稳定；切换只在 trigger 内发生，
+ *         不会打断正在进行中的转换（避免通道/采样错位）。 */
+#define SRV_ADC_MUX_SETTLE_US (100U)
+
 /** @brief E-STOP 双通道冗余容差（raw，12-bit）：两节点偏差 ≤ 此值判闭合（触点电平一致）。
  *        偏差 ≈ 满量程 → 冗余互补（急停按下断开）；中间区间 → 冗余/线缆异常 */
-#define SRV_ADC_ESTOP_REDUND_TOL_RAW (256U)
+#define SRV_ADC_ESTOP_REDUND_TOL_RAW (512U)
 
 /** @brief E-STOP 冗余故障去抖时间 (ms)：单路 mux 轮转下冗余节点不同时刷新，
  *        急停切换瞬间偏差会扫过中间区间约一个轮转周期(≈80ms)，去抖需覆盖之 */
@@ -116,6 +121,7 @@
 /** @brief 原始采样快照 — DMA 中断回调只填此结构，不做任何换算 */
 typedef struct {
     uint32_t timestamp_ms; /**< 时间戳 (ms) */
+    uint16_t seq; /**< trigger 序号（用于确认“本次转换”已完成） */
     uint8_t mux_ch; /**< 本次快照对应的 CD4051B 通道 (Y0~Y7) */
     uint16_t raw[DRV_ADC_CH_MAX]; /**< 各逻辑通道 12-bit 原始值 */
 } srv_adc_raw_t;
@@ -159,6 +165,9 @@ static uint8_t s_mux_gpio;
  *        与 s_mux_gpio 分离：step 末预选下一通道不影响本帧标签，避免 ISR 竞态。
  */
 static volatile uint8_t s_mux_sampling;
+
+/** @brief 本次 trigger 序号：ISR 写入快照，step 据此确认“本次转换已完成”后才切下一通道 */
+static volatile uint16_t s_adc_seq;
 
 /** @brief 各 CD4051B 通道最近一次采样值（轮转更新，跨 step 保留旧值） */
 static uint16_t s_mux_raw[SRV_ADC_MUX_CH_NUM];
@@ -210,6 +219,7 @@ void srv_adc_init(void)
     drv_cd4051b_init();
     s_mux_gpio = 0;
     s_mux_sampling = 0;
+    s_adc_seq = 0;
     memset(s_mux_raw, 0, sizeof(s_mux_raw));
     s_mux_ready_mask = 0;
     memset(s_estop_redund_fault_cnt, 0, sizeof(s_estop_redund_fault_cnt));
@@ -225,9 +235,13 @@ void srv_adc_init(void)
 
 void srv_adc_trigger(void)
 {
-    /* 本周期要采样的通道由上一周期 step 末预选完成（GPIO 已置好约一个采样周期），
-       此处仅记录本次转换的通道标签并启动 DMA，不做切换、不阻塞。 */
+    /* 顺序：选通本周期通道 → 等待 mux/COM 建立 → 启动 ADC。
+       在 trigger 内完成切换（转换尚未开始），不会打断在途转换；step 只推进通道变量。 */
     s_mux_sampling = s_mux_gpio;
+    (void)drv_cd4051b_select(s_mux_sampling);
+    delay_us(SRV_ADC_MUX_SETTLE_US);
+
+    s_adc_seq++;
     drv_adc_trigger_all();
 }
 
@@ -266,14 +280,12 @@ void srv_adc_step(void)
         s_mux_ready_mask |= (uint8_t)(1U << raw.mux_ch);
     }
 
-    /* 本次转换已结束（ISR 已入队该帧），此刻预选下一通道：
-       GPIO 于此处切换后，到下周期 trigger 的 Rank5(PC4) 采样之间隔整整一个采样周期，
-       无阻塞、无需 delay_us，硬件有充足稳定时间。 */
+    /* 推进“下一周期要采样的通道”变量（仅改变量；GPIO 切换统一在下一次 trigger 内进行，
+       避免在转换进行中改写 mux 造成通道/采样错位） */
     s_mux_gpio = (uint8_t)(s_mux_gpio + 1U);
     if (s_mux_gpio >= SRV_ADC_MUX_CH_NUM) {
         s_mux_gpio = 0;
     }
-    (void)drv_cd4051b_select(s_mux_gpio);
 
     /* E-STOP 双通道冗余状态巡检（仅闭环上每拍运行，日志受限频） */
     estop_redundancy_check();
@@ -314,8 +326,9 @@ void srv_adc_step(void)
             (unsigned)s.vdda_mv, (unsigned)s.vin_mv, (unsigned)s.vin_dcdc_mv,
             (int)s.mcu_temp_x100, (int)s.ntc1_temp_x100, (int)s.ntc2_temp_x100);
 
-        /* E-STOP CD4051B 8 路原始值（Y0..Y7，12bit）与判稳后闭合掩码 */
-        SRV_ADC_LOG_D("E-STOP mux raw: Y0=%u Y1=%u Y2=%u Y3=%u Y4=%u Y5=%u Y6=%u Y7=%u closed=0x%02X",
+        /* E-STOP CD4051B 8 路原始值：按实际判据顺序成对打印
+         * E_STOP1=Y0/Y1, E_STOP2=Y2/Y3, E_STOP3=Y4/Y5, E_STOP4=Y6/Y7（ADC1/ADC2） */
+        SRV_ADC_LOG_D("E-STOP raw: ES1=%u/%u ES2=%u/%u ES3=%u/%u ES4=%u/%u closed=0x%02X",
             (unsigned)s_mux_raw[0], (unsigned)s_mux_raw[1],
             (unsigned)s_mux_raw[2], (unsigned)s_mux_raw[3],
             (unsigned)s_mux_raw[4], (unsigned)s_mux_raw[5],
@@ -347,6 +360,7 @@ static void adc_sample_cb(drv_adc_inst_t inst)
     /* DMA 中断上下文：只做原始值快照，不做任何换算/打印。 */
     srv_adc_raw_t raw;
     raw.timestamp_ms = millis();
+    raw.seq = s_adc_seq; /* 本次转换序号（trigger 递增） */
     raw.mux_ch = s_mux_sampling; /* 本次转换对应的 CD4051B 通道（trigger 写入） */
 
     for (uint32_t i = 0; i < DRV_ADC_CH_MAX; i++) {

@@ -49,10 +49,10 @@
 #define SRV_EFUSE_STARTUP_TIMEOUT_MS (100U)
 
 /** @brief 使能后到开始检测 PGOOD/FLT 的延时 (ms)，避开上电瞬间 */
-#define SRV_EFUSE_DETECT_DELAY_MS (100U)
+#define SRV_EFUSE_DETECT_DELAY_MS (200U)
 
 /** @brief RUN 中 PGOOD 跌落去抖时间 (ms)：持续跌落超过此值才关断 */
-#define SRV_EFUSE_PGOOD_DROP_SHUTDOWN_MS (1500U)
+#define SRV_EFUSE_PGOOD_DROP_SHUTDOWN_MS (3500U)
 
 /* Private variables ---------------------------------------------------------*/
 

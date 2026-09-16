@@ -1,0 +1,12 @@
+device STM32F103RC
+si SWD
+speed 1000
+connect
+r
+h
+erase
+loadbin "C:/Users/32457/Desktop/stm32_workspace_/ctu_flasher/out/E1_SLAVER_POWER_CTU_merged.bin", 0x08000000
+verifybin "C:/Users/32457/Desktop/stm32_workspace_/ctu_flasher/out/E1_SLAVER_POWER_CTU_merged.bin", 0x08000000
+r
+g
+qc

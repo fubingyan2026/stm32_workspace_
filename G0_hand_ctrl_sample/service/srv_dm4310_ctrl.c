@@ -45,13 +45,13 @@
 /* Private constants ---------------------------------------------------------*/
 
 /** @brief MIT 默认刚度/阻尼（合适初值，可按需调整） */
-#define SRV_DM4310_DEFAULT_KP (2.50f)
-#define SRV_DM4310_DEFAULT_KD (0.5f)
-
+#define SRV_DM4310_DEFAULT_KP (0.50f)
+#define SRV_DM4310_DEFAULT_KD (0.1f)
+    
 #define SRV_USER_POS_MIN (0.000f)
-#define SRV_USER_POS_MAX (0.464f)
+#define SRV_USER_POS_MAX (0.500f)
 /** @brief 扭矩给定限幅 (±N·m)，保护电机/负载 */
-#define SRV_DM4310_TORQUE_LIMIT_NM (0.01f)
+#define SRV_DM4310_TORQUE_LIMIT_NM (0.1f)
 
 /** @brief RX 数据日志限频窗口 (ms)：CAN 反馈 1kHz 下防刷屏 */
 #define SRV_DM4310_RX_LOG_PERIOD_MS (500U)

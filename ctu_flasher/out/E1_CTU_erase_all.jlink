@@ -1,0 +1,8 @@
+device STM32F103RC
+si SWD
+speed 4000
+connect
+r
+h
+erase
+qc
