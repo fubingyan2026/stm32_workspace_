@@ -23,7 +23,7 @@ Windows 一键脚本：`build.bat`；Linux/WSL：`./build.sh`。
 ### 2026.09.03
 #### V1.1.0
 	- 1.CAN 状态上报重构：新增专用上报帧 0x010（2 字节位域：急停/电源轨/HSD 公共通道/CHG OCP/DBR OCP/风扇/A_IN/NTC 连接）、0x011（NTC1/NTC2/MCU 温度）、0x012（VIN/MOTOR/AUX 电压 + 电机预充故障码），每 100ms 固定周期发送（msg_fifo 逐帧发送 + 发送忙重试），0x001 不再承载状态上报
-	- 2.0x001 统一主机控制帧接通（len=6）：蜂鸣器占空比 0-50 + 3 路 HSD 输出（valid/value，经 set_output 回调映射 `drv_power` 诊断使能，service 层与驱动同层解耦）+ LED RGB（led_index 0-31=RGB1 / 32-63=RGB2）；ISR 解析、主循环应用（蜂鸣器 PWM 与 LED SPI DMA 均不进 ISR）
+	- 2.0x001 统一主机控制帧接通（len=7）：蜂鸣器占空比 0-50 + 3 路 HSD 输出（valid/value，经 set_output 回调映射 `drv_power` 诊断使能，service 层与驱动同层解耦）+ LED 模式/RGB（led_index 0-31=RGB1 / 32-63=RGB2）；ISR 解析、主循环应用（蜂鸣器 PWM 与 LED SPI DMA 均不进 ISR）
 	- 3.0x003 进 Boot 升级命令：置标志 → `srv_boot_ctrl_request_boot`（主循环消费，涉及 Flash 写 + 复位不放在 ISR）
 	- 4.电源控制重构为 `srv_pwr_ctrl` V2：电源 FSM + 电机预充电软启动 FSM（双状态机，1ms 步进；预充四阶段：清 OCP 锁存 → 50kHz 恒频脉宽爬升 → 50k→600kHz 变频 → 600kHz 占空比爬升至稳态，含 OCP 重试与 NO_LOAD 判定）；电源轨 PGD 使能门控判定（EN=0 时 PGD 低为正常）
 	- 5.故障保护：`app_fault_policy` 锁存 E-STOP / 关键电源轨丢失 → `srv_pwr_ctrl_emergency_off` + 风扇全速，需显式复位；`app_status_indicator` 故障/告警 LED 蓝+红优先级编码指示

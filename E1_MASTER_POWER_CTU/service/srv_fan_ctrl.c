@@ -42,13 +42,13 @@
 #define FAN_SELFTEST_DUTY (25U) /**< 开机自检占空比 (100%) */
 #define FAN_SELFTEST_MS (3000U) /**< 开机自检时长 (ms)：覆盖风扇从静止到可测速的启动时间 */
 #define FAN_SELFTEST_MIN_RPM (FAN_MIN_RPM) /**< 自检通过的最低转速 */
-#define TEMP_START_C (4000) /**< 起转温度 (0.01°C) = 40°C */
-#define TEMP_STOP_C (3800) /**< 停转温度 (0.01°C) = 38°C (迟滞) */
-#define TEMP_FULL_C (6500) /**< 满速温度 (0.01°C) = 65°C */
+#define TEMP_START_C (3000) /**< 起转温度 (0.01°C) = 40°C */
+#define TEMP_STOP_C (2500) /**< 停转温度 (0.01°C) = 38°C (迟滞) */
+#define TEMP_FULL_C (5500) /**< 满速温度 (0.01°C) = 65°C */
 #define DUTY_MIN (25U) /**< 最低占空比 (防止低速无法启动) */
 #define RPM_FILTER_CUTOFF_HZ (5U) /**< RPM 低通截止频率 (Hz), < Nyquist=5Hz */
 #define RPM_SAMPLE_RATE_HZ (10U) /**< RPM 采样率 (Hz), 100ms 周期 */
-#define FAN_DEFAULT_DUTY (85U) /** 风扇默认占空比 */
+#define FAN_DEFAULT_DUTY (90U) /** 风扇默认占空比 */
 
 /**
  * @brief 屏蔽风扇测速/堵转故障检测（暂无 FG 脉冲反馈的临时调试，测速一律视为正常）
@@ -348,16 +348,16 @@ static void fan_apply_temp_duty(fan_ctrl_t* f)
 }
 
 /**
- * @brief 温度 → 占空比线性映射（带迟滞）
+ * @brief 温度 → 占空比线性映射
  *
  *   duty
- *   100% │                  ●━━━
+ *   100% │              （FULL 以上按默认上限）
  *        │                ╱
- *    10% │          ●━━━━
- *        │        ╱
- *     0% │━━━━━━●
+ *    85% │              ●
+ *        │            ╱
+ *    25% │━━━━━━━━━●        ← 最小占空比固定 25%（不输出 0）
  *        └─────┬─────┬─────┬─── temp
- *            STOP  START  FULL
+ *           STOP  START  FULL
  *           (38°C)(40°C) (65°C)
  */
 static uint8_t temp_to_duty(int16_t temp_centi)
@@ -366,11 +366,8 @@ static uint8_t temp_to_duty(int16_t temp_centi)
         return FAN_DEFAULT_DUTY;
     }
 
-    if (temp_centi <= TEMP_STOP_C) {
-        return 0;
-    }
-
-    if (temp_centi < TEMP_START_C) {
+    /* 最小占空比 25%：低温/未达启动温度也维持 25%，不输出 0 */
+    if (temp_centi <= TEMP_START_C) {
         return DUTY_MIN;
     }
 

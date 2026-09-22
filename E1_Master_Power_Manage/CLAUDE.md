@@ -96,7 +96,7 @@ power_task_init()   → power management (GPIO control + power-up sequencing + f
 
 `can_task_init()` wires `app_status_report_fill` (defined in [app_status_report.c](applications/app_status_report.c)) as the `read_data` callback for `srv_can_mst`, and also calls `srv_pwr_det_init()` — the power-status detection service (PGOOD rails / E-STOP via `drv_status`, A_IN1_IO~3 via the `srv_adc` CD4051B path) has **no dedicated task**; it's read on demand via `srv_pwr_det_read()` (see [app_status_report.c:47](applications/app_status_report.c#L47)). If `power_task_init()` ran first and triggered CAN reporting, the callback wouldn't exist yet.
 
-> **0x001 控制帧已接通（同层解耦）**：`srv_can_mst_process_rx` 解析 `buzzer_duty` / `ctrl_byte`(3 对 valid+value) / `led_index` / LED RGB 到 `srv_can_mst_cmd_t`。HSD 输出经 `set_output` 回调（注入于 `can_task.c:can_set_output`）映射为 `drv_power_set(DRV_POWER_RAIL_HSD1_12V_DIAG / HSD1_24V_DIAG / HSD2_24V_DIAG, on)` —— service 层不直接依赖 `drv_power`；LED RGB 与蜂鸣器占空比由主循环 `can_timer_cb` 应用（LED 经 `srv_ws2812b_set_pixel()`，ISR 不碰 SPI DMA；蜂鸣器经 `drv_buzzer_set()`，占空比 0-50 直通）。
+> **0x001 控制帧已接通（同层解耦）**：`srv_can_mst_process_rx` 解析 `buzzer_duty` / `ctrl_byte`(3 对 valid+value) / `led_index` / `led_mode` / LED RGB 到 `srv_can_mst_cmd_t`。HSD 输出经 `set_output` 回调（注入于 `can_task.c:can_set_output`）映射为 `drv_power_set(DRV_POWER_RAIL_HSD1_12V_DIAG / HSD1_24V_DIAG / HSD2_24V_DIAG, on)` —— service 层不直接依赖 `drv_power`；LED RGB 与蜂鸣器占空比由主循环 `can_timer_cb` 应用（LED 经 `srv_ws2812b_set_pixel()`，ISR 不碰 SPI DMA；蜂鸣器经 `drv_buzzer_set()`，占空比 0-50 直通）。
 
 ### Framework primitives actually used here
 
@@ -139,7 +139,7 @@ A single CAN peripheral (CAN1) multiplexes three service layers. The RX callback
 
 | CAN ID | Direction | Service | Purpose |
 |--------|-----------|---------|---------|
-| `0x001` (len=6) | Host → Board | `srv_can_mst` | Host control commands (RX): buzzer duty + HSD outputs + LED RGB (`led_index` selects channel) — board status reports now on 0x010/0x011/0x012 (TX) |
+| `0x001` (len=7) | Host → Board | `srv_can_mst` | Host control commands (RX): buzzer duty + HSD outputs + LED mode/RGB (`led_index` selects channel) — board status reports now on 0x010/0x011/0x012 (TX) |
 | `0x003` (len=1) | Host → Board | `can_task` | Request to enter upgrade mode → `srv_boot_ctrl_request_boot()` (ISR sets flag, main loop applies). The host tool **sends it directly** to trigger upgrade (harmless if the board is already in Boot — Boot ignores it), then waits for the Boot heartbeat beacon (`0x702`, payload cmd `0x09`, `hw_id` check) to confirm entry — see [docs/boot_upgrade.md](docs/boot_upgrade.md) |
 | `0x200` | Battery → Board | `srv_can_dual` | Dual battery core dynamic data (100ms MUX) |
 | `0x201` | Battery → Board | `srv_can_dual` | Battery info frames (capacity, version — request/response) |

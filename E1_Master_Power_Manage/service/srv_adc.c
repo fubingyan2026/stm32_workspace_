@@ -60,7 +60,7 @@
 
 /** @brief E-STOP 双通道冗余容差（raw，12-bit）：偏差落在 0 附近或满量程(4095)附近均为正常，
  *        仅当偏差处于中间区间（两路既不一致也不互补）才判冗余通道失效/线缆异常 */
-#define SRV_ADC_ESTOP_REDUND_TOL_RAW (256U)
+#define SRV_ADC_ESTOP_REDUND_TOL_RAW (256U*2)
 
 /** @brief E-STOP 冗余故障去抖时间 (ms)：偏差连续落入中间区间的持续时间超过该值才告警。
  *        滤波后通道切换时差值会短暂扫过中间区间（约 40~50ms），去抖可消除此类瞬时误报 */

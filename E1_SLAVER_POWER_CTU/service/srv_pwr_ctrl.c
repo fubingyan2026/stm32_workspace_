@@ -163,7 +163,7 @@ void srv_pwr_ctrl_init(void)
     SRV_PWR_CTRL_LOG_I("电源输出监督服务初始化完成 (%u 路, 期望全关)",
         (unsigned)SRV_PWR_RAIL_NUM);
 
-    srv_pwr_ctrl_request_outputs(0xFF);
+    srv_pwr_ctrl_request_outputs(SRV_PWR_OUT_MASK_DC24V | SRV_PWR_OUT_MASK_ISO12V);
 }
 
 void srv_pwr_ctrl_set_voltage_cb(srv_pwr_voltage_cb_t cb)

@@ -53,10 +53,10 @@ static uint32_t s_motor_pgd_low_since; /**< 稳定后 PGD 掉低起始时刻 (ms
 /* Private constants ---------------------------------------------------------*/
 
 /** @brief MOTOR 使能后 PGD 稳定窗口 (ms)：LM5069 软启动期间 PGD 可能未立即就绪 */
-#define MOTOR_PGD_SETTLE_MS (182*2U)
+#define MOTOR_PGD_SETTLE_MS (182 * 5U)
 
 /** @brief 稳定后 PGD 掉低去抖时间 (ms)：持续低才判 MOTOR 电源故障 */
-#define MOTOR_PGD_FAULT_DEBOUNCE_MS (50*2U)
+#define MOTOR_PGD_FAULT_DEBOUNCE_MS (50 * 5U)
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -90,6 +90,11 @@ void app_fault_policy_step(uint16_t elapsed_ms)
     /* 电源状态快照（一次取全部） */
     const srv_pwr_ctrl_state_t ps = srv_pwr_ctrl_get_state();
 
+    /* 急停释放沿：解除锁存 */
+    if (utils_edge_detect(&s_estop_edge, st.estop_on)) {
+        app_fault_policy_reset();
+    }
+
     /* 已锁存且急停仍按下：保持 MOTOR 关断 */
     if (s_tripped && st.estop_on) {
         if (ps.motor_en) {
@@ -109,18 +114,8 @@ void app_fault_policy_step(uint16_t elapsed_ms)
         /* 1. 关断 MOTOR（急停只控制 MOTOR） */
         srv_pwr_ctrl_motor_set(false);
 
-        /* 2. 风扇满速散热（关闭温控自动，强制最高转速） */
-        srv_fan_ctrl_set_auto(false);
-        srv_fan_ctrl_set_duty(0, 100U);
-        srv_fan_ctrl_set_duty(1, 100U);
-
         /* 3. 打印触发原因明细 */
         fault_policy_log_reasons(&st, &ps);
-    }
-
-    /* 急停释放沿：解除锁存 */
-    if (utils_edge_detect(&s_estop_edge, st.estop_on) == UTILS_EDGE_FALLING) {
-        app_fault_policy_reset();
     }
 
     /* MOTOR 使能门控：未锁存、上电成功且急停未按下 → 使能。
@@ -160,8 +155,7 @@ static bool fault_policy_critical(const srv_pwr_det_status_t* st,
         }
         s_motor_en_prev = true;
 
-        const bool settled =
-            (uint32_t)(now_ms - s_motor_en_since) >= MOTOR_PGD_SETTLE_MS;
+        const bool settled = (uint32_t)(now_ms - s_motor_en_since) >= MOTOR_PGD_SETTLE_MS;
         if (settled) {
             if (!st->motor_power_ok) {
                 if (s_motor_pgd_low_since == 0U) {

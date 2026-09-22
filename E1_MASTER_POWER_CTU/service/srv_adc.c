@@ -30,7 +30,7 @@
 #define SRV_ADC_LOG_E(...) LOG_E("srv_adc", __VA_ARGS__)
 #define SRV_ADC_LOG_W(...) LOG_W("srv_adc", __VA_ARGS__)
 #define SRV_ADC_LOG_I(...) LOG_I("srv_adc", __VA_ARGS__)
-#define SRV_ADC_LOG_D(...) //LOG_D("srv_adc", __VA_ARGS__)
+#define SRV_ADC_LOG_D(...) LOG_D("srv_adc", __VA_ARGS__)
 #else
 #define SRV_ADC_LOG_E(...) ((void)0)
 #define SRV_ADC_LOG_W(...) ((void)0)
@@ -64,8 +64,8 @@
 #define SRV_ADC_RAW_MAX (4095U)
 
 /* 外部电压分压比（VIN 与 VIN_DC-DC 均为 220k/10k → 1/23，满量程约 75.9V） */
-#define ADC_SCALE_VIN (23.0f)
-#define ADC_SCALE_VIN_DCDC (23.0f)
+#define ADC_SCALE_VIN (22.6f)
+#define ADC_SCALE_VIN_DCDC (22.7f)
 
 /* VREFINT 校准：F103 标称 1.20V（ST 出厂校准值地址 0x1FFFF7BA 可选） */
 #define VREFINT_CAL_MV (1200U) /**< 内部参考电压标称值 (mV) */
@@ -322,9 +322,9 @@ void srv_adc_step(void)
     if ((uint32_t)(now_ms - s_tele_log_ts) >= SRV_ADC_TELE_LOG_PERIOD_MS) {
         s_tele_log_ts = now_ms;
 
-        SRV_ADC_LOG_D("vdda=%umV vin=%umV vin_dcdc=%umV mcuT=%d ntc1=%d ntc2=%d(×100)",
-            (unsigned)s.vdda_mv, (unsigned)s.vin_mv, (unsigned)s.vin_dcdc_mv,
-            (int)s.mcu_temp_x100, (int)s.ntc1_temp_x100, (int)s.ntc2_temp_x100);
+        // SRV_ADC_LOG_D("vdda=%umV vin=%umV vin_dcdc=%umV mcuT=%d ntc1=%d ntc2=%d(×100)",
+        //     (unsigned)s.vdda_mv, (unsigned)s.vin_mv, (unsigned)s.vin_dcdc_mv,
+        //     (int)s.mcu_temp_x100, (int)s.ntc1_temp_x100, (int)s.ntc2_temp_x100);
 
         /* E-STOP CD4051B 8 路原始值：按实际判据顺序成对打印
          * E_STOP1=Y0/Y1, E_STOP2=Y2/Y3, E_STOP3=Y4/Y5, E_STOP4=Y6/Y7（ADC1/ADC2） */

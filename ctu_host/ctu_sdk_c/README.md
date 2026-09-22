@@ -72,8 +72,9 @@ int main(void)
 
 ## 示例
 
-- [examples/monitor.c](examples/monitor.c) — 周期轮询 + 统计打印
-- [examples/upgrade.c](examples/upgrade.c) — 带进度与 Ctrl+C 中止的升级
+- [examples/README.md](examples/README.md) — **示例使用说明**（参数、输出、退出码、常见问题）
+- [examples/monitor.c](examples/monitor.c) — 周期轮询 + 统计打印（只读）
+- [examples/upgrade.c](examples/upgrade.c) — 带进度与 Ctrl+C 中止的升级（会写 Flash）
 
 ## 接硬件自检
 
@@ -94,7 +95,7 @@ ctu_sdk_c/
   src/                实现（protocol / transport / boot / client / poller）
   middleware/         随包发布的共享中间件副本（protocol_parser + kfifo）
   tools/ctu_cli.c     命令行工具
-  examples/           示例
+  examples/           示例（monitor / upgrade）+ 使用说明 README.md
   docs/API.md         接口文档
 ```
 

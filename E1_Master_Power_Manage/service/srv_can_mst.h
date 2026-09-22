@@ -187,17 +187,31 @@ typedef struct {
 } srv_can_mst_config_t;
 
 /**
- * @brief 主机下发的控制指令（从 0x001 RX 控制帧解析，6 字节，含 LED RGB）
+ * @brief 主机下发的控制指令（从 0x001 RX 控制帧解析，7 字节，含 LED 模式与 RGB）
  */
 typedef struct {
     uint8_t buzzer_duty; /**< 蜂鸣器占空比 0-50 (Byte0) */
-    bool hsd1_12v_on; /**< HSD1 12V 输出：1=开, 0=关 (Byte1 bit4，bit5 有效) */
-    bool hsd1_24v_on; /**< HSD1 24V 输出：1=开, 0=关 (Byte1 bit2，bit3 有效) */
-    bool hsd2_24v_on; /**< HSD2 24V 输出：1=开, 0=关 (Byte1 bit0，bit1 有效) */
+
+    /**
+     * @brief HSD 输出控制位 (Byte1)：3 路开关合并在一个字节内
+     *
+     * bits 为位域视图（声明顺序即位序），byte 为原始字节视图。
+     */
+    union {
+        struct __attribute__((packed)) {
+            uint8_t hsd1_12v_on : 1; /**< [bit0] HSD1 12V 输出：1=开, 0=关 */
+            uint8_t hsd1_24v_on : 1; /**< [bit1] HSD1 24V 输出：1=开, 0=关 */
+            uint8_t hsd2_24v_on : 1; /**< [bit2] HSD2 24V 输出：1=开, 0=关 */
+            uint8_t reserved : 5; /**< [bit3-7] 保留，恒 0 */
+        } bits;
+        uint8_t byte; /**< 原始字节视图 */
+    } ctrl;
+
     uint8_t led_index; /**< LED 索引 (Byte2)：0-31=通道1(RGB1), 32-63=通道2(RGB2) */
-    uint8_t led_r; /**< LED 红亮度 (Byte3) */
-    uint8_t led_g; /**< LED 绿亮度 (Byte4) */
-    uint8_t led_b; /**< LED 蓝亮度 (Byte5) */
+    uint8_t led_mode; /**< LED 模式 (Byte3)：取值由主机约定 */
+    uint8_t led_r; /**< LED 红亮度 (Byte4) */
+    uint8_t led_g; /**< LED 绿亮度 (Byte5) */
+    uint8_t led_b; /**< LED 蓝亮度 (Byte6) */
 } srv_can_mst_cmd_t;
 
 /**

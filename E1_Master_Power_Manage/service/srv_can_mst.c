@@ -176,7 +176,7 @@ void srv_can_mst_task(void)
 
 void srv_can_mst_process_rx(const uint8_t* data, uint8_t len)
 {
-    if (!s_initialized || !data || len < 6)
+    if (!s_initialized || !data || len < 7)
         return;
 
     memset(&s_last_cmd, 0, sizeof(s_last_cmd));
@@ -185,36 +185,38 @@ void srv_can_mst_process_rx(const uint8_t* data, uint8_t len)
 
     /* byte1: 3对 valid+value 控制位；valid=1 时才更新并下发对应输出 */
     if (data[1] & (1U << 5)) {
-        s_last_cmd.hsd1_12v_on = (data[1] >> 4) & 1U;
+        s_last_cmd.ctrl.bits.hsd1_12v_on = (data[1] >> 4) & 1U;
         if (s_config.set_output)
-            s_config.set_output(SRV_CAN_MST_OUTPUT_HSD1_12V, s_last_cmd.hsd1_12v_on);
+            s_config.set_output(SRV_CAN_MST_OUTPUT_HSD1_12V, s_last_cmd.ctrl.bits.hsd1_12v_on != 0U);
     }
     if (data[1] & (1U << 3)) {
-        s_last_cmd.hsd1_24v_on = (data[1] >> 2) & 1U;
+        s_last_cmd.ctrl.bits.hsd1_24v_on = (data[1] >> 2) & 1U;
         if (s_config.set_output)
-            s_config.set_output(SRV_CAN_MST_OUTPUT_HSD1_24V, s_last_cmd.hsd1_24v_on);
+            s_config.set_output(SRV_CAN_MST_OUTPUT_HSD1_24V, s_last_cmd.ctrl.bits.hsd1_24v_on != 0U);
     }
     if (data[1] & (1U << 1)) {
-        s_last_cmd.hsd2_24v_on = (data[1] >> 0) & 1U;
+        s_last_cmd.ctrl.bits.hsd2_24v_on = (data[1] >> 0) & 1U;
         if (s_config.set_output)
-            s_config.set_output(SRV_CAN_MST_OUTPUT_HSD2_24V, s_last_cmd.hsd2_24v_on);
+            s_config.set_output(SRV_CAN_MST_OUTPUT_HSD2_24V, s_last_cmd.ctrl.bits.hsd2_24v_on != 0U);
     }
 
-    /* byte2-5: LED RGB 控制（led_index 选通道，0-31=通道1, 32-63=通道2） */
+    /* byte2-6: LED 控制（led_index 选通道，0-31=通道1, 32-63=通道2；led_mode 由主机约定） */
     s_last_cmd.led_index = data[2];
-    s_last_cmd.led_r = data[3];
-    s_last_cmd.led_g = data[4];
-    s_last_cmd.led_b = data[5];
+    s_last_cmd.led_mode = data[3];
+    s_last_cmd.led_r = data[4];
+    s_last_cmd.led_g = data[5];
+    s_last_cmd.led_b = data[6];
 
     s_cmd_pending = true;
 
     /* 主机指令日志（配置变更，I 级） */
-    SRV_CAN_MST_LOG_D("收到主机指令: buzzer=%u hsd1_12v=%d hsd1_24v=%d hsd2_24v=%d led=%u #%02X%02X%02X",
+    SRV_CAN_MST_LOG_D("收到主机指令: buzzer=%u hsd1_12v=%d hsd1_24v=%d hsd2_24v=%d led=%u mode=%u #%02X%02X%02X",
         (unsigned)s_last_cmd.buzzer_duty,
-        (int)s_last_cmd.hsd1_12v_on,
-        (int)s_last_cmd.hsd1_24v_on,
-        (int)s_last_cmd.hsd2_24v_on,
+        (int)s_last_cmd.ctrl.bits.hsd1_12v_on,
+        (int)s_last_cmd.ctrl.bits.hsd1_24v_on,
+        (int)s_last_cmd.ctrl.bits.hsd2_24v_on,
         (unsigned)s_last_cmd.led_index,
+        (unsigned)s_last_cmd.led_mode,
         (unsigned)s_last_cmd.led_r,
         (unsigned)s_last_cmd.led_g,
         (unsigned)s_last_cmd.led_b);

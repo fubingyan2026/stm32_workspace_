@@ -82,10 +82,10 @@ typedef struct {
 
 /** @brief 步骤1：VIN 输入允许范围 (mV) */
 #define PWR_VIN_OK_MIN_MV (36000U)
-#define PWR_VIN_OK_MAX_MV (58000U)
+#define PWR_VIN_OK_MAX_MV (60000U)
 
 /** @brief 过压保护：已上电后 VIN 高于此值并持续满时长 → 关断全部输出 (mV) */
-#define PWR_VIN_OV_TRIP_MV (60000U)
+#define PWR_VIN_OV_TRIP_MV (65000U)
 
 /** @brief 过压保护判定持续时长 (ms) */
 #define PWR_VIN_OV_TRIP_MS (5000U)

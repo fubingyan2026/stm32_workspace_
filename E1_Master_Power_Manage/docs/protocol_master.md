@@ -3,7 +3,7 @@
 - **作者**：maximillian
 - **日期**：2026-08-21
 - **版本**：V1.0.0
-- **摘要**：定义主电源板（STM32F407）与上位机之间的 CAN 通信协议。上报帧（主电源板 → 主机）：0x010 系统状态帧（2 字节，急停/电源轨/风扇/模拟输入/NTC 连接）、0x011 温度帧（NTC1/NTC2/MCU）、0x012 电源电压+预充故障帧（VIN/MOTOR/AUX + 电机预充故障码），每 100ms 周期上报。主机控制帧（主机 → 主电源板）：0x001 统一控制帧（6 字节，蜂鸣器 + HSD 输出 + LED RGB，led_index 选通道）、0x003 请求进入升级模式。
+- **摘要**：定义主电源板（STM32F407）与上位机之间的 CAN 通信协议。上报帧（主电源板 → 主机）：0x010 系统状态帧（2 字节，急停/电源轨/风扇/模拟输入/NTC 连接）、0x011 温度帧（NTC1/NTC2/MCU）、0x012 电源电压+预充故障帧（VIN/MOTOR/AUX + 电机预充故障码），每 100ms 周期上报。主机控制帧（主机 → 主电源板）：0x001 统一控制帧（7 字节，蜂鸣器 + HSD 输出 + LED 模式/RGB，led_index 选通道）、0x003 请求进入升级模式。
 
 ---
 
@@ -26,10 +26,10 @@
 | 0x010 | 系统状态 | 主电源板 → 主机 | **始终发送** | 急停/电源轨错误/风扇/模拟输入/NTC 连接 |
 | 0x011 | 温度 | 主电源板 → 主机 | 始终发送 | NTC1/NTC2/MCU 温度 |
 | 0x012 | 电源电压+预充故障 | 主电源板 → 主机 | 始终发送 | VIN/MOTOR/AUX 电压 + 电机预充故障码 |
-| 0x001 | 统一控制指令 | 主机 → 主电源板 | 主机主动发送 | 蜂鸣器 + 输出控制 + LED RGB（led_index 选通道） |
+| 0x001 | 统一控制指令 | 主机 → 主电源板 | 主机主动发送 | 蜂鸣器 + 输出控制 + LED 模式/RGB（led_index 选通道） |
 | 0x003 | 进入升级模式 | 主机 → 主电源板 | 主机主动发送 | 请求 App 进入 Bootloader 升级 |
 
-标准 11-bit ID，多字节字段 **小端字节序**。0x010 为 2 字节帧，0x011/0x012 为 8 字节帧，0x001 控制帧为 6 字节。
+标准 11-bit ID，多字节字段 **小端字节序**。0x010 为 2 字节帧，0x011/0x012 为 8 字节帧，0x001 控制帧为 7 字节。
 
 ---
 
@@ -91,7 +91,7 @@
 
 | CAN ID | 帧名 | 方向 | 帧长度 | 说明 |
 |--------|------|------|--------|------|
-| 0x001 | 统一控制指令 | 主机 → 主电源板 | 6 字节 | 蜂鸣器 + 输出控制 + LED RGB |
+| 0x001 | 统一控制指令 | 主机 → 主电源板 | 7 字节 | 蜂鸣器 + 输出控制 + LED 模式/RGB |
 | 0x003 | 进入升级模式 | 主机 → 主电源板 | 1 字节 | 请求 App 置 upgrade_flag 复位进 Bootloader |
 
 ### 0x001 — 统一控制指令帧
@@ -101,9 +101,10 @@
 | 0 | `buzzer_duty` | 蜂鸣器占空比 0-50 |
 | 1 | `ctrl_byte`   | 输出控制位（见下表） |
 | 2 | `led_index` | LED 索引：0-31=通道1(RGB1/SPI1)，32-63=通道2(RGB2/SPI3) |
-| 3 | `led_r` | LED 红亮度 0-255 |
-| 4 | `led_g` | LED 绿亮度 0-255 |
-| 5 | `led_b` | LED 蓝亮度 0-255 |
+| 3 | `led_mode` | LED 模式：取值由主机约定 |
+| 4 | `led_r` | LED 红亮度 0-255 |
+| 5 | `led_g` | LED 绿亮度 0-255 |
+| 6 | `led_b` | LED 蓝亮度 0-255 |
 
 **Byte1 控制位：**
 
@@ -121,7 +122,7 @@
 - LED 通过 `led_index` 区分通道：0-31=通道1(RGB1/SPI1)，32-63=通道2(RGB2/SPI3)；一帧控制一个 LED，分别发帧可分别控制两通道
 - 索引超出对应通道 LED 数时忽略该灯
 - 收到含 LED RGB 的 0x001 后灯带退出彗星动画，进入手动控制模式；后续帧覆盖对应 LED 并刷新
-- 帧长度必须为 **6 字节**，否则丢弃
+- 帧长度必须为 **7 字节**，否则丢弃
 
 ### 0x003 — 进入升级模式帧
 
@@ -163,7 +164,7 @@ task 层（`can_task.c`）通过回调注入，保持 service 与应用/驱动�
 
 | 帧 | 工程结构体 / 函数 | 消费位置与解耦方式 |
 |----|------------------|------------------|
-| 0x001 统一控制 | `srv_can_mst_cmd_t`（解析于 `srv_can_mst_process_rx`，6 字节） | byte0 `buzzer_duty`（0-50，主循环 `can_timer_cb` 经 `drv_buzzer_set()` 直接驱动蜂鸣器，占空比直通）、byte1 `ctrl_byte`（3 对 valid+value）、byte2 `led_index`、byte3-5 LED RGB |
+| 0x001 统一控制 | `srv_can_mst_cmd_t`（解析于 `srv_can_mst_process_rx`，7 字节） | byte0 `buzzer_duty`（0-50，主循环 `can_timer_cb` 经 `drv_buzzer_set()` 直接驱动蜂鸣器，占空比直通）、byte1 `ctrl_byte`（3 对 valid+value）、byte2 `led_index`、byte3 `led_mode`、byte4-6 LED RGB |
 | 0x001 HSD 输出 | `set_output` 回调（`srv_can_mst_set_output_cb_t`） | `srv_can_mst_process_rx()` 仅在 valid 位置位时调用 `s_config.set_output(out, on)`；task 层 `can_task.c:can_set_output()` 将抽象通道映射为 `drv_power_set(DRV_POWER_RAIL_HSD1_12V_DIAG / HSD1_24V_DIAG / HSD2_24V_DIAG, on)`。**service 层不直连 `drv_power`，同层解耦** |
 | 0x001 LED RGB | `srv_can_mst_get_cmd()` + `srv_ws2812b_set_pixel()` | RX 解析在 ISR（`can_rx_callback`），LED 应用延后到主循环 `can_timer_cb`（避免 ISR 内 SPI DMA） |
 | 0x003 进 Boot | `srv_boot_ctrl_request_boot()` | RX 仅置 `s_enter_boot_requested` 标志，主循环 `can_timer_cb` 消费并调用 |
