@@ -706,7 +706,7 @@ static void srv_ht_temp_test_scan_done(void)
  */
 static void srv_ht_temp_test_send_handshake(uint8_t addr)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_HT_TEMP_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -716,7 +716,7 @@ static void srv_ht_temp_test_send_handshake(uint8_t addr)
         .dlc = 1,
     };
     tx.data[0] = SRV_HT_TEMP_TEST_CMD_HANDSHAKE;
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_HT_TEMP_CAN_CH, &tx);
 }
 
 /**
@@ -726,7 +726,7 @@ static void srv_ht_temp_test_send_handshake(uint8_t addr)
  */
 static void srv_ht_temp_test_send_enable(uint8_t addr, bool enable)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_HT_TEMP_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -737,7 +737,7 @@ static void srv_ht_temp_test_send_enable(uint8_t addr, bool enable)
     };
     tx.data[0] = SRV_HT_TEMP_TEST_CMD_ENABLE;
     tx.data[1] = enable ? 0x01U : 0x00U;
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_HT_TEMP_CAN_CH, &tx);
 }
 
 /**
@@ -746,7 +746,7 @@ static void srv_ht_temp_test_send_enable(uint8_t addr, bool enable)
  */
 static void srv_ht_temp_test_set_speed_mode(uint8_t addr)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_HT_TEMP_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -757,7 +757,7 @@ static void srv_ht_temp_test_set_speed_mode(uint8_t addr)
     };
     tx.data[0] = SRV_HT_TEMP_TEST_CMD_MODE;
     tx.data[1] = SRV_HT_TEMP_TEST_MODE_SPEED;
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_HT_TEMP_CAN_CH, &tx);
 }
 
 /**
@@ -768,7 +768,7 @@ static void srv_ht_temp_test_set_speed_mode(uint8_t addr)
  */
 static void srv_ht_temp_test_send_speed(uint8_t addr, int16_t rpm)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_HT_TEMP_CAN_CH))
         return;
 
     /* 实际转速 → IQ24：IQ = rpm / SRV_HT_TEMP_TEST_SPEED_FULL_SCALE × 2^24（取整） */
@@ -785,7 +785,7 @@ static void srv_ht_temp_test_send_speed(uint8_t addr, int16_t rpm)
     tx.data[2] = (uint8_t)((uint32_t)iq >> 16);
     tx.data[3] = (uint8_t)((uint32_t)iq >> 8);
     tx.data[4] = (uint8_t)(uint32_t)iq;
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_HT_TEMP_CAN_CH, &tx);
 }
 
 /* --- 批量下发（对全部检测到的电机） --- */
@@ -818,7 +818,7 @@ static void srv_ht_temp_test_cmd_speed_all(int16_t rpm)
  */
 static void srv_ht_temp_test_send_query_alarm(uint8_t addr)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_HT_TEMP_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -828,7 +828,7 @@ static void srv_ht_temp_test_send_query_alarm(uint8_t addr)
         .dlc = 1,
     };
     tx.data[0] = SRV_HT_TEMP_TEST_CMD_ALARM;
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_HT_TEMP_CAN_CH, &tx);
 }
 
 /**
@@ -868,7 +868,7 @@ static void srv_ht_temp_test_alarm_print(uint8_t addr, uint32_t code)
  */
 static void srv_ht_temp_test_send_query_voltage(uint8_t addr)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_HT_TEMP_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -878,7 +878,7 @@ static void srv_ht_temp_test_send_query_voltage(uint8_t addr)
         .dlc = 1,
     };
     tx.data[0] = SRV_HT_TEMP_TEST_CMD_VOLTAGE;
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_HT_TEMP_CAN_CH, &tx);
 }
 
 /**
@@ -982,7 +982,7 @@ static void srv_ht_temp_test_log_phase(srv_ht_temp_test_phase_t phase)
  */
 static void srv_ht_temp_test_send_release_brake(uint8_t addr)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_HT_TEMP_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -994,7 +994,7 @@ static void srv_ht_temp_test_send_release_brake(uint8_t addr)
     tx.data[0] = SRV_HT_TEMP_TEST_CMD_BRAKE;
     tx.data[1] = 0x01U; /* 0x0100 大端 */
     tx.data[2] = 0x00U;
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_HT_TEMP_CAN_CH, &tx);
 }
 
 static void srv_ht_temp_test_cmd_brake_all(void)

@@ -29,14 +29,13 @@ extern "C" {
 #include <stdint.h>
 
 #include "drv_can.h"
+#include "srv_motor_test_select.h" /* 提供 SRV_HT_CAN2_CAN_CH：本模块收发绑定的通道 */
 
 /* 接线选择 ------------------------------------------------------------------*/
-/* CAN2（FDCAN2）测试模块选择统一在 service/srv_motor_test_select.h 的
- * SRV_MOTOR_TEST_SELECT_CAN2 枚举宏中完成：
- *   - SRV_MOTOR_TEST_HT_CAN2 = 0 本模块（苇熠速度模式往复 CAN2 版）；
- *   - SRV_MOTOR_TEST_PA430   = 1 Motorevo(PA430) MIT 测试。
- * can_task 按该选择接线 init/step/on_rx；两模块共用 FDCAN2 独立总线，
- * 同一时刻只激活一个。 */
+/* 本模块（苇熠速度模式多圈往复）可在 srv_motor_test_select.h 的统一枚举中被
+ * CAN1(SRV_MOTOR_TEST_SELECT) 或 CAN2(SRV_MOTOR_TEST_SELECT_CAN2) 任选其一，
+ * 收发通道由 SRV_HT_CAN2_CAN_CH 解析（选在 CAN1→CH_1，否则→CH_2）。
+ * 单例模块：不能同时在两条通道选择。 */
 
 /* Exported functions prototypes ---------------------------------------------*/
 

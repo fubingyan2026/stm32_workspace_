@@ -4,7 +4,8 @@
  *
  * 电机控制指令按 docs/Motorevo电机CAN协议文档.md 组帧发送（CAN FD 广播帧，
  * 状态帧 0x10 / 控制帧 0x20，DLC 64，每电机槽 (ID-1)*8，多字节大端）。
- * 本模块走 FDCAN2（DRV_CAN_CH_2，PB12 RX / PB13 TX）独立总线。
+ * 本模块走 SRV_PA430_CAN_CH 指定的独立总线（CAN1=DRV_CAN_CH_1 或 CAN2=DRV_CAN_CH_2，
+ * 由 srv_motor_test_select.h 选择决定）。
  *
  * MIT 公式：T_out = Kp×(θ_ref−θ) + Kd×(V_ref−V) + T_ref。本模块令 θ_ref 在各电机
  * 自身运动中心 ±SRV_PA430_ANGLE_AMP_RAD 两端点间交替，Kp/Kd/V_ref 均按
@@ -66,6 +67,14 @@
 #define SRV_PA430_CONFIGURE_MODE 1
 
 /**
+ * @brief 上电设零：1=在 Control Mode 确认为 MIT 后、使能前，先发一次设零命令
+ *        （状态帧 0x10 槽 byte7=0xFE：把当前位置设为 0 位并保存 Flash），
+ *        使电机自身 0 点 = 上电位置，彻底消除"上电按绝对 0 点强拉"的风险。
+ *        注意：该命令会写电机 Flash（每次上电一次）。
+ */
+#define SRV_PA430_ZERO_AT_START 1
+
+/**
  * @brief 经典 CAN 诊断测试开关：置 1 时 CH_2 上的帧改为经典 CAN（DLC 8，全程 1M），
  *        用于隔离「收发器未驱动」vs「5M FD 数据段问题」（经典 CAN 仲裁段与 FD 相同）。
  *        PA430 协议本身要求 CAN FD DLC 64，此开关仅作诊断用，测完置 0。
@@ -92,21 +101,21 @@
 
 /* ===== 用户可调参数（物理单位；内部自动换算 raw） ===== */
 /** @brief 反转角度半幅（rad），行程为 ±AMP（默认 ±2.5 rad） */
-#define SRV_PA430_ANGLE_AMP_RAD (1.9f)
+#define SRV_PA430_ANGLE_AMP_RAD (1.8f)
 /** @brief V_ref 目标速度（rad/s），通常 0 */
 #define SRV_PA430_VEL_REF_RADPS (0.0f)
 /** @brief MIT 刚度 Kp（Nm/rad，0~250） */
-#define SRV_PA430_KP_NMPR (26.5f)
+#define SRV_PA430_KP_NMPR (12.5f)
 /** @brief MIT 阻尼 Kd（Nm/(rad/s)，0~50）；调大→运动更慢更平稳，不影响到位精度 */
-#define SRV_PA430_KD_NMPRPDS (50.0f)
+#define SRV_PA430_KD_NMPRPDS (5.0f)
 /** @brief 到位判定阈值（rad） */
-#define SRV_PA430_ARRIVE_THRESHOLD_RAD (0.5f)
+#define SRV_PA430_ARRIVE_THRESHOLD_RAD (0.25f)
 /**
  * @brief 目标位置递进限速（rad/s）：θ_ref 每控制周期向终点最多移动
  *        VEL×(CTRL_PERIOD_MS/1000) rad，指令速度受限→电机实际转速≈递进速度，
  *        与 Kd 阻尼正交可叠加限速；置 0 关闭递进（直接跳变到端点）
  */
-#define SRV_PA430_TARGET_VEL_RADPS (2.5f)
+#define SRV_PA430_TARGET_VEL_RADPS (0.5f)
 
 /* ===== 协议缩放常量（docs/Motorevo电机CAN协议文档.md §3.1，勿改） ===== */
 #define SRV_PA430_THETA_MIN_RAD (-12.5f)
@@ -165,6 +174,7 @@
 #define SRV_PA430_ID_CTRL_SINGLE_BASE 0x200U /**< 单机控制帧基址（+ Motor ID，DLC 8） */
 #define SRV_PA430_CMD_ENABLE 0xFCU /**< 槽 byte7：使能命令 */
 #define SRV_PA430_CMD_DISABLE 0xFDU /**< 槽 byte7：失能命令 */
+#define SRV_PA430_CMD_ZERO 0xFEU /**< 槽 byte7：设零命令（当前位置=0 并保存 Flash） */
 #define SRV_PA430_CMD_NONE 0xFFU /**< 槽 byte7：无命令（未配置电机槽） */
 #define SRV_PA430_PARAM_ID_BASE 0x600U /**< 单机参数读写帧基址（+ Motor ID） */
 #define SRV_PA430_PARAM_HEAD 0x67U /**< 参数帧帧头 */
@@ -206,6 +216,16 @@ static const srv_pa430_torque_test_err_desc_t s_err_map[] = {
 
 /** @brief 测试模式运行标志 */
 static bool s_running;
+
+/** @brief 控制就绪：Control Mode 确认为 MIT 后才允许下发 0x20 控制帧/使能。
+ *        防上电时电机仍处于 Flash 里的非 MIT 模式，把 MIT 包误解为位置/速度指令而猛动 */
+static bool s_ctrl_ready;
+
+/** @brief 上电设零是否已发送（SRV_PA430_ZERO_AT_START） */
+static bool s_zero_sent;
+
+/** @brief 就绪后使能是否已发送一次（后续由"保持使能"循环维护） */
+static bool s_enable_sent;
 
 /** @brief 电机 ID 列表（广播槽 = (ID-1)*8；默认单台 ID=1，可扩展 1~8） */
 static const uint8_t s_motor_ids[SRV_PA430_MAX_MOTORS] = { 1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U };
@@ -339,6 +359,7 @@ static uint16_t srv_pa430_torque_test_target_endpoint(uint8_t idx, uint8_t dir);
 static uint8_t srv_pa430_torque_test_first_center_idx(void);
 static void srv_pa430_torque_test_ramp_target(void);
 static bool srv_pa430_torque_test_send_enable(bool enable);
+static bool srv_pa430_torque_test_send_zero(void);
 static uint16_t srv_pa430_theta_to_raw(float theta_rad);
 static uint16_t srv_pa430_vel_to_raw(float vel_radps);
 static uint16_t srv_pa430_gain_to_raw(float val, float max);
@@ -390,6 +411,9 @@ void srv_pa430_torque_test_start(void)
     s_target_raw = s_pos_raw_mid;
     s_target_dest_raw = s_pos_raw_mid;
     s_target_armed = false;
+    s_ctrl_ready = false; /* 模式确认 MIT 前禁止控制/使能（防上电猛动） */
+    s_zero_sent = false;
+    s_enable_sent = false;
     s_last_ctrl_ms = s_start_ms;
 
     memset(s_motor_theta_raw, 0, sizeof(s_motor_theta_raw));
@@ -410,7 +434,9 @@ void srv_pa430_torque_test_start(void)
         s_motor_last_seen_ms[i] = s_start_ms; /* 掉线检测起点 */
     }
 
-    (void)srv_pa430_torque_test_send_enable(true); /* 广播使能全部配置电机 */
+    /* 安全：此处**不使能、不发控制帧**。先读回 Control Mode(Index 11)，
+       确认为 MIT（必要时 RAM 改写）后才设 s_ctrl_ready，再由 step 上电设零→使能→控制。
+       这样上电瞬间电机若处于 Flash 内的非 MIT 模式，也不会收到被误解的 MIT 控制包 */
 
     /* 启动参数读回：读 Control Mode(11) / Torque Limit(21) 验证电机实际配置
        （仅读不写，无 Flash 风险；应答由 on_rx 记录，step 周期重发直到应答/超时后打印）。
@@ -534,25 +560,48 @@ void srv_pa430_torque_test_step(void)
         }
     }
 
+    /* 就绪后动作序列：Control Mode 已确认 MIT → 上电设零（当前位置=0）→ 使能一次 → 才发控制帧。
+       就绪前（模式未确认）以上全部不做，电机保持不动作，杜绝上电猛动 */
+    if (s_ctrl_ready) {
+        if (!s_zero_sent) {
+#if SRV_PA430_ZERO_AT_START
+            if (srv_pa430_torque_test_send_zero()) {
+                s_zero_sent = true;
+                SRV_PA430_TORQUE_TEST_LOG_I("上电设零已发送：当前位置设为 0 位（含 Flash 保存）");
+            }
+#else
+            s_zero_sent = true;
+#endif
+        }
+        if (s_zero_sent && !s_enable_sent) {
+            if (srv_pa430_torque_test_send_enable(true)) {
+                s_enable_sent = true;
+                SRV_PA430_TORQUE_TEST_LOG_I("已发送使能（模式就绪、设零后）");
+            }
+        }
+    }
+
     /* 周期重发控制帧：经典诊断模式发经典测试帧，FD 模式发广播 MIT 控制帧
-       （FD 模式未收到反馈时降低重发频率，避免无电机总线上错误计数器快速累计进 BUS-OFF） */
+       （**仅模式就绪后下发**；未收到反馈时降低重发频率，避免无电机总线上错误计数快速累计进 BUS-OFF） */
 #if SRV_PA430_CLASSIC_TEST
-    if ((now - s_last_ctrl_ms) >= SRV_PA430_CTRL_PERIOD_IDLE_MS) {
+    if (s_ctrl_ready && ((now - s_last_ctrl_ms) >= SRV_PA430_CTRL_PERIOD_IDLE_MS)) {
         s_last_ctrl_ms = now;
         srv_pa430_torque_test_send_classic();
     }
 #else
-    bool fb_seen = false;
-    for (uint8_t i = 0; i < SRV_PA430_MOTOR_COUNT; i++) {
-        if (s_motor_have_fb[i]) {
-            fb_seen = true;
-            break;
+    if (s_ctrl_ready) {
+        bool fb_seen = false;
+        for (uint8_t i = 0; i < SRV_PA430_MOTOR_COUNT; i++) {
+            if (s_motor_have_fb[i]) {
+                fb_seen = true;
+                break;
+            }
         }
-    }
-    const uint32_t ctrl_period = fb_seen ? SRV_PA430_CTRL_PERIOD_MS : SRV_PA430_CTRL_PERIOD_IDLE_MS;
-    if ((now - s_last_ctrl_ms) >= ctrl_period) {
-        s_last_ctrl_ms = now;
-        srv_pa430_torque_test_send_control();
+        const uint32_t ctrl_period = fb_seen ? SRV_PA430_CTRL_PERIOD_MS : SRV_PA430_CTRL_PERIOD_IDLE_MS;
+        if ((now - s_last_ctrl_ms) >= ctrl_period) {
+            s_last_ctrl_ms = now;
+            srv_pa430_torque_test_send_control();
+        }
     }
 #endif
 
@@ -587,7 +636,9 @@ void srv_pa430_torque_test_step(void)
        Control Mode 改写流程进行中时暂停，避免其失能步骤被此循环立刻重新使能 */
     bool need_enable = false;
 #if SRV_PA430_CONFIGURE_MODE
-    if (s_mode_correct_state == SRV_PA430_MODE_CORRECT_IDLE)
+    if (s_ctrl_ready && (s_mode_correct_state == SRV_PA430_MODE_CORRECT_IDLE))
+#else
+    if (s_ctrl_ready)
 #endif
     {
         for (uint8_t i = 0; i < SRV_PA430_MOTOR_COUNT; i++) {
@@ -953,7 +1004,7 @@ static bool srv_pa430_torque_test_send_enable(bool enable)
     const uint8_t cmd = enable ? SRV_PA430_CMD_ENABLE : SRV_PA430_CMD_DISABLE;
 #if SRV_PA430_SINGLE_ADDR
     for (uint8_t i = 0; i < SRV_PA430_MOTOR_COUNT; i++) {
-        if (!drv_can_tx_ready(DRV_CAN_CH_2))
+        if (!drv_can_tx_ready(SRV_PA430_CAN_CH))
             return false;
         drv_can_msg_t tx = {
             .id = SRV_PA430_ID_STATUS_SINGLE_BASE + s_motor_ids[i],
@@ -963,10 +1014,10 @@ static bool srv_pa430_torque_test_send_enable(bool enable)
         };
         memset(tx.data, 0xFF, sizeof(tx.data));
         tx.data[7] = cmd;
-        drv_can_send(DRV_CAN_CH_2, &tx);
+        drv_can_send(SRV_PA430_CAN_CH, &tx);
     }
 #else
-    if (!drv_can_tx_ready(DRV_CAN_CH_2))
+    if (!drv_can_tx_ready(SRV_PA430_CAN_CH))
         return false;
     drv_can_msg_t tx = {
         .id = SRV_PA430_ID_STATUS,
@@ -982,7 +1033,51 @@ static bool srv_pa430_torque_test_send_enable(bool enable)
         tx.data[(uint8_t)((s_motor_ids[i] - 1U) * 8U) + 7U] = cmd;
     }
 #endif
-    drv_can_send(DRV_CAN_CH_2, &tx);
+    drv_can_send(SRV_PA430_CAN_CH, &tx);
+#endif
+    return true;
+}
+
+/**
+ * @brief 发送上电设零命令（把当前位置设为 0 位，并保存 Flash）
+ * @return true=帧已入 TX FIFO；false=TX 未就绪未发送（调用方可重试）
+ * @note  与使能帧同格式（状态帧 0x10 / 0x100+ID），槽 byte7 填 0xFE。
+ *        在 Control Mode 确认为 MIT、使能之前发送，使电机自身 0 点=上电位置
+ */
+static bool srv_pa430_torque_test_send_zero(void)
+{
+#if SRV_PA430_SINGLE_ADDR
+    for (uint8_t i = 0; i < SRV_PA430_MOTOR_COUNT; i++) {
+        if (!drv_can_tx_ready(SRV_PA430_CAN_CH))
+            return false;
+        drv_can_msg_t tx = {
+            .id = SRV_PA430_ID_STATUS_SINGLE_BASE + s_motor_ids[i],
+            .is_extended = false,
+            .is_fd = false,
+            .dlc = 8,
+        };
+        memset(tx.data, 0xFF, sizeof(tx.data));
+        tx.data[7] = SRV_PA430_CMD_ZERO;
+        drv_can_send(SRV_PA430_CAN_CH, &tx);
+    }
+#else
+    if (!drv_can_tx_ready(SRV_PA430_CAN_CH))
+        return false;
+    drv_can_msg_t tx = {
+        .id = SRV_PA430_ID_STATUS,
+        .is_extended = false,
+        .is_fd = !SRV_PA430_CLASSIC_TEST,
+        .dlc = SRV_PA430_CLASSIC_TEST ? 8U : 64U,
+    };
+    memset(tx.data, SRV_PA430_CMD_NONE, sizeof(tx.data)); /* 全槽 0xFF 无命令 */
+#if SRV_PA430_CLASSIC_TEST
+    tx.data[7] = SRV_PA430_CMD_ZERO;
+#else
+    for (uint8_t i = 0; i < SRV_PA430_MOTOR_COUNT; i++) {
+        tx.data[(uint8_t)((s_motor_ids[i] - 1U) * 8U) + 7U] = SRV_PA430_CMD_ZERO;
+    }
+#endif
+    drv_can_send(SRV_PA430_CAN_CH, &tx);
 #endif
     return true;
 }
@@ -1017,9 +1112,16 @@ static void srv_pa430_torque_test_pack_mit(uint8_t* slot, uint16_t pos, uint16_t
  */
 static void srv_pa430_torque_test_send_control(void)
 {
+    /* 安全门控：中心未锁存（尚未读到初始位置）前，配置电机槽下发**零刚度零力矩**中性包，
+       避免"目标=绝对 0 rad + 满 Kp"把上电位置已偏离 0 的电机瞬间强拉过去（位置突变根因）；
+       首次反馈锁存中心、θ_ref 设为当前位置后（s_target_armed=true）才施加 Kp/Kd 开始往复 */
+    const uint16_t pos_ref = s_target_armed ? s_target_raw : s_pos_raw_mid;
+    const uint16_t kp_ref = s_target_armed ? s_kp_raw : 0U;
+    const uint16_t kd_ref = s_target_armed ? s_kd_raw : 0U;
+
 #if SRV_PA430_SINGLE_ADDR
     for (uint8_t i = 0; i < SRV_PA430_MOTOR_COUNT; i++) {
-        if (!drv_can_tx_ready(DRV_CAN_CH_2))
+        if (!drv_can_tx_ready(SRV_PA430_CAN_CH))
             return;
         drv_can_msg_t tx = {
             .id = SRV_PA430_ID_CTRL_SINGLE_BASE + s_motor_ids[i],
@@ -1027,12 +1129,12 @@ static void srv_pa430_torque_test_send_control(void)
             .is_fd = false,
             .dlc = 8,
         };
-        srv_pa430_torque_test_pack_mit(tx.data, s_target_raw, s_vel_ref_raw,
-            s_kp_raw, s_kd_raw, SRV_PA430_TQ_RAW_0);
-        drv_can_send(DRV_CAN_CH_2, &tx);
+        srv_pa430_torque_test_pack_mit(tx.data, pos_ref, s_vel_ref_raw,
+            kp_ref, kd_ref, SRV_PA430_TQ_RAW_0);
+        drv_can_send(SRV_PA430_CAN_CH, &tx);
     }
 #else
-    if (!drv_can_tx_ready(DRV_CAN_CH_2))
+    if (!drv_can_tx_ready(SRV_PA430_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -1049,10 +1151,10 @@ static void srv_pa430_torque_test_send_control(void)
     }
     for (uint8_t i = 0; i < SRV_PA430_MOTOR_COUNT; i++) {
         srv_pa430_torque_test_pack_mit(&tx.data[(uint8_t)((s_motor_ids[i] - 1U) * 8U)],
-            s_target_raw, s_vel_ref_raw, s_kp_raw, s_kd_raw,
+            pos_ref, s_vel_ref_raw, kp_ref, kd_ref,
             SRV_PA430_TQ_RAW_0);
     }
-    drv_can_send(DRV_CAN_CH_2, &tx);
+    drv_can_send(SRV_PA430_CAN_CH, &tx);
 #endif
 }
 
@@ -1064,7 +1166,7 @@ static void srv_pa430_torque_test_send_control(void)
 #if SRV_PA430_CLASSIC_TEST
 static void srv_pa430_torque_test_send_classic(void)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_2))
+    if (!drv_can_tx_ready(SRV_PA430_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -1074,7 +1176,7 @@ static void srv_pa430_torque_test_send_classic(void)
         .dlc = 8,
     };
     memset(tx.data, 0xAA, sizeof(tx.data));
-    drv_can_send(DRV_CAN_CH_2, &tx);
+    drv_can_send(SRV_PA430_CAN_CH, &tx);
 }
 #endif
 
@@ -1101,7 +1203,7 @@ static void srv_pa430_torque_test_err_print(uint8_t addr, uint16_t code)
  */
 static void srv_pa430_torque_test_send_param_read(uint8_t addr, uint8_t index)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_2))
+    if (!drv_can_tx_ready(SRV_PA430_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -1118,7 +1220,7 @@ static void srv_pa430_torque_test_send_param_read(uint8_t addr, uint8_t index)
     tx.data[5] = 0;
     tx.data[6] = SRV_PA430_PARAM_RW_READ;
     tx.data[7] = SRV_PA430_PARAM_TAIL;
-    drv_can_send(DRV_CAN_CH_2, &tx);
+    drv_can_send(SRV_PA430_CAN_CH, &tx);
 }
 
 /**
@@ -1144,7 +1246,7 @@ static void srv_pa430_torque_test_send_diag_reads(void)
  */
 static void srv_pa430_torque_test_send_param_write(uint8_t addr, uint8_t index, uint32_t value)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_2))
+    if (!drv_can_tx_ready(SRV_PA430_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -1161,7 +1263,7 @@ static void srv_pa430_torque_test_send_param_write(uint8_t addr, uint8_t index, 
     tx.data[5] = (uint8_t)value;
     tx.data[6] = SRV_PA430_PARAM_RW_WRITE;
     tx.data[7] = SRV_PA430_PARAM_TAIL;
-    drv_can_send(DRV_CAN_CH_2, &tx);
+    drv_can_send(SRV_PA430_CAN_CH, &tx);
 }
 
 /**
@@ -1173,10 +1275,12 @@ static void srv_pa430_torque_test_send_param_write(uint8_t addr, uint8_t index, 
 static void srv_pa430_torque_test_configure_mode(void)
 {
     bool need_correct = false;
+    bool all_mit = true;
     for (uint8_t i = 0; i < SRV_PA430_MOTOR_COUNT; i++) {
         if (!s_diag_have[i][0]) {
-            SRV_PA430_TORQUE_TEST_LOG_W("电机 ID=%u Control Mode 读回超时，跳过自动改写",
+            SRV_PA430_TORQUE_TEST_LOG_W("电机 ID=%u Control Mode 读回超时，跳过自动改写（控制保持未就绪）",
                 (unsigned)s_motor_ids[i]);
+            all_mit = false;
             continue;
         }
         if (s_diag_val[i][0] == 0x02000000UL) {
@@ -1184,14 +1288,20 @@ static void srv_pa430_torque_test_configure_mode(void)
                 (unsigned)s_motor_ids[i]);
             continue;
         }
-        SRV_PA430_TORQUE_TEST_LOG_W("电机 ID=%u Control Mode=0x%08lX 非 MIT，启动改写流程（失能→写2→校验→恢复使能，仅 RAM 生效不保存）",
+        SRV_PA430_TORQUE_TEST_LOG_W("电机 ID=%u Control Mode=0x%08lX 非 MIT，启动改写流程（失能→写2→校验，仅 RAM 生效不保存）",
             (unsigned)s_motor_ids[i], (unsigned long)s_diag_val[i][0]);
         need_correct = true;
+        all_mit = false;
     }
     if (need_correct) {
         s_mode_correct_state = SRV_PA430_MODE_CORRECT_DISABLE;
         s_mode_correct_failed = false;
+    } else if (all_mit) {
+        /* 无需改写：全部确认 MIT，直接进入就绪（随后 step 上电设零→使能→控制） */
+        s_ctrl_ready = true;
+        SRV_PA430_TORQUE_TEST_LOG_I("所有电机 Control Mode 已确认 MIT，控制就绪（等待上电设零）");
     }
+    /* 读回超时/未知：保持未就绪，不发控制帧（安全优先，宁可不动） */
 }
 
 /**
@@ -1257,12 +1367,13 @@ static void srv_pa430_torque_test_mode_correct_step(uint32_t now)
     }
 
     case SRV_PA430_MODE_CORRECT_DONE:
-        (void)srv_pa430_torque_test_send_enable(true); /* 恢复使能 */
+        /* 校验通过才置就绪；随后由 step 上电设零→使能→控制帧。校验失败保持未就绪（不发控制） */
+        s_ctrl_ready = !s_mode_correct_failed;
         if (s_mode_correct_failed) {
             SRV_PA430_TORQUE_TEST_LOG_W("Control Mode 改写未生效或校验失败，电机仍非 MIT（供电不稳/固件拒绝？）；"
-                "MIT 控制帧将不被执行，需改用伺服模式驱动或人工检查");
+                "保持未就绪不再下发控制帧，需人工检查");
         } else {
-            SRV_PA430_TORQUE_TEST_LOG_I("Control Mode 已确认为 MIT(2)，PA430 MIT 控制生效");
+            SRV_PA430_TORQUE_TEST_LOG_I("Control Mode 已确认为 MIT(2)，控制就绪（等待上电设零）");
         }
         s_mode_correct_state = SRV_PA430_MODE_CORRECT_IDLE;
         break;

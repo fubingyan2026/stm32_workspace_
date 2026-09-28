@@ -1032,7 +1032,7 @@ static void srv_ht_torque_test_rescan_done(uint32_t now)
  */
 static void srv_ht_torque_test_send_handshake(uint8_t addr)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_HT_TORQUE_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -1042,7 +1042,7 @@ static void srv_ht_torque_test_send_handshake(uint8_t addr)
         .dlc = 1,
     };
     tx.data[0] = SRV_HT_TORQUE_TEST_CMD_HANDSHAKE;
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_HT_TORQUE_CAN_CH, &tx);
 }
 
 /**
@@ -1052,7 +1052,7 @@ static void srv_ht_torque_test_send_handshake(uint8_t addr)
  */
 static void srv_ht_torque_test_send_enable(uint8_t addr, bool enable)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_HT_TORQUE_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -1063,7 +1063,7 @@ static void srv_ht_torque_test_send_enable(uint8_t addr, bool enable)
     };
     tx.data[0] = SRV_HT_TORQUE_TEST_CMD_ENABLE;
     tx.data[1] = enable ? 0x01U : 0x00U;
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_HT_TORQUE_CAN_CH, &tx);
 }
 
 /**
@@ -1072,7 +1072,7 @@ static void srv_ht_torque_test_send_enable(uint8_t addr, bool enable)
  */
 static void srv_ht_torque_test_set_speed_mode(uint8_t addr)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_HT_TORQUE_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -1083,7 +1083,7 @@ static void srv_ht_torque_test_set_speed_mode(uint8_t addr)
     };
     tx.data[0] = SRV_HT_TORQUE_TEST_CMD_MODE;
     tx.data[1] = SRV_HT_TORQUE_TEST_MODE_SPEED;
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_HT_TORQUE_CAN_CH, &tx);
 }
 
 /**
@@ -1094,7 +1094,7 @@ static void srv_ht_torque_test_set_speed_mode(uint8_t addr)
  */
 static void srv_ht_torque_test_send_cur_limit(uint8_t addr)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_HT_TORQUE_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -1108,7 +1108,7 @@ static void srv_ht_torque_test_send_cur_limit(uint8_t addr)
     tx.data[2] = (uint8_t)(SRV_HT_TORQUE_TEST_CUR_LIMIT_IQ >> 16);
     tx.data[3] = (uint8_t)(SRV_HT_TORQUE_TEST_CUR_LIMIT_IQ >> 8);
     tx.data[4] = (uint8_t)(SRV_HT_TORQUE_TEST_CUR_LIMIT_IQ);
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_HT_TORQUE_CAN_CH, &tx);
 }
 
 /**
@@ -1119,7 +1119,7 @@ static void srv_ht_torque_test_send_cur_limit(uint8_t addr)
  */
 static void srv_ht_torque_test_send_speed(uint8_t addr, int16_t rpm)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_HT_TORQUE_CAN_CH))
         return;
 
     const int32_t iq = (int32_t)(((int64_t)rpm << 24) / SRV_HT_TORQUE_TEST_SPEED_FULL_SCALE);
@@ -1135,7 +1135,7 @@ static void srv_ht_torque_test_send_speed(uint8_t addr, int16_t rpm)
     tx.data[2] = (uint8_t)((uint32_t)iq >> 16);
     tx.data[3] = (uint8_t)((uint32_t)iq >> 8);
     tx.data[4] = (uint8_t)(uint32_t)iq;
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_HT_TORQUE_CAN_CH, &tx);
 }
 
 /**
@@ -1145,7 +1145,7 @@ static void srv_ht_torque_test_send_speed(uint8_t addr, int16_t rpm)
  */
 static void srv_ht_torque_test_send_query_position(uint8_t addr)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_HT_TORQUE_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -1155,7 +1155,7 @@ static void srv_ht_torque_test_send_query_position(uint8_t addr)
         .dlc = 1,
     };
     tx.data[0] = SRV_HT_TORQUE_TEST_CMD_POS_READ;
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_HT_TORQUE_CAN_CH, &tx);
 }
 
 /* --- 批量下发（对全部检测到的电机） --- */
@@ -1202,7 +1202,7 @@ static void srv_ht_torque_test_query_position_all(void)
  */
 static void srv_ht_torque_test_send_query_alarm(uint8_t addr)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_HT_TORQUE_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -1212,7 +1212,7 @@ static void srv_ht_torque_test_send_query_alarm(uint8_t addr)
         .dlc = 1,
     };
     tx.data[0] = SRV_HT_TORQUE_TEST_CMD_ALARM;
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_HT_TORQUE_CAN_CH, &tx);
 }
 
 /**
@@ -1222,7 +1222,7 @@ static void srv_ht_torque_test_send_query_alarm(uint8_t addr)
  */
 static void srv_ht_torque_test_send_query_enable_state(uint8_t addr)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_HT_TORQUE_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -1232,7 +1232,7 @@ static void srv_ht_torque_test_send_query_enable_state(uint8_t addr)
         .dlc = 1,
     };
     tx.data[0] = SRV_HT_TORQUE_TEST_CMD_ENABLE_STATE;
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_HT_TORQUE_CAN_CH, &tx);
 }
 
 /**
@@ -1242,7 +1242,7 @@ static void srv_ht_torque_test_send_query_enable_state(uint8_t addr)
  */
 static void srv_ht_torque_test_send_query_mode(uint8_t addr)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_HT_TORQUE_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -1252,7 +1252,7 @@ static void srv_ht_torque_test_send_query_mode(uint8_t addr)
         .dlc = 1,
     };
     tx.data[0] = SRV_HT_TORQUE_TEST_CMD_MODE_QUERY;
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_HT_TORQUE_CAN_CH, &tx);
 }
 
 /**
@@ -1262,7 +1262,7 @@ static void srv_ht_torque_test_send_query_mode(uint8_t addr)
  */
 static void srv_ht_torque_test_send_query_speed(uint8_t addr)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_HT_TORQUE_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -1272,7 +1272,7 @@ static void srv_ht_torque_test_send_query_speed(uint8_t addr)
         .dlc = 1,
     };
     tx.data[0] = SRV_HT_TORQUE_TEST_CMD_SPEED_READ;
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_HT_TORQUE_CAN_CH, &tx);
 }
 
 /**
@@ -1312,7 +1312,7 @@ static void srv_ht_torque_test_alarm_print(uint8_t addr, uint32_t code)
  */
 static void srv_ht_torque_test_send_query_voltage(uint8_t addr)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_HT_TORQUE_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -1322,7 +1322,7 @@ static void srv_ht_torque_test_send_query_voltage(uint8_t addr)
         .dlc = 1,
     };
     tx.data[0] = SRV_HT_TORQUE_TEST_CMD_VOLTAGE;
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_HT_TORQUE_CAN_CH, &tx);
 }
 
 /**

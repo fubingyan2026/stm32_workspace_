@@ -34,14 +34,14 @@ extern "C" {
 #include <stdint.h>
 
 #include "drv_can.h"
+#include "srv_motor_test_select.h" /* 提供 SRV_PA430_CAN_CH（CAN1/CAN2 通道选择） */
 
 /* 接线选择 ------------------------------------------------------------------*/
-/* CAN2（FDCAN2）测试模块选择统一在 service/srv_motor_test_select.h 的
- * SRV_MOTOR_TEST_SELECT_CAN2 枚举宏中完成：
- *   - SRV_MOTOR_TEST_HT_CAN2 = 0 苇熠(HT) 速度模式往复 CAN2 版；
- *   - SRV_MOTOR_TEST_PA430   = 1 本模块（Motorevo MIT 力位混合来回）。
- * can_task 按该选择接线 init/step/on_rx；两模块共用 FDCAN2 独立总线，
- * 同一时刻只激活一个，与 CAN1 上的测试并行运行、互不干扰。 */
+/* 本模块可通过 service/srv_motor_test_select.h 选择绑定到 CAN1 或 CAN2：
+ *   - CAN1：SRV_MOTOR_TEST_SELECT = SRV_MOTOR_TEST_PA430_CAN1（=4）；
+ *   - CAN2：SRV_MOTOR_TEST_SELECT_CAN2 = SRV_MOTOR_TEST_PA430（=1）。
+ * 服务内部收发统一使用 SRV_PA430_CAN_CH（上述选择对应 DRV_CAN_CH_1 / DRV_CAN_CH_2）；
+ * can_task 按选择接线 init/step/on_rx。本模块为单例，同一时刻只应选择一条总线。 */
 
 /* Exported functions prototypes ---------------------------------------------*/
 
@@ -79,10 +79,10 @@ void srv_pa430_torque_test_step(void);
 /* --- RX 帧处理 --- */
 
 /**
- * @brief 处理 Motorevo 反馈帧（由 can_task 按 CH_2 分发调用）
+ * @brief 处理 Motorevo 反馈帧（由 can_task 按 SRV_PA430_CAN_CH 分发调用）
  * @param  msg CAN 报文指针
  * @return true=反馈帧（CAN-ID 1~8, DLC≥8），已消费；
- *         false=非反馈帧（CAN2 专用总线，直接丢弃）
+ *         false=非反馈帧（该总线专用，直接丢弃）
  * @note   ISR 上下文，只做数据记录与标志置位，不打日志
  */
 bool srv_pa430_torque_test_on_rx(const drv_can_msg_t* msg);

@@ -29,6 +29,7 @@ extern "C" {
 #include <stdint.h>
 
 #include "drv_can.h"
+#include "srv_motor_test_select.h" /* 提供 SRV_HT_TEMP_CAN_CH：本模块收发绑定的通道 */
 
 /* Exported functions prototypes ---------------------------------------------*/
 

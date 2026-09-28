@@ -34,13 +34,12 @@ extern "C" {
 #include <stdint.h>
 
 #include "drv_can.h"
+#include "srv_motor_test_select.h" /* 提供 SRV_TONGZHI_CAN_CH：本模块收发绑定的通道 */
 
-/* 接线说明（选择由 service/srv_motor_test_select.h 的 SRV_MOTOR_TEST_SELECT 统一决定）：
- *   良志(ODrive) 测试模式走 FDCAN1（DRV_CAN_CH_1），与苇熠 HT 测试三选一
- *   （SRV_MOTOR_TEST_SELECT = SRV_MOTOR_TEST_TONGZHI 时激活本模块，can_task 把
- *   CH_1 全部帧路由给本模块，srv_can 停用）；
- *   选苇熠(HT_TORQUE/HT_TEMP) 时 CH_1 归苇熠测试，本模块不参与收发。
- *   PA430(Motorevo) 测试走 FDCAN2 独立总线，不受本开关影响。 */
+/* 接线说明（选择由 service/srv_motor_test_select.h 的统一枚举决定）：
+ *   本模块可在 CAN1(SRV_MOTOR_TEST_SELECT) 或 CAN2(SRV_MOTOR_TEST_SELECT_CAN2)
+ *   任选其一执行，收发通道由 SRV_TONGZHI_CAN_CH 解析（选在 CAN1→CH_1，否则→CH_2）；
+ *   can_task 把所选通道的全部帧路由给本模块。单例模块：不能同时在两条通道选择。 */
 
 /* Exported functions prototypes ---------------------------------------------*/
 

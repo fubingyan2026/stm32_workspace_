@@ -5,7 +5,7 @@
  * 电机控制指令按 docs/良志电机can协议.md 组帧发送（经典 CAN 2.0A, 1 Mbps,
  * CAN-ID = (node_id<<5)|cmd_id，8 字节帧，小端，IEEE-754 单精度浮点）。
  *
- * 本模块走 FDCAN1（DRV_CAN_CH_1），与苇熠(HT) 测试通过 srv_motor_test_select.h
+ * 本模块走 FDCAN1（SRV_TONGZHI_CAN_CH），与苇熠(HT) 测试通过 srv_motor_test_select.h
  * 的 SRV_MOTOR_TEST_SELECT 三选一；PA430(Motorevo) 在 FDCAN2 独立并行，互不干扰。
  *
  * 控制方式：位置模式 + 梯形轨迹。对发现的电机下发 清错 → Set_Axis_State(8=闭环) →
@@ -900,7 +900,7 @@ static uint32_t srv_tongzhi_torque_test_unpack_u32_le(const uint8_t* src)
  */
 static void srv_tongzhi_torque_test_send_axis_state(uint8_t node, uint8_t state)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_TONGZHI_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -911,7 +911,7 @@ static void srv_tongzhi_torque_test_send_axis_state(uint8_t node, uint8_t state)
     };
     memset(tx.data, 0, sizeof(tx.data));
     srv_tongzhi_torque_test_pack_u32_le(&tx.data[0], (uint32_t)state);
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_TONGZHI_CAN_CH, &tx);
 }
 
 /**
@@ -920,7 +920,7 @@ static void srv_tongzhi_torque_test_send_axis_state(uint8_t node, uint8_t state)
  */
 static void srv_tongzhi_torque_test_send_controller_mode(uint8_t node)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_TONGZHI_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -932,7 +932,7 @@ static void srv_tongzhi_torque_test_send_controller_mode(uint8_t node)
     memset(tx.data, 0, sizeof(tx.data));
     srv_tongzhi_torque_test_pack_u32_le(&tx.data[0], SRV_TONGZHI_CONTROL_MODE_POSITION);
     srv_tongzhi_torque_test_pack_u32_le(&tx.data[4], SRV_TONGZHI_INPUT_MODE_TRAP_TRAJ);
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_TONGZHI_CAN_CH, &tx);
 }
 
 /**
@@ -941,7 +941,7 @@ static void srv_tongzhi_torque_test_send_controller_mode(uint8_t node)
  */
 static void srv_tongzhi_torque_test_send_traj_vel_limit(uint8_t node)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_TONGZHI_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -952,7 +952,7 @@ static void srv_tongzhi_torque_test_send_traj_vel_limit(uint8_t node)
     };
     memset(tx.data, 0, sizeof(tx.data));
     srv_tongzhi_torque_test_pack_float_le(&tx.data[0], SRV_TONGZHI_TRAJ_VEL_LIMIT_TPS);
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_TONGZHI_CAN_CH, &tx);
 }
 
 /**
@@ -961,7 +961,7 @@ static void srv_tongzhi_torque_test_send_traj_vel_limit(uint8_t node)
  */
 static void srv_tongzhi_torque_test_send_traj_accel_limits(uint8_t node)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_TONGZHI_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -973,7 +973,7 @@ static void srv_tongzhi_torque_test_send_traj_accel_limits(uint8_t node)
     memset(tx.data, 0, sizeof(tx.data));
     srv_tongzhi_torque_test_pack_float_le(&tx.data[0], SRV_TONGZHI_TRAJ_ACCEL_TPS2);
     srv_tongzhi_torque_test_pack_float_le(&tx.data[4], SRV_TONGZHI_TRAJ_DECEL_TPS2);
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_TONGZHI_CAN_CH, &tx);
 }
 
 /**
@@ -983,7 +983,7 @@ static void srv_tongzhi_torque_test_send_traj_accel_limits(uint8_t node)
  */
 static void srv_tongzhi_torque_test_send_input_pos(uint8_t node, float turns)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_TONGZHI_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -996,7 +996,7 @@ static void srv_tongzhi_torque_test_send_input_pos(uint8_t node, float turns)
     srv_tongzhi_torque_test_pack_float_le(&tx.data[0], turns); /* 目标位置（转） */
     srv_tongzhi_torque_test_pack_i16_le(&tx.data[4], 0); /* 速度前馈 0（0.001 转/s） */
     srv_tongzhi_torque_test_pack_i16_le(&tx.data[6], 0); /* 力矩前馈 0（0.001 Nm） */
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_TONGZHI_CAN_CH, &tx);
 }
 
 /**
@@ -1008,7 +1008,7 @@ static void srv_tongzhi_torque_test_send_input_pos(uint8_t node, float turns)
  */
 static void srv_tongzhi_torque_test_send_clear_errors(uint8_t node)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_TONGZHI_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -1019,7 +1019,7 @@ static void srv_tongzhi_torque_test_send_clear_errors(uint8_t node)
     };
     memset(tx.data, 0, sizeof(tx.data));
     srv_tongzhi_torque_test_pack_u32_le(&tx.data[0], 1U); /* clear_errors=true */
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_TONGZHI_CAN_CH, &tx);
 }
 
 /**
@@ -1030,7 +1030,7 @@ static void srv_tongzhi_torque_test_send_clear_errors(uint8_t node)
  */
 static void srv_tongzhi_torque_test_send_get_error(uint8_t node)
 {
-    if (!drv_can_tx_ready(DRV_CAN_CH_1))
+    if (!drv_can_tx_ready(SRV_TONGZHI_CAN_CH))
         return;
 
     drv_can_msg_t tx = {
@@ -1041,7 +1041,7 @@ static void srv_tongzhi_torque_test_send_get_error(uint8_t node)
     };
     memset(tx.data, 0, sizeof(tx.data));
     tx.data[0] = 0U; /* error_type=0：电机错误 */
-    drv_can_send(DRV_CAN_CH_1, &tx);
+    drv_can_send(SRV_TONGZHI_CAN_CH, &tx);
 }
 
 /**
