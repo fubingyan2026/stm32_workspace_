@@ -34,7 +34,7 @@
 
 /** @brief 呼吸参数 */
 #define APP_RGB_BREATH_CYCLE_MS (1500U)
-#define APP_RGB_BREATH_MIN_DUTY (20U)
+#define APP_RGB_BREATH_MIN_DUTY (200U)
 #define APP_RGB_BREATH_MAX_DUTY (1024U)
 
 /* Private variables ---------------------------------------------------------*/
@@ -80,7 +80,7 @@ void app_rgb_status_init(void)
     const srv_signal_config_t cfg[APP_RGB_CH_NUM] = {
         [APP_RGB_CH_BLUE] = {
             .name = "led_blue",
-            .init_state = SRV_SIGNAL_STATE_BREATHING,
+            .init_state = SRV_SIGNAL_STATE_OFF,
             .write_output = led_blue_write,
             .breath_cycle_ms = APP_RGB_BREATH_CYCLE_MS,
             .breath_min_duty = APP_RGB_BREATH_MIN_DUTY,
@@ -88,7 +88,7 @@ void app_rgb_status_init(void)
         },
         [APP_RGB_CH_GREEN] = {
             .name = "led_green",
-            .init_state = SRV_SIGNAL_STATE_BREATHING,
+            .init_state = SRV_SIGNAL_STATE_OFF,
             .write_output = led_green_write,
             .breath_cycle_ms = APP_RGB_BREATH_CYCLE_MS,
             .breath_min_duty = APP_RGB_BREATH_MIN_DUTY,
@@ -96,7 +96,7 @@ void app_rgb_status_init(void)
         },
         [APP_RGB_CH_RED] = {
             .name = "led_red",
-            .init_state = SRV_SIGNAL_STATE_BREATHING,
+            .init_state = SRV_SIGNAL_STATE_OFF,
             .write_output = led_red_write,
             .breath_cycle_ms = APP_RGB_BREATH_CYCLE_MS,
             .breath_min_duty = APP_RGB_BREATH_MIN_DUTY,

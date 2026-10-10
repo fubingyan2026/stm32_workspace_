@@ -54,6 +54,10 @@ static protocol_packer_error_t tx_fill_len_cb(uint8_t* buffer,
 static protocol_packer_error_t tx_checksum_cb(const uint8_t* data, uint16_t len,
     uint8_t* checksum_out, uint16_t* checksum_len);
 
+/** @brief 打包一帧到内部缓冲，返回帧指针与长度 */
+static protocol_packer_error_t tx_pack(uint8_t cmd, const uint8_t* data,
+    uint8_t data_len, uint8_t** frame_out, uint16_t* frame_len_out);
+
 /* Exported functions --------------------------------------------------------*/
 
 void srv_uart_tx_cmd_init(void)
@@ -90,21 +94,11 @@ srv_uart_tx_cmd_error_t srv_uart_tx_cmd_send(uint8_t cmd, const uint8_t* data,
         return SRV_UART_TX_CMD_ERROR_NULL_PTR;
     }
 
-    /* 构造 data 块：[cmd][data_len占位][payload]（由 fill_len_cb 回填 data_len） */
-    s_cmd_buf[0] = cmd;
-    s_cmd_buf[1] = 0;
-    if (data_len > 0) {
-        memcpy(&s_cmd_buf[2], data, data_len);
-    }
-
     uint8_t* frame = NULL;
     uint16_t frame_len = 0;
-    const protocol_packer_error_t err = protocol_packer_pack(&s_packer,
-        s_cmd_buf, (uint16_t)(2U + data_len), &frame, &frame_len);
-
-    if (err != PROTOCOL_PACKER_OK) {
-        SRV_UART_TX_CMD_LOG_E("打包失败: %d (cmd=0x%02X, data_len=%u)",
-            (int)err, (unsigned)cmd, (unsigned)data_len);
+    if (tx_pack(cmd, data, data_len, &frame, &frame_len) != PROTOCOL_PACKER_OK) {
+        SRV_UART_TX_CMD_LOG_E("打包失败 (cmd=0x%02X, data_len=%u)",
+            (unsigned)cmd, (unsigned)data_len);
         return SRV_UART_TX_CMD_ERROR_INTERNAL;
     }
 
@@ -124,6 +118,37 @@ srv_uart_tx_cmd_error_t srv_uart_tx_cmd_send(uint8_t cmd, const uint8_t* data,
 
     SRV_UART_TX_CMD_LOG_D("发送 cmd=0x%02X data_len=%u 帧长=%u",
         (unsigned)cmd, (unsigned)data_len, (unsigned)frame_len);
+
+    return SRV_UART_TX_CMD_OK;
+}
+
+srv_uart_tx_cmd_error_t srv_uart_tx_cmd_send_priority(uint8_t cmd,
+    const uint8_t* data, uint8_t data_len)
+{
+    if (!s_initialized) {
+        return SRV_UART_TX_CMD_ERROR_UNINITIALIZED;
+    }
+    if (data_len > SRV_UART_TX_CMD_MAX_PAYLOAD) {
+        return SRV_UART_TX_CMD_ERROR_INVALID_PARAM;
+    }
+    if (data_len > 0 && data == NULL) {
+        return SRV_UART_TX_CMD_ERROR_NULL_PTR;
+    }
+
+    uint8_t* frame = NULL;
+    uint16_t frame_len = 0;
+    if (tx_pack(cmd, data, data_len, &frame, &frame_len) != PROTOCOL_PACKER_OK) {
+        SRV_UART_TX_CMD_LOG_E("打包失败 (cmd=0x%02X, data_len=%u)",
+            (unsigned)cmd, (unsigned)data_len);
+        return SRV_UART_TX_CMD_ERROR_INTERNAL;
+    }
+
+    /* 插队发送：独立优先级槽，队列满也能插入 */
+    const drv_uart_error_t uart_err = drv_uart_send_priority(DRV_UART_CH_2, frame, frame_len);
+    if (uart_err != DRV_UART_OK) {
+        SRV_UART_TX_CMD_LOG_E("UART 优先发送失败: %d", (int)uart_err);
+        return SRV_UART_TX_CMD_ERROR_INTERNAL;
+    }
 
     return SRV_UART_TX_CMD_OK;
 }
@@ -150,6 +175,32 @@ const char* srv_uart_tx_cmd_err_str(srv_uart_tx_cmd_error_t err)
     default:
         return "UNKNOWN";
     }
+}
+
+/**
+ * @brief 构造 data 块并打包为一帧
+ * @note  构造 [cmd][data_len占位][payload]（由 fill_len_cb 回填 data_len）
+ */
+static protocol_packer_error_t tx_pack(uint8_t cmd, const uint8_t* data,
+    uint8_t data_len, uint8_t** frame_out, uint16_t* frame_len_out)
+{
+    s_cmd_buf[0] = cmd;
+    s_cmd_buf[1] = 0;
+    if (data_len > 0 && data != NULL) {
+        memcpy(&s_cmd_buf[2], data, data_len);
+    }
+
+    uint8_t* frame = NULL;
+    uint16_t frame_len = 0;
+    const protocol_packer_error_t err = protocol_packer_pack(&s_packer,
+        s_cmd_buf, (uint16_t)(2U + data_len), &frame, &frame_len);
+    if (err != PROTOCOL_PACKER_OK) {
+        return err;
+    }
+
+    *frame_out = frame;
+    *frame_len_out = frame_len;
+    return PROTOCOL_PACKER_OK;
 }
 
 /**

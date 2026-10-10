@@ -20,6 +20,7 @@ extern "C" {
 #endif
 
 /* Includes ------------------------------------------------------------------*/
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "key_base.h"
@@ -32,6 +33,13 @@ extern "C" {
  * @param event 按键事件
  */
 typedef void (*srv_key_event_cb_t)(const char* name, key_base_event_t event);
+
+/* Exported constants --------------------------------------------------------*/
+
+/** @brief 初始化自检掩码位：KEY1 */
+#define SRV_KEY_SELFCHECK_KEY1 (1U << 0)
+/** @brief 初始化自检掩码位：KEY2 */
+#define SRV_KEY_SELFCHECK_KEY2 (1U << 1)
 
 /* Exported functions prototypes ---------------------------------------------*/
 
@@ -47,10 +55,18 @@ void srv_key_init(void);
 /* --- 事件 --- */
 
 /**
- * @brief 注册按键事件回调（上层业务订阅按键事件）
- * @param callback 事件回调（NULL=取消）
+ * @brief 注册按键事件回调（上层业务订阅按键事件，支持多个订阅者）
+ * @param callback 事件回调（NULL=取消全部订阅）
+ * @note  最多 SRV_KEY_MAX_CALLBACKS 个；重复注册同一回调会被忽略
  */
 void srv_key_register_event_cb(srv_key_event_cb_t callback);
+
+/**
+ * @brief 上电初始化自检结果（按键独立）：初始化时按键是否被按下
+ * @return 位掩码：bit0=KEY1 被按下，bit1=KEY2 被按下（`SRV_KEY_SELFCHECK_*`）；0=正常
+ * @note  非锁存：各键松开后自动清除对应位
+ */
+uint8_t srv_key_init_selfcheck_mask(void);
 
 #ifdef __cplusplus
 }

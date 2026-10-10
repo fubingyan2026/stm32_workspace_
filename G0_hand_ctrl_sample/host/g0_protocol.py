@@ -16,12 +16,41 @@ from __future__ import annotations
 import struct
 
 # ---- 命令字 ----
-CMD_HEARTBEAT = 0x00            # G0 -> 上位机  心跳上报 payload=2B tick
+CMD_HEARTBEAT = 0x00            # G0 -> 上位机  心跳上报 payload=3B [tick(2)][global_status(1)]
 CMD_KEY_EVENT = 0x01            # G0 -> 上位机  按键事件 payload=2B [key_index][event]
 CMD_MOTOR_SET_TARGET = 0x02     # 上位机 -> G0  电机目标 payload=20B 5xfloat LE
 CMD_MOTOR_REQ_FEEDBACK = 0x03   # 上位机 -> G0  请求反馈 payload=0
 CMD_MOTOR_FEEDBACK_REPORT = 0x04  # G0 -> 上位机 反馈上报 payload=21B [state][5xfloat]
 CMD_LED_CTRL = 0x05             # 上位机 -> G0  LED 控制 payload=[ch][action](+2B interval)
+
+# ---- 心跳 global_status 位（bit=1 表示故障）----
+HB_STATUS_MOTOR_OFFLINE = 0x01      # 电机离线（无 CAN 反馈；报错见 0x04 的 state）
+HB_STATUS_POWER_FAULT = 0x02        # 24V 电源故障（eFuse FAULT）
+HB_STATUS_KEY1_SELFTEST_FAIL = 0x04  # KEY1 初始化自检失败
+HB_STATUS_KEY2_SELFTEST_FAIL = 0x08  # KEY2 初始化自检失败
+HB_STATUS_TEXT = {
+    HB_STATUS_MOTOR_OFFLINE: "电机离线",
+    HB_STATUS_POWER_FAULT: "电源故障",
+    HB_STATUS_KEY1_SELFTEST_FAIL: "KEY1 自检失败",
+    HB_STATUS_KEY2_SELFTEST_FAIL: "KEY2 自检失败",
+}
+
+
+def decode_hb_status(status: int) -> str:
+    """将心跳 global_status 字节解码为可读文本"""
+    status &= 0xFF
+    if status == 0:
+        return "正常"
+    known = 0
+    names = []
+    for bit, text in HB_STATUS_TEXT.items():
+        known |= bit
+        if status & bit:
+            names.append(text)
+    unknown = status & ~known & 0xFF
+    if unknown:
+        names.append(f"未知(0x{unknown:02X})")
+    return "、".join(names)
 
 # ---- LED 控制 action ----
 LED_ACTION_OFF = 0x00
@@ -32,11 +61,11 @@ LED_ACTION_BREATH = 0x03
 LED_NAME = {0: "蓝", 1: "绿", 2: "红"}
 
 # ---- 电机目标量程 ----
-POS_MIN, POS_MAX = 0.0, 0.464
+POS_MIN, POS_MAX = -0.800, 0.800
 VEL_MIN, VEL_MAX = -30.0, 30.0
 KP_MIN, KP_MAX = 0.0, 500.0
 KD_MIN, KD_MAX = 0.0, 5.0
-TOR_MIN, TOR_MAX = -0.1, 0.1
+TOR_MIN, TOR_MAX = -1.5, 1.5
 
 # ---- 电机状态含义（低 4 位）----
 MOTOR_STATE_TEXT = {

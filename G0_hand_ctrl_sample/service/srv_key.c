@@ -38,6 +38,9 @@
 /** @brief 连击判定超时窗口 (ms)：单击/双击/三连击判定窗口 */
 #define SRV_KEY_MULTI_CLICK_MS (300U)
 
+/** @brief 最大事件回调订阅数（多个业务可同时订阅按键事件） */
+#define SRV_KEY_MAX_CALLBACKS (4U)
+
 /** @brief 按键事件名称表（来自 key_base.h） */
 static const char* const s_event_names[] = KEY_BASE_EVENT_NAME_TABLE;
 
@@ -56,11 +59,14 @@ static srv_key_item_t s_keys[DRV_KEY_CH_NUM] = {
     [DRV_KEY_CH_2] = { .name = "key2", .ch = DRV_KEY_CH_2 },
 };
 
-/** @brief 上层业务事件回调 */
-static srv_key_event_cb_t s_event_cb;
+/** @brief 上层业务事件回调（支持多个订阅者） */
+static srv_key_event_cb_t s_event_cbs[SRV_KEY_MAX_CALLBACKS];
 
 /** @brief 初始化标志 */
 static bool s_initialized;
+
+/** @brief 上电初始化自检结果位掩码（bit0=KEY1, bit1=KEY2；各键独立，松开自动清除） */
+static uint8_t s_init_selfcheck_mask;
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -98,13 +104,65 @@ void srv_key_init(void)
         }
     }
 
+    /* 上电自检：初始化时若按键已按下，按键独立置位（卡滞/误触） */
+    s_init_selfcheck_mask = 0U;
+    if (drv_key_is_pressed(DRV_KEY_CH_1)) {
+        s_init_selfcheck_mask |= SRV_KEY_SELFCHECK_KEY1;
+    }
+    if (drv_key_is_pressed(DRV_KEY_CH_2)) {
+        s_init_selfcheck_mask |= SRV_KEY_SELFCHECK_KEY2;
+    }
+    if (s_init_selfcheck_mask != 0U) {
+        /* 自检失败属异常，用 ERROR 级直接打印（不受 SRV_KEY_LOG_ENABLE 影响） */
+        LOG_E("srv_key",
+            "初始化异常：按键自检失败 [KEY1=%s KEY2=%s] (mask=0x%02X)",
+            (s_init_selfcheck_mask & SRV_KEY_SELFCHECK_KEY1) ? "按下" : "正常",
+            (s_init_selfcheck_mask & SRV_KEY_SELFCHECK_KEY2) ? "按下" : "正常",
+            (unsigned)s_init_selfcheck_mask);
+    }
+
     s_initialized = true;
     SRV_KEY_LOG_I("按键服务初始化完成 (%u 个按键)", (unsigned)DRV_KEY_CH_NUM);
 }
 
+uint8_t srv_key_init_selfcheck_mask(void)
+{
+    /* 非锁存：各键松开即清除对应位（不会被后续按键重新置位） */
+    if ((s_init_selfcheck_mask & SRV_KEY_SELFCHECK_KEY1)
+        && !drv_key_is_pressed(DRV_KEY_CH_1)) {
+        s_init_selfcheck_mask &= (uint8_t)~SRV_KEY_SELFCHECK_KEY1;
+    }
+    if ((s_init_selfcheck_mask & SRV_KEY_SELFCHECK_KEY2)
+        && !drv_key_is_pressed(DRV_KEY_CH_2)) {
+        s_init_selfcheck_mask &= (uint8_t)~SRV_KEY_SELFCHECK_KEY2;
+    }
+    return s_init_selfcheck_mask;
+}
+
 void srv_key_register_event_cb(srv_key_event_cb_t callback)
 {
-    s_event_cb = callback;
+    if (callback == NULL) {
+        /* 取消全部订阅 */
+        for (uint32_t i = 0; i < SRV_KEY_MAX_CALLBACKS; i++) {
+            s_event_cbs[i] = NULL;
+        }
+        return;
+    }
+
+    /* 已存在则忽略，否则填入首个空槽 */
+    for (uint32_t i = 0; i < SRV_KEY_MAX_CALLBACKS; i++) {
+        if (s_event_cbs[i] == callback) {
+            return;
+        }
+    }
+    for (uint32_t i = 0; i < SRV_KEY_MAX_CALLBACKS; i++) {
+        if (s_event_cbs[i] == NULL) {
+            s_event_cbs[i] = callback;
+            return;
+        }
+    }
+
+    SRV_KEY_LOG_W("按键事件回调订阅已满 (%u)，注册失败", (unsigned)SRV_KEY_MAX_CALLBACKS);
 }
 
 /* Private functions ---------------------------------------------------------*/
@@ -138,10 +196,13 @@ static void srv_key_event_callback(key_base_event_t event, const void* context)
     const char* event_name = (event < KEY_BASE_EVENT_MAX)
         ? s_event_names[event]
         : "UNKNOWN";
+    (void)event_name;
 
     SRV_KEY_LOG_I("按键 %s: %s", name, event_name);
 
-    if (s_event_cb) {
-        s_event_cb(name, event);
+    for (uint32_t i = 0; i < SRV_KEY_MAX_CALLBACKS; i++) {
+        if (s_event_cbs[i] != NULL) {
+            s_event_cbs[i](name, event);
+        }
     }
 }

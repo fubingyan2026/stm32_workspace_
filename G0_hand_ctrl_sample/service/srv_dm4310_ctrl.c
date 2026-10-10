@@ -22,6 +22,7 @@
 #include "fsm.h"
 #include "log.h"
 #include "maths.h"
+#include "utils_math.h"
 
 #include "printf.h"
 #include <string.h>
@@ -46,12 +47,12 @@
 
 /** @brief MIT 默认刚度/阻尼（合适初值，可按需调整） */
 #define SRV_DM4310_DEFAULT_KP (0.50f)
-#define SRV_DM4310_DEFAULT_KD (0.1f)
-    
-#define SRV_USER_POS_MIN (0.000f)
-#define SRV_USER_POS_MAX (0.500f)
+#define SRV_DM4310_DEFAULT_KD (0.02f)
+
+#define SRV_USER_POS_MIN (-0.800f)
+#define SRV_USER_POS_MAX (0.800f)
 /** @brief 扭矩给定限幅 (±N·m)，保护电机/负载 */
-#define SRV_DM4310_TORQUE_LIMIT_NM (0.1f)
+#define SRV_DM4310_TORQUE_LIMIT_NM (1.5f)
 
 /** @brief RX 数据日志限频窗口 (ms)：CAN 反馈 1kHz 下防刷屏 */
 #define SRV_DM4310_RX_LOG_PERIOD_MS (500U)
@@ -65,6 +66,13 @@
 /** @brief 实时 MIT 控制帧发送周期 (ms)：ENABLED 状态下限频发送 */
 #define SRV_DM4310_CTRL_SEND_PERIOD_MS (5U)
 
+/** @brief 位置给定斜坡速率 (rad/s)：限制位置变化率，防止突变导致过流 */
+#define SRV_DM4310_POS_RAMP_RAD_PER_S (1.57f * 0.5f) /* 0.5 rev/s = 1.57 rad/s */
+
+/** @brief 位置给定每个控制周期的最大步进 (rad) */
+#define SRV_DM4310_POS_RAMP_STEP_RAD \
+    (SRV_DM4310_POS_RAMP_RAD_PER_S * (float)SRV_DM4310_CTRL_SEND_PERIOD_MS / 1000.0f)
+
 /** @brief 初始化到使能命令的等待延时 (ms)：等待电机/总线稳定 */
 #define SRV_DM4310_INIT_ENABLE_DELAY_MS (1500U)
 
@@ -76,6 +84,19 @@
 
 /** @brief 电机在线守护：初始化等待时间 (ms)，期间不判离线 */
 #define SRV_DM4310_DAEMON_INIT_WAIT_MS (2000U)
+
+/** @brief 上电电机自检窗口 (ms)：此时间后即使无使能反馈也视为自检结束（可判离线） */
+#define SRV_DM4310_SELFTEST_MS (2000U)
+
+/** @brief 自动恢复开关：1=检测到电机离线/未使能时自动重发使能并复位默认参数 */
+#define SRV_DM4310_AUTO_RECOVER_ENABLE (1)
+
+/** @brief 自动重发使能的间隔 (ms)：节流，避免对持续无响应的电机反复冲击 */
+#define SRV_DM4310_REENABLE_PERIOD_MS (500U)
+
+/** @brief 电机反馈 state 字段（见 dev_dm4310.h）：0=失能, 1=使能, >=2 为错误 */
+#define SRV_DM4310_FB_STATE_ENABLED (1)
+#define SRV_DM4310_FB_STATE_ERROR_MIN (2)
 
 /* Private variables ---------------------------------------------------------*/
 
@@ -94,12 +115,20 @@ static bool s_init_request;
 static bool s_enable_request;
 static bool s_disable_request;
 static bool s_enable_frame_sent; /**< 使能帧已发送完成标志（发送控制帧前置条件） */
+static bool s_fb_ever; /**< 是否收到过至少一帧反馈（判离线兜底） */
 static uint32_t s_enable_frame_ts; /**< 使能帧发出时间戳 (ms) */
 static uint32_t s_rx_log_ts; /**< 上次 RX 数据日志时间戳 (ms) */
 static uint32_t s_tx_log_ts; /**< 上次 TX 数据日志时间戳 (ms) */
 static uint32_t s_tx_err_log_ts; /**< 上次 TX 失败日志时间戳 (ms) */
 static uint32_t s_ctrl_send_ts; /**< 上次 MIT 控制帧发送时间戳 (ms) */
 static uint32_t s_init_entry_ts; /**< 进入 INIT 状态时间戳 (ms) */
+static uint32_t s_selfcheck_ts; /**< 电机服务初始化时间戳 (ms)，自检窗口基准 */
+static uint32_t s_recover_ts; /**< 上次自动恢复尝试时间戳 (ms) */
+
+/** @brief 位置给定斜坡：目标位置（UART/按键设定） */
+static float s_target_pos;
+/** @brief 位置给定斜坡：实际下发位置（按速率逼近目标） */
+static float s_ramp_pos;
 
 /** @brief 电机在线守护实例数组（每电机一个，反馈喂狗） */
 static daemon_context_t s_motor_daemon[MOTOR_NUM];
@@ -122,6 +151,10 @@ static void dm4310_on_entry(fsm_t* ctx, fsm_state_t state);
 static void srv_dm4310_can_send(uint16_t id, const uint8_t* data, uint8_t len);
 
 static void dm4310_daemon_offline_cb(void* owner_ptr);
+
+#if SRV_DM4310_AUTO_RECOVER_ENABLE
+static void dm4310_try_auto_recover(uint32_t now_ms);
+#endif
 
 /* Exported functions --------------------------------------------------------*/
 
@@ -178,15 +211,55 @@ void srv_dm4310_ctrl_init(void)
     s_init_request = true;
     s_enable_request = true;
 
+    /* 自检窗口基准：从电机服务初始化开始计时（不依赖 FSM entry 时序） */
+    s_selfcheck_ts = millis();
+
     SRV_DM4310_CTRL_LOG_I("DM4310 服务初始化完成 (ID=0x%02X, MIT)",
         (unsigned)s_motor[MOTOR_1].id);
 
-    delay_ms(2000);
+    // delay_ms(2000);
 }
 
 srv_dm4310_state_t srv_dm4310_ctrl_get_state(void)
 {
     return (srv_dm4310_state_t)fsm_current_state(&s_fsm);
+}
+
+bool srv_dm4310_ctrl_is_offline(void)
+{
+    /* daemon 超时未收到 CAN 反馈 → 离线 */
+    if (!daemon_is_online(&s_motor_daemon[MOTOR_1])) {
+        return true;
+    }
+    /* 兜底：自检窗口已过但从未收到过任何反馈 → 视为离线
+       （避免 daemon 的 init_wait 等待期把“无反馈”误判为在线） */
+    if (!s_fb_ever && srv_dm4310_ctrl_is_selfcheck_done()) {
+        return true;
+    }
+    return false;
+}
+
+bool srv_dm4310_ctrl_is_selfcheck_done(void)
+{
+    /* 未进入初始化流程：未开始自检 */
+    if (fsm_current_state(&s_fsm) == SRV_DM4310_STATE_UNINIT) {
+        return false;
+    }
+    /* 收到使能反馈：自检完成 */
+    if (daemon_is_online(&s_motor_daemon[MOTOR_1])
+        && s_motor[MOTOR_1].para.state == SRV_DM4310_FB_STATE_ENABLED) {
+        return true;
+    }
+    /* 超过自检窗口：无论结果如何都视为自检结束（后续可正常判离线/报错） */
+    return (uint32_t)(millis() - s_selfcheck_ts) >= SRV_DM4310_SELFTEST_MS;
+}
+
+bool srv_dm4310_ctrl_is_fault(void)
+{
+    const int state = s_motor[MOTOR_1].para.state;
+
+    /* 离线，或在线但反馈为错误码（>=2，见 dev_dm4310.h）→ 故障 */
+    return srv_dm4310_ctrl_is_offline() || (state >= SRV_DM4310_FB_STATE_ERROR_MIN);
 }
 
 void srv_dm4310_ctrl_step(void)
@@ -197,6 +270,10 @@ void srv_dm4310_ctrl_step(void)
     const uint32_t now_ms = millis();
 
     if (fsm_current_state(&s_fsm) == SRV_DM4310_STATE_ENABLED) {
+#if SRV_DM4310_AUTO_RECOVER_ENABLE
+        /* 检测离线/未使能并自动恢复（重发使能 + 复位默认参数） */
+        dm4310_try_auto_recover(now_ms);
+#endif
         /* 使能帧未发出：等 TX 队列排空且邮箱空闲（enable 帧已上总线） */
         if (!s_enable_frame_sent) {
             if (drv_can_tx_pending(DRV_CAN_CH_1) == 0U
@@ -213,6 +290,13 @@ void srv_dm4310_ctrl_step(void)
             }
         } else if ((uint32_t)(now_ms - s_ctrl_send_ts) >= SRV_DM4310_CTRL_SEND_PERIOD_MS) {
             s_ctrl_send_ts = now_ms;
+
+            /* 位置斜坡：限制位置给定变化率，防止突变导致过流
+               （utils_step_towards：每周期最多逼近目标一个 step） */
+            utils_step_towards(&s_ramp_pos, s_target_pos, SRV_DM4310_POS_RAMP_STEP_RAD);
+            s_motor[MOTOR_1].cmd.pos_set = s_ramp_pos;
+            dm4310_set(&s_motor[MOTOR_1]);
+
             dm4310_ctrl_send(&s_motor[MOTOR_1]);
         }
     }
@@ -253,17 +337,14 @@ void srv_dm4310_ctrl_pos_step(float delta_pos)
         return;
     }
 
-    s_motor[MOTOR_1].cmd.pos_set += delta_pos;
+    /* 只更新斜坡目标，实际位置给定由 step 按速率逼近，防止突变过流 */
+    s_target_pos += delta_pos;
 
     /* 位置钳位，防止累积超调 */
-    s_motor[MOTOR_1].cmd.pos_set
-        = constrainf(s_motor[MOTOR_1].cmd.pos_set, SRV_USER_POS_MIN, SRV_USER_POS_MAX);
+    s_target_pos = constrainf(s_target_pos, SRV_USER_POS_MIN, SRV_USER_POS_MAX);
 
-    dm4310_set(&s_motor[MOTOR_1]);
-    srv_dm4310_ctrl_send();
-
-    SRV_DM4310_CTRL_LOG_I("位置微调 %+.2f rad → 当前给定 %.2f rad",
-        (float)delta_pos, (float)s_motor[MOTOR_1].ctrl.pos_set);
+    SRV_DM4310_CTRL_LOG_I("位置微调 %+.2f rad → 目标 %.2f rad (斜坡中)",
+        (float)delta_pos, (float)s_target_pos);
 }
 
 void srv_dm4310_ctrl_set_target(float pos, float vel, float kp, float kd, float tor)
@@ -281,14 +362,13 @@ void srv_dm4310_ctrl_set_target(float pos, float vel, float kp, float kd, float 
     /* 扭矩限幅 ±SRV_DM4310_TORQUE_LIMIT_NM（更严于 T_MAX） */
     tor = constrainf(tor, -SRV_DM4310_TORQUE_LIMIT_NM, SRV_DM4310_TORQUE_LIMIT_NM);
 
-    s_motor[MOTOR_1].cmd.pos_set = pos;
+    /* 位置只更新斜坡目标，由 step 按速率逼近（防止突变过流）；
+       其余参数立即生效 */
+    s_target_pos = pos;
     s_motor[MOTOR_1].cmd.vel_set = vel;
     s_motor[MOTOR_1].cmd.kp_set = kp;
     s_motor[MOTOR_1].cmd.kd_set = kd;
     s_motor[MOTOR_1].cmd.tor_set = tor;
-
-    dm4310_set(&s_motor[MOTOR_1]);
-    srv_dm4310_ctrl_send();
 }
 
 void srv_dm4310_ctrl_send(void)
@@ -334,6 +414,7 @@ void srv_dm4310_ctrl_feed(const drv_can_msg_t* msg)
 
             /* 收到有效反馈 → 喂狗（电机在线） */
             daemon_reload(&s_motor_daemon[i]);
+            s_fb_ever = true;
 
             /* RX 数据日志（限频） */
             const uint32_t now_ms = millis();
@@ -436,10 +517,19 @@ static void dm4310_on_entry(fsm_t* ctx, fsm_state_t state)
         s_motor[MOTOR_1].cmd.kd_set = SRV_DM4310_DEFAULT_KD;
         s_motor[MOTOR_1].cmd.tor_set = 0.0f;
         dm4310_set(&s_motor[MOTOR_1]);
+
+        /* 复位位置斜坡：目标与下发值均从 0 开始 */
+        s_target_pos = 0.0f;
+        s_ramp_pos = 0.0f;
+
         s_init_entry_ts = millis(); /* 记录进入 INIT 时间，供使能延时 */
         break;
 
     case SRV_DM4310_STATE_ENABLED:
+        /* 位置斜坡从当前给定值起步（避免使能瞬间跳变） */
+        s_ramp_pos = s_motor[MOTOR_1].cmd.pos_set;
+        s_target_pos = s_ramp_pos;
+
         /* 先发送一帧参数（MIT 控制帧），电机按该参数就绪后再使能 */
         dm4310_ctrl_send(&s_motor[MOTOR_1]);
         s_motor[MOTOR_1].start_flag = 1;
@@ -448,6 +538,7 @@ static void dm4310_on_entry(fsm_t* ctx, fsm_state_t state)
         s_enable_frame_sent = false;
         s_enable_frame_ts = 0;
         s_ctrl_send_ts = 0;
+        s_recover_ts = millis(); /* 复位自动恢复计时，避免刚使能即重发 */
 
         break;
 
@@ -465,6 +556,69 @@ static void dm4310_on_entry(fsm_t* ctx, fsm_state_t state)
 }
 
 /* ===== 电机在线守护回调 ===== */
+
+#if SRV_DM4310_AUTO_RECOVER_ENABLE
+/**
+ * @brief 自动恢复：无论电机如何热插拔/掉电，都保证其回到使能态
+ *
+ * 只要已请求使能（start_flag=1），本函数在 ENABLED 状态下持续巡检：
+ *   - 在线且反馈 state==1（使能）→ 正常，不干预；
+ *   - 离线（daemon 超时无反馈）→ 重发使能帧；
+ *   - 在线但 state==0（失能）→ 重发使能帧；
+ *   - 在线但 state>=2（错误码）→ 先清除错误再重发使能。
+ * 每次恢复同时复位默认参数：kp/kd=默认、vel/tor=0、位置目标归 0（斜坡逼近）。
+ * 1s 节流，避免对持续无响应的电机反复冲击；不依赖握手标志，握手卡住也能重发。
+ *
+ * @param now_ms 当前时间戳 (ms)
+ */
+static void dm4310_try_auto_recover(uint32_t now_ms)
+{
+    /* 仅在已请求使能时保证使能；用户主动 disable 后不介入 */
+    if (s_motor[MOTOR_1].start_flag == 0U) {
+        return;
+    }
+
+    const bool online = daemon_is_online(&s_motor_daemon[MOTOR_1]);
+    const int state = s_motor[MOTOR_1].para.state;
+
+    /* 正常：在线且反馈为使能态 */
+    if (online && state == SRV_DM4310_FB_STATE_ENABLED) {
+        return;
+    }
+
+    /* 节流：距上次恢复尝试不足间隔则跳过 */
+    if ((uint32_t)(now_ms - s_recover_ts) < SRV_DM4310_REENABLE_PERIOD_MS) {
+        return;
+    }
+    s_recover_ts = now_ms;
+
+    /* 复位默认参数：kp/kd 默认、vel/tor=0、位置目标归 0（经斜坡逼近） */
+    s_target_pos = 0.0f;
+    s_motor[MOTOR_1].cmd.vel_set = 0.0f;
+    s_motor[MOTOR_1].cmd.kp_set = SRV_DM4310_DEFAULT_KP;
+    s_motor[MOTOR_1].cmd.kd_set = SRV_DM4310_DEFAULT_KD;
+    s_motor[MOTOR_1].cmd.tor_set = 0.0f;
+    dm4310_set(&s_motor[MOTOR_1]);
+
+    /* 错误态需先清错误，否则无法进入使能态 */
+    if (online && state >= SRV_DM4310_FB_STATE_ERROR_MIN) {
+        SRV_DM4310_CTRL_LOG_W("电机异常 (state=%d)，清除错误后重发使能", state);
+        dm4310_clear_err(&s_motor[MOTOR_1]);
+    } else if (online) {
+        SRV_DM4310_CTRL_LOG_W("电机未使能 (state=%d)，重发使能并复位默认参数", state);
+    } else {
+        SRV_DM4310_CTRL_LOG_W("电机离线，重发使能 (kp/kd 复位默认, pos=0)");
+    }
+
+    /* 重发使能帧 + 控制帧，并重走“使能帧 → 控制帧”握手 */
+    s_motor[MOTOR_1].start_flag = 1U;
+    dm4310_enable(&s_motor[MOTOR_1]);
+    dm4310_ctrl_send(&s_motor[MOTOR_1]);
+    s_enable_frame_sent = false;
+    s_enable_frame_ts = 0U;
+    s_ctrl_send_ts = 0U;
+}
+#endif /* SRV_DM4310_AUTO_RECOVER_ENABLE */
 
 /**
  * @brief 电机在线状态变化回调（daemon 检测到上线/掉线跳变时触发）

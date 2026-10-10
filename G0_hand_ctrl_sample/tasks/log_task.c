@@ -57,7 +57,7 @@ typedef enum {
 
 static uint8_t s_tx_buf[LOG_TASK_TX_BUF_SIZE];
 static sw_timer_t s_log_timer;
-static log_task_output_t s_output_mode = LOG_OUTPUT_RTT;
+static log_task_output_t s_output_mode = LOG_OUTPUT_UART;
 
 /** @brief 控制台命令行累积缓冲（主循环从 drv_log_uart kfifo 读取后填充） */
 static char s_cmd_buf[LOG_TASK_CMD_BUF_SIZE];
@@ -85,7 +85,7 @@ void log_task_init(void)
         .get_timestamp_cb = millis,
     };
     log_init(&log_cfg);
-    log_set_level(LOG_LEVEL_INFO);
+    log_set_level(LOG_LEVEL_ERROR);
 
     /* 日志串口（USART2 DMA）驱动初始化：本任务是 drv_log_uart 的唯一消费者，
      * 由 log_task 自行完成初始化，避免各 app_main（App/Boot 多工程）遗漏。

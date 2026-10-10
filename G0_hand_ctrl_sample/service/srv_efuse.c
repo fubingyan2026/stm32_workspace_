@@ -10,7 +10,7 @@
  *   OFF(0) — SHDN=0 关断
  *   STARTUP(1) — SHDN=1 等待 PGOOD（500ms 超时判故障）
  *   RUN(2) — PGOOD=1 且 FLT_N=1 正常输出
- *   FAULT(3) — 故障锁存（SHDN=0，不自动重试）
+ *   FAULT(3) — 故障锁存（SHDN=0）；每 1s 尝试自动恢复，故障清除则重新上电
  *
  * 状态副作用集中在 entry 回调：进 OFF/FAULT 关断、进 STARTUP 使能并计时、
  * 进 FAULT 计数并区分上电/运行故障。
@@ -54,6 +54,9 @@
 /** @brief RUN 中 PGOOD 跌落去抖时间 (ms)：持续跌落超过此值才关断 */
 #define SRV_EFUSE_PGOOD_DROP_SHUTDOWN_MS (3500U)
 
+/** @brief FAULT 后自动恢复尝试间隔 (ms)：故障清除则重新上电 */
+#define SRV_EFUSE_FAULT_RECOVER_MS (1000U)
+
 /* Private variables ---------------------------------------------------------*/
 
 static fsm_t s_fsm;
@@ -69,6 +72,7 @@ static const char* s_state_names[SRV_EFUSE_STATE_MAX] = {
 static bool s_enable_request;
 static uint32_t s_startup_t0;
 static uint32_t s_pgood_drop_t0; /**< RUN 中 PGOOD 跌落起始时间戳 (ms)，0=未跌落 */
+static uint32_t s_fault_t0; /**< 进入 FAULT 时间戳 (ms)，供自动恢复计时 */
 static uint32_t s_fault_count;
 static bool s_initialized;
 
@@ -253,10 +257,29 @@ static fsm_state_t efuse_run_handler(fsm_t* ctx)
 }
 
 /**
- * @brief FAULT 状态处理：锁存，不自动重试
+ * @brief FAULT 状态处理：锁存后每 SRV_EFUSE_FAULT_RECOVER_MS 尝试自动恢复；
+ *        仅当故障已清除（FLT_N=1）才重新上电，避免对持续短路反复冲击
  */
 static fsm_state_t efuse_fault_handler(fsm_t* ctx)
 {
+    (void)ctx;
+
+    if (s_fault_t0 == 0U
+        || (uint32_t)(millis() - s_fault_t0) < SRV_EFUSE_FAULT_RECOVER_MS) {
+        return SRV_EFUSE_STATE_FAULT;
+    }
+
+    if (!drv_efuse_read(DRV_EFUSE_FLT_N)) {
+        /* 故障已清除：请求重新上电，经 OFF→STARTUP 恢复 */
+        SRV_EFUSE_LOG_I("故障已清除，%ums 后自动恢复上电",
+            (unsigned)SRV_EFUSE_FAULT_RECOVER_MS);
+        s_enable_request = true;
+        return SRV_EFUSE_STATE_OFF;
+    }
+
+    /* 故障仍在（FLT_N=0）：重置计时继续等待，避免刷屏与反复冲击 */
+    s_fault_t0 = millis();
+    SRV_EFUSE_LOG_W("故障未清除 (FLT_N=0)，暂不自动恢复");
     return SRV_EFUSE_STATE_FAULT;
 }
 
@@ -271,21 +294,25 @@ static void efuse_on_entry(fsm_t* ctx, fsm_state_t state)
     case SRV_EFUSE_STATE_OFF:
         efuse_set_output(false);
         s_pgood_drop_t0 = 0;
+        s_fault_t0 = 0;
         break;
 
     case SRV_EFUSE_STATE_STARTUP:
         efuse_set_output(true);
         s_startup_t0 = millis();
         s_pgood_drop_t0 = 0;
+        s_fault_t0 = 0;
         break;
 
     case SRV_EFUSE_STATE_RUN:
         /* 输出保持使能，无需额外动作 */
         s_pgood_drop_t0 = 0;
+        s_fault_t0 = 0;
         break;
 
     case SRV_EFUSE_STATE_FAULT:
         efuse_set_output(false);
+        s_fault_t0 = millis(); /* 自动恢复计时起点 */
         s_fault_count++;
         /* 区分上电期间故障 / 运行中故障（entry 时 ctx->last_state 为前一个状态） */
         if (ctx->last_state == SRV_EFUSE_STATE_STARTUP) {

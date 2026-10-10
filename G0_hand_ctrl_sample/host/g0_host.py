@@ -26,9 +26,8 @@ from g0_protocol import (
     CMD_HEARTBEAT, CMD_KEY_EVENT, CMD_MOTOR_REQ_FEEDBACK,
     CMD_MOTOR_FEEDBACK_REPORT,
     MOTOR_STATE_TEXT, KEY_EVENT_TEXT, KEY_NAME,
-    LED_ACTION_OFF, LED_ACTION_ON, LED_ACTION_BLINK, LED_ACTION_BREATH,
-    FrameParser, build_motor_target, build_req_feedback, build_led_ctrl,
-    unpack_float_le,
+    FrameParser, build_motor_target, build_req_feedback,
+    unpack_float_le, decode_hb_status,
     POS_MIN, POS_MAX, VEL_MIN, VEL_MAX, KP_MIN, KP_MAX, KD_MIN, KD_MAX,
     TOR_MIN, TOR_MAX,
 )
@@ -178,7 +177,10 @@ class SerialWorker(QThread):
 
         if cmd == CMD_HEARTBEAT and len(payload) >= 2:
             tick = payload[0] | (payload[1] << 8)
-            return RxEvent("heartbeat", f"心跳 tick={tick}", payload)
+            status = payload[2] if len(payload) >= 3 else 0
+            return RxEvent("heartbeat",
+                           f"心跳 tick={tick} 状态={decode_hb_status(status)}",
+                           payload)
 
         if cmd == CMD_KEY_EVENT and len(payload) >= 2:
             key = KEY_NAME.get(payload[0], f"KEY{payload[0]}")
@@ -214,6 +216,7 @@ class MainWindow(QMainWindow):
 
         self._worker: SerialWorker | None = None
         self._rx_frame_count = 0
+        self._fb_frame_count = 0
         self._rx_freq_timer: QTimer | None = None
         self._build_ui()
 
@@ -267,8 +270,8 @@ class MainWindow(QMainWindow):
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 8, 0)
+        left_layout.addWidget(self._build_status_box())
         left_layout.addWidget(self._build_control_box())
-        left_layout.addWidget(self._build_led_box())
         left_layout.addWidget(self._build_feedback_box())
         left_layout.addWidget(self._build_key_box())
         left_layout.addStretch(1)
@@ -285,13 +288,30 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(central)
 
+    def _build_status_box(self) -> QGroupBox:
+        box = QGroupBox("心跳 / 全局状态")
+        grid = QGridLayout(box)
+
+        grid.addWidget(QLabel("心跳 tick"), 0, 0)
+        self.hb_tick_label = QLabel("--")
+        self.hb_tick_label.setObjectName("dim")
+        grid.addWidget(self.hb_tick_label, 0, 1)
+
+        grid.addWidget(QLabel("全局状态"), 1, 0)
+        self.hb_status_label = QLabel("--")
+        self.hb_status_label.setObjectName("dim")
+        grid.addWidget(self.hb_status_label, 1, 1)
+
+        grid.setColumnStretch(1, 1)
+        return box
+
     def _build_control_box(self) -> QGroupBox:
         box = QGroupBox("电机控制")
         grid = QGridLayout(box)
 
-        # 位置行：滑动条（0~464 → 0.000~0.464 rad）+ 右侧显示/输入框
+        # 位置行：滑动条（-800~800 → -0.800~0.800 rad）+ 右侧显示/输入框
         self.pos_slider = QSlider(Qt.Horizontal)
-        self.pos_slider.setRange(0, 464)
+        self.pos_slider.setRange(-800, 800)
         self.pos_slider.setValue(0)
         self.pos_slider.setTickInterval(100)
         self.pos_slider.setTickPosition(QSlider.TicksBelow)
@@ -352,37 +372,6 @@ class MainWindow(QMainWindow):
         grid.addLayout(btn_row, len(rows) + 1, 0, 1, 3)
         return box
 
-    def _build_led_box(self) -> QGroupBox:
-        box = QGroupBox("LED 控制")
-        grid = QGridLayout(box)
-
-        self.led_ch_combo = QComboBox()
-        self.led_ch_combo.addItem("蓝色", 0)
-        self.led_ch_combo.addItem("绿色", 1)
-        self.led_ch_combo.addItem("红色", 2)
-
-        self.led_action_combo = QComboBox()
-        self.led_action_combo.addItem("关闭", LED_ACTION_OFF)
-        self.led_action_combo.addItem("常亮", LED_ACTION_ON)
-        self.led_action_combo.addItem("闪烁", LED_ACTION_BLINK)
-        self.led_action_combo.addItem("呼吸", LED_ACTION_BREATH)
-        self.led_action_combo.currentIndexChanged.connect(self._on_led_action)
-
-        self.led_interval_spin = self._mk_spin(50, 2000, 50, 500, 0)
-        self.led_interval_spin.setSuffix(" ms")
-
-        self.led_send_btn = QPushButton("发送 LED 控制")
-        self.led_send_btn.clicked.connect(self._send_led_ctrl)
-
-        grid.addWidget(QLabel("通道:"), 0, 0)
-        grid.addWidget(self.led_ch_combo, 0, 1)
-        grid.addWidget(QLabel("动作:"), 1, 0)
-        grid.addWidget(self.led_action_combo, 1, 1)
-        grid.addWidget(QLabel("间隔:"), 2, 0)
-        grid.addWidget(self.led_interval_spin, 2, 1)
-        grid.addWidget(self.led_send_btn, 3, 0, 1, 2)
-        return box
-
     def _build_feedback_box(self) -> QGroupBox:
         box = QGroupBox("电机反馈（最新）")
         grid = QGridLayout(box)
@@ -406,6 +395,10 @@ class MainWindow(QMainWindow):
         grid.addWidget(QLabel("N·m"), 3, 2)
         grid.addWidget(QLabel("温度:"), 4, 0)
         grid.addWidget(self.temp_val, 4, 1, 1, 2)
+        grid.addWidget(QLabel("频率:"), 5, 0)
+        self.fb_freq_label = QLabel("反馈 0 Hz")
+        self.fb_freq_label.setObjectName("dim")
+        grid.addWidget(self.fb_freq_label, 5, 1, 1, 2)
         return box
 
     def _build_key_box(self) -> QGroupBox:
@@ -467,7 +460,9 @@ class MainWindow(QMainWindow):
             self.connect_btn.setText("连接")
             self.status_label.setText("未连接")
             self._rx_frame_count = 0
+            self._fb_frame_count = 0
             self.rx_freq_label.setText("接收 0 Hz")
+            self.fb_freq_label.setText("反馈 0 Hz")
             return
 
         text = self.port_combo.currentText()
@@ -540,19 +535,6 @@ class MainWindow(QMainWindow):
                 and self._worker is not None and self._worker.isRunning()):
             self._worker.set_auto_feedback(float(value))
 
-    def _on_led_action(self, index: int) -> None:
-        self.led_interval_spin.setEnabled(
-            self.led_action_combo.itemData(index) == LED_ACTION_BLINK
-        )
-
-    def _send_led_ctrl(self) -> None:
-        if not self._ensure_ready():
-            return
-        action = self.led_action_combo.currentData()
-        interval = int(self.led_interval_spin.value()) if action == LED_ACTION_BLINK else 0
-        frame = build_led_ctrl(self.led_ch_combo.currentData(), action, interval)
-        self._worker.send(frame)  # type: ignore[union-attr]
-
     def _ensure_ready(self) -> bool:
         if not self._worker or not self._worker.isRunning():
             self._log("未连接串口", "warn")
@@ -567,13 +549,28 @@ class MainWindow(QMainWindow):
 
         if event.kind == "feedback":
             # 高频反馈帧不逐条写日志（避免 GUI 卡顿），仅更新数值显示
+            self._fb_frame_count += 1
             self._update_feedback(event.text)
         else:
             self._log(event.text, "info")
             if event.kind == "heartbeat":
-                self._log(f"   [心跳] {event.text}", "info")
+                self._update_heartbeat(event.payload)
             elif event.kind == "key":
                 self._update_key(event.payload)
+
+    def _update_heartbeat(self, payload: bytes) -> None:
+        if len(payload) < 2:
+            return
+        tick = payload[0] | (payload[1] << 8)
+        status = payload[2] if len(payload) >= 3 else 0
+        self.hb_tick_label.setText(str(tick))
+        self.hb_status_label.setText(decode_hb_status(status))
+        if status:
+            self.hb_status_label.setStyleSheet(
+                "color: #D4655C; font-weight: bold;")
+        else:
+            self.hb_status_label.setStyleSheet(
+                "color: #4C9B73; font-weight: bold;")
 
     def _update_key(self, payload: bytes) -> None:
         if len(payload) < 2:
@@ -593,6 +590,9 @@ class MainWindow(QMainWindow):
         freq = self._rx_frame_count
         self._rx_frame_count = 0
         self.rx_freq_label.setText(f"接收 {freq} Hz")
+        fb_freq = self._fb_frame_count
+        self._fb_frame_count = 0
+        self.fb_freq_label.setText(f"反馈 {fb_freq} Hz")
 
     @Slot(str, bool)
     def _on_status(self, text: str, is_error: bool) -> None:

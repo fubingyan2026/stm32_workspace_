@@ -17,6 +17,8 @@
 #include "dev_dm4310.h"
 #include "drv_can.h"
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -58,13 +60,32 @@ void srv_dm4310_ctrl_init(void);
 /** @brief 获取当前电机状态 */
 srv_dm4310_state_t srv_dm4310_ctrl_get_state(void);
 
+/**
+ * @brief 查询电机是否离线（CAN 反馈超时）
+ * @return true=离线；false=在线
+ */
+bool srv_dm4310_ctrl_is_offline(void);
+
+/**
+ * @brief 上电自检是否完成（供状态指示在自检前保持熄灭）
+ * @return true=已完成（收到使能反馈，或超过自检窗口）；false=自检进行中
+ */
+bool srv_dm4310_ctrl_is_selfcheck_done(void);
+
+/**
+ * @brief 查询电机是否处于故障/异常状态（供状态指示）
+ * @return true=故障（离线，或在线但反馈 state 为错误码 >=2）；false=正常
+ */
+bool srv_dm4310_ctrl_is_fault(void);
+
 /** @brief 状态机步进（task 层周期调用，驱动状态转换） */
 void srv_dm4310_ctrl_step(void);
 
 /**
- * @brief 位置微调：当前给定位置增加/减小一步并立即发送
+ * @brief 位置微调：斜坡目标位置增加/减小一步
  * @param delta_pos 位置增量（rad，正=增加，负=减小）
- * @note  MIT 模式下速度/扭矩给定保持 0
+ * @note  实际位置给定由 step 内的斜坡（slew）按 SRV_DM4310_POS_RAMP_RAD_PER_S
+ *        速率逼近目标，避免突变导致过流
  */
 void srv_dm4310_ctrl_pos_step(float delta_pos);
 
@@ -75,12 +96,13 @@ void srv_dm4310_ctrl_enable(void);
 void srv_dm4310_ctrl_disable(void);
 
 /**
- * @brief 设置 MIT 控制目标（写入 cmd → ctrl）
- * @param pos  位置给定 (-12.5, 12.5)
+ * @brief 设置 MIT 控制目标
+ * @param pos  位置给定（0.0 ~ 0.7，作为斜坡目标，实际下发按速率逼近）
  * @param vel  速度给定 (-30, 30)
  * @param kp   位置刚度 (0, 500)
  * @param kd   阻尼 (0, 5)
  * @param tor  扭矩前馈 (-10, 10)
+ * @note  位置经斜坡限制变化率，其余参数立即生效
  */
 void srv_dm4310_ctrl_set_target(float pos, float vel, float kp, float kd, float tor);
 

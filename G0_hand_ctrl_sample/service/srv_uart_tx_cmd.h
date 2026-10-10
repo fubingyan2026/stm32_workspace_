@@ -71,6 +71,18 @@ void srv_uart_tx_cmd_init(void);
 srv_uart_tx_cmd_error_t srv_uart_tx_cmd_send(uint8_t cmd, const uint8_t* data,
     uint8_t data_len);
 
+/**
+ * @brief 高优先级发送（先丢弃待发队列中的其他帧，再发送本帧）
+ * @param cmd      命令字节
+ * @param data     负载数据（可为 NULL，当 data_len=0）
+ * @param data_len 负载长度（0~255）
+ * @return 操作结果错误码
+ * @note  用于按键事件等实时性要求最高的帧：同一时刻若有其他待发帧，
+ *        直接丢弃，保证本帧尽快上线（正在 DMA 发送的当前帧发送完即让位）。
+ */
+srv_uart_tx_cmd_error_t srv_uart_tx_cmd_send_priority(uint8_t cmd,
+    const uint8_t* data, uint8_t data_len);
+
 #ifdef __cplusplus
 }
 #endif

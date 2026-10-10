@@ -129,6 +129,13 @@ static void drv_uart_rx_event_cb(UART_HandleTypeDef* huart, uint16_t size);
 
 static void drv_uart_error_cb(UART_HandleTypeDef* huart);
 
+/**
+ * @brief 将一帧插入 TX 队列队首（插队）；队列满时丢弃最旧一帧腾出空间
+ * @return true 成功
+ */
+static bool drv_uart_tx_push_front(drv_uart_inst_t* inst,
+    const drv_uart_tx_frame_t* frame);
+
 /* Exported functions --------------------------------------------------------*/
 
 /* --- 初始化 / 生命周期 --- */
@@ -303,6 +310,44 @@ bool drv_uart_is_tx_busy(drv_uart_channel_t ch)
     return s_inst[ch].tx_busy || s_inst[ch].huart->gState != HAL_UART_STATE_READY;
 }
 
+drv_uart_error_t drv_uart_send_priority(drv_uart_channel_t ch, const uint8_t* data,
+    uint32_t len)
+{
+    if (ch >= DRV_UART_CH_NUM || !data) {
+        return DRV_UART_ERROR_NULL_PTR;
+    }
+    if (!s_inst[ch].initialized) {
+        return DRV_UART_ERROR_UNINITIALIZED;
+    }
+    if (len == 0 || len > DRV_UART_TX_MAX_FRAME_LEN) {
+        return DRV_UART_ERROR_INVALID_PARAM;
+    }
+
+    drv_uart_inst_t* inst = &s_inst[ch];
+
+    /* 完全空闲且队列为空：直接发 */
+    if (!inst->tx_busy && inst->huart->gState == HAL_UART_STATE_READY
+        && msg_fifo_empty(&inst->tx_fifo)) {
+        memcpy(inst->tx_dma_buf, data, len);
+        if (HAL_UART_Transmit_DMA(inst->huart, inst->tx_dma_buf, (uint16_t)len)
+            == HAL_OK) {
+            inst->tx_busy = true;
+            return DRV_UART_OK;
+        }
+    }
+
+    /* 其余情况：统一入同一个 TX 队列，但插到队首（插队）。
+       队列满时丢弃最旧一帧腾出空间，保证本帧一定插入。 */
+    drv_uart_tx_frame_t frame;
+    frame.len = (uint16_t)len;
+    memcpy(frame.data, data, len);
+
+    if (!drv_uart_tx_push_front(inst, &frame)) {
+        return DRV_UART_ERROR_TX_QUEUE_FULL;
+    }
+    return DRV_UART_OK;
+}
+
 void drv_uart_tx_flush(drv_uart_channel_t ch)
 {
     if (ch >= DRV_UART_CH_NUM || !s_inst[ch].initialized) {
@@ -370,6 +415,39 @@ uint32_t drv_uart_rx_available(drv_uart_channel_t ch)
 }
 
 /* ===== 注册到 HAL 的 per-instance 回调（USE_HAL_UART_REGISTER_CALLBACKS=1） ===== */
+
+/**
+ * @brief 将一帧插入 TX 队列队首（插队）
+ * @note  直接操作 msg_fifo 底层 kfifo（字节级环形缓冲）：
+ *        队列满时先丢弃最旧一帧（out 前进一格）腾出空间，再把新帧写到
+ *        out 之前并回退 out，使新帧成为下一个出队项。TX 队列仅在主循环
+ *        上下文访问，无并发。
+ */
+static bool drv_uart_tx_push_front(drv_uart_inst_t* inst,
+    const drv_uart_tx_frame_t* frame)
+{
+    kfifo_t* f = &inst->tx_fifo.fifo;
+    const unsigned int elem = (unsigned int)inst->tx_fifo.element_size;
+    if (f->buffer == NULL || elem == 0U) {
+        return false;
+    }
+
+    /* 满：丢弃最旧一帧腾出空间 */
+    if ((f->in - f->out) + elem > f->size) {
+        f->out += elem;
+    }
+
+    /* 在 out 之前写入（处理环形回绕），再回退 out */
+    const unsigned int pos = (f->out - elem) & (f->size - 1U);
+    const unsigned int first = (f->size - pos < elem) ? (f->size - pos) : elem;
+    memcpy(f->buffer + pos, (const uint8_t*)frame, first);
+    if (first < elem) {
+        memcpy(f->buffer, ((const uint8_t*)frame) + first, elem - first);
+    }
+    f->out -= elem;
+
+    return true;
+}
 
 /**
  * @brief UART TX DMA 完成回调（per-instance）

@@ -27,7 +27,7 @@
 
 |CMD 值|方向|名称|载荷长度|
 |---|---|---|---|
-|`0x00`|G0 → 上位机|心跳上报|`2`|
+|`0x00`|G0 → 上位机|心跳上报|`3`|
 |`0x01`|G0 → 上位机|按键事件上报|`2`|
 |`0x02`|上位机 → G0|电机目标设定|`20`|
 |`0x03`|上位机 → G0|请求电机反馈|`0`|
@@ -43,6 +43,7 @@
 |`payload`|`uint8_t[]`|`data_len`|命令数据载荷|
 |`crc`|`uint8_t`|`1`|CRC8 校验字节|
 |`heartbeat_tick`|`uint16_t`|`2`|心跳计数（小端）|
+|`global_status`|`uint8_t`|`1`|全局故障状态位，见 4\.1|
 |`key_index`|`uint8_t`|`1`|按键索引：`0`=KEY1，`1`=KEY2|
 |`event`|`uint8_t`|`1`|按键事件，见 `key_base.h`|
 
@@ -81,17 +82,30 @@
 
 ### 4\.1 `0x00` 心跳上报（G0 → 上位机）
 
-|Byte 0|Byte 1|Byte 2|Byte 3|Byte 4|Byte 5|Byte 6|
-|---|---|---|---|---|---|---|
-|`0x7A`|`0x00`|`0x02`|tick LSB|tick MSB|`crc`|`0x0A`|
+|Byte 0|Byte 1|Byte 2|Byte 3|Byte 4|Byte 5|Byte 6|Byte 7|
+|---|---|---|---|---|---|---|---|
+|`0x7A`|`0x00`|`0x03`|tick LSB|tick MSB|global_status|`crc`|`0x0A`|
 
 字段说明表：
 
 |字段|偏移|长度|说明|
 |---|---|---|---|
 |`cmd`|Byte 1|`1`|固定 `0x00`|
-|`data_len`|Byte 2|`1`|固定 `0x02`|
+|`data_len`|Byte 2|`1`|固定 `0x03`|
 |`heartbeat_tick`|Byte 3\~4|`2`|`uint16_t` 小端，每帧 `+1`|
+|`global_status`|Byte 5|`1`|全局故障状态位（bit=1 表示对应故障），见下表|
+
+`global_status` 位定义表：
+
+|位|掩码|名称|含义|
+|---|---|---|---|
+|bit0|`0x01`|`MOTOR_OFFLINE`|电机离线：CAN 反馈超时未收到（电机报错由 `0x04` 反馈帧的 `state` 字段表示）|
+|bit1|`0x02`|`POWER_FAULT`|24V 电源故障：eFuse 处于 `FAULT` 状态|
+|bit2|`0x04`|`KEY1_SELFTEST_FAIL`|KEY1 初始化自检失败：初始化时 KEY1 被按下且仍未松开|
+|bit3|`0x08`|`KEY2_SELFTEST_FAIL`|KEY2 初始化自检失败：初始化时 KEY2 被按下且仍未松开|
+|bit4\~7|—|保留|保留，当前为 `0`|
+
+`global_status == 0x00` 表示无任何故障。三个状态位均为**实时**反映当前状态，故障/异常实际恢复后对应位会自动清零（不锁存）。
 
 ### 4\.2 `0x01` 按键事件上报（G0 → 上位机）
 
@@ -119,6 +133,8 @@
 
 **上报策略**：`app_uart_interact.c` 的按键回调仅放行 `PRESS`/`RELEASE` 两个边沿事件，其余事件（单击/双击/长按等）由本地消抖状态机消化，不产生串口帧；
 
+> 优先级：按键事件帧为**最高优先级**，统一进入同一个 TX 队列但插到**队首**（优先于电机反馈 `0x04`、心跳 `0x00` 等上线）；队列已满时丢弃最旧一帧腾出空间，保证按键帧一定能插入。正在 DMA 发送的当前帧发送完即让位。
+
 ### 4\.3 `0x02` 电机目标设定（上位机 → G0）
 
 |Byte 0|Byte 1|Byte 2|Byte 3\~6|Byte 7\~10|Byte 11\~14|Byte 15\~18|Byte 19\~22|Byte 23|Byte 24|
@@ -131,11 +147,11 @@
 |---|---|---|---|
 |`cmd`|Byte 1|`1`|固定 `0x02`|
 |`data_len`|Byte 2|`1`|固定 `0x14`（`20`）|
-|`pos`|Byte 3\~6|`4`|`float` 小端，量程 `[``0``, ``0.464f``]` rad，手掌握紧为0rad，完全张开限位为0\.464frad\.|
+|`pos`|Byte 3\~6|`4`|`float` 小端，量程 `[-0.800, 0.800]` rad|
 |`vel`|Byte 7\~10|`4`|`float` 小端，量程 `[-30, 30]` rad/s|
 |`kp`|Byte 11\~14|`4`|`float` 小端，量程 `[0, 500]`|
 |`kd`|Byte 15\~18|`4`|`float` 小端，量程 `[0, 5]`|
-|`tor`|Byte 19\~22|`4`|`float` 小端，限幅 `[-0.1, 0.1]` N·m|
+|`tor`|Byte 19\~22|`4`|`float` 小端，限幅 `[-1.5, 1.5]` N·m|
 
 ### 4\.4 `0x03` 请求电机反馈（上位机 → G0）
 
@@ -151,6 +167,8 @@
 |`data_len`|Byte 2|`1`|固定 `0x00`（无载荷）|
 
 收到后 G0 立即回发 `0x04` 反馈帧。
+
+> 默认自动上报：G0 上电后**默认每 `10` ms（100Hz）自动上报一帧 `0x04`**，无需上位机请求；`0x03` 仅用于额外立即索取一帧（仍受最小回复间隔限制）。
 
 ### 4\.5 `0x04` 电机反馈上报（G0 → 上位机）
 
@@ -275,7 +293,7 @@
 
 |序号|方向|帧内容|说明|
 |---|---|---|---|
-|1|G0 → Host|`0x7A 0x00 0x02 <tick_lo> <tick_hi> <crc> 0x0A`|心跳，每 `1000` ms|
+|1|G0 → Host|`0x7A 0x00 0x03 <tick_lo> <tick_hi> <global_status> <crc> 0x0A`|心跳，每 `1000` ms|
 |2|G0 → Host|`0x7A 0x01 0x02 <key_index> <event> <crc> 0x0A`|按键事件|
 |3|Host → G0|`0x7A 0x02 0x14 <pos> <vel> <kp> <kd> <tor> <crc> 0x0A`|电机目标|
 |4|Host → G0|`0x7A 0x03 0x00 <crc> 0x0A`|请求反馈|
@@ -297,6 +315,11 @@
 |`APP_UART_LED_ACTION_ON`|`0x01`|LED 常亮|
 |`APP_UART_LED_ACTION_BLINK`|`0x02`|LED 闪烁|
 |`APP_UART_LED_ACTION_BREATH`|`0x03`|LED 呼吸|
+|`APP_UART_STATUS_MOTOR_OFFLINE`|`0x01`|心跳状态位：电机离线|
+|`APP_UART_STATUS_POWER_FAULT`|`0x02`|心跳状态位：24V 电源故障|
+|`APP_UART_STATUS_KEY1_SELFTEST_FAIL`|`0x04`|心跳状态位：KEY1 初始化自检失败|
+|`APP_UART_STATUS_KEY2_SELFTEST_FAIL`|`0x08`|心跳状态位：KEY2 初始化自检失败|
+|`APP_UART_MOTOR_FEEDBACK_AUTO_PERIOD_MS`|`10`|电机反馈自动上报周期（100Hz）|
 |`SRV_UART_TX_CMD_MAX_PAYLOAD`|`255`|最大载荷长度|
 |`SRV_UART_TX_CMD_MAX_FRAME`|`260`|最大帧长|
 |`SRV_DM4310_POS_STEP_RAD`|`0.1f`|按键位置微调步长|

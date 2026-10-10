@@ -26,6 +26,7 @@
 #include "log.h"
 #include "log_task.h"
 #include "sample_task.h"
+#include "srv_key.h"
 #include "sw_timer.h"
 #include "uart_cmd_task.h"
 
@@ -54,6 +55,11 @@ int app_main(void)
 
     /* 按键轮询（KEY1/KEY2） */
     key_task_init();
+
+    /* 上电自检：初始化时若按键已按下（卡滞/误触）→ LED 只显示红色（错误日志在 srv_key_init 内打印） */
+    if (srv_key_init_selfcheck_mask() != 0U) {
+        led_task_indicate_boot_fault();
+    }
 
     /* UART 命令收发（USART2，协议帧解析/打包） */
     uart_cmd_task_init();

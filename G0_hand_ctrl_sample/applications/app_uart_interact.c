@@ -15,6 +15,7 @@
 #include "key_base.h"
 #include "log.h"
 #include "srv_dm4310_ctrl.h"
+#include "srv_efuse.h"
 #include "srv_key.h"
 #include "srv_uart_rx_cmd.h"
 #include "srv_uart_tx_cmd.h"
@@ -41,11 +42,17 @@
 /* Private constants ---------------------------------------------------------*/
 
 #define APP_UART_KEY_EVENT_PAYLOAD_LEN (2U)
-#define APP_UART_HEARTBEAT_PAYLOAD_LEN (2U)
+#define APP_UART_HEARTBEAT_PAYLOAD_LEN (3U) /**< tick(2) + global_status(1) */
 #define APP_UART_MOTOR_TARGET_PAYLOAD_LEN (20U) /**< pos/vel/kp/kd/tor × 4B */
 #define APP_UART_MOTOR_FEEDBACK_PAYLOAD_LEN (21U) /**< state(1) + pos/vel/tor/Tmos/Tcoil × 4B */
 
-#define APP_UART_HEARTBEAT_INTERVAL_MS (1000U)
+/* 心跳全局状态位（global_status 字节，bit=1 表示对应故障） */
+#define APP_UART_STATUS_MOTOR_OFFLINE (1U << 0) /**< 电机离线（无 CAN 反馈；报错见 0x04 state） */
+#define APP_UART_STATUS_POWER_FAULT (1U << 1) /**< 24V 电源故障（eFuse FAULT） */
+#define APP_UART_STATUS_KEY1_SELFTEST_FAIL (1U << 2) /**< KEY1 初始化自检失败 */
+#define APP_UART_STATUS_KEY2_SELFTEST_FAIL (1U << 3) /**< KEY2 初始化自检失败 */
+
+#define APP_UART_HEARTBEAT_INTERVAL_MS (100U)
 #define APP_UART_MOTOR_PRINT_PERIOD_MS (1000U)
 
 /** @brief 双键组合长按时间 (ms)：KEY1+KEY2 同时按住触发电机保存零点 */
@@ -54,15 +61,19 @@
 /** @brief 电机反馈请求最小回复间隔 (ms)：丢弃窗口内重复请求，防止 TX 打满 */
 #define APP_UART_FEEDBACK_REPLY_MIN_MS (1U)
 
+/** @brief 默认自动上传电机反馈周期 (ms)：10ms = 100Hz */
+#define APP_UART_MOTOR_FEEDBACK_AUTO_PERIOD_MS (10U)
+
 /* Private variables ---------------------------------------------------------*/
 
 static uint32_t s_last_heartbeat_ms;
 static uint32_t s_last_motor_print_ms;
 static uint32_t s_last_feedback_reply_ms;
+static uint32_t s_last_auto_feedback_ms; /**< 上次自动上传电机反馈时间戳 (ms) */
 static uint16_t s_heartbeat_tick;
 static uint32_t s_combo_press_ts; /**< 双键同时按住起始时间戳 (0=未同时按下) */
 static bool s_combo_triggered; /**< 组合长按已触发标志（防重复触发） */
-
+static int s_last_motor_err_state = -1; /**< 上次已打印的电机错误码(>=2)，-1=当前无错误 */
 /* Private function prototypes -----------------------------------------------*/
 
 static void app_uart_key_event_cb(const char* name, key_base_event_t event);
@@ -72,6 +83,8 @@ static uint8_t app_uart_key_index(const char* name);
 static void app_uart_rx_cmd_cb(uint8_t cmd, const uint8_t* data, uint8_t data_len);
 
 static void app_uart_send_heartbeat(void);
+
+static uint8_t app_uart_get_global_status(void);
 
 static void app_uart_motor_send_feedback(void);
 
@@ -91,7 +104,9 @@ void app_uart_interact_init(void)
 
     s_last_heartbeat_ms = millis();
     s_last_feedback_reply_ms = 0;
+    s_last_auto_feedback_ms = millis();
     s_heartbeat_tick = 0;
+    s_last_motor_err_state = -1;
 
     APP_UART_INTERACT_LOG_I("UART 交互应用初始化完成");
 }
@@ -108,6 +123,12 @@ void app_uart_interact_step(void)
     if ((uint32_t)(now_ms - s_last_motor_print_ms) >= APP_UART_MOTOR_PRINT_PERIOD_MS) {
         s_last_motor_print_ms = now_ms;
         app_uart_motor_print_status();
+    }
+
+    /* 默认自动上传电机反馈：每 10ms 一帧（100Hz） */
+    if ((uint32_t)(now_ms - s_last_auto_feedback_ms) >= APP_UART_MOTOR_FEEDBACK_AUTO_PERIOD_MS) {
+        s_last_auto_feedback_ms = now_ms;
+        app_uart_motor_send_feedback();
     }
 
     /* 双键组合长按检测（KEY1+KEY2 同时按住 3s → 保存电机零点） */
@@ -136,7 +157,8 @@ static void app_uart_key_event_cb(const char* name, key_base_event_t event)
     payload[0] = app_uart_key_index(name);
     payload[1] = (uint8_t)event;
 
-    const srv_uart_tx_cmd_error_t err = srv_uart_tx_cmd_send(APP_UART_CMD_KEY_EVENT, payload, APP_UART_KEY_EVENT_PAYLOAD_LEN);
+    /* 按键事件最高优先级：丢弃其他待发帧，保证实时上线 */
+    const srv_uart_tx_cmd_error_t err = srv_uart_tx_cmd_send_priority(APP_UART_CMD_KEY_EVENT, payload, APP_UART_KEY_EVENT_PAYLOAD_LEN);
     if (err != SRV_UART_TX_CMD_OK) {
         APP_UART_INTERACT_LOG_W("按键事件上报失败: %d (%s) key=%s event=%u",
             (int)err, srv_uart_tx_cmd_err_str(err),
@@ -170,7 +192,7 @@ static void app_uart_rx_cmd_cb(uint8_t cmd, const uint8_t* data, uint8_t data_le
     }
 
     case APP_UART_CMD_MOTOR_REQ_FEEDBACK:
-        app_uart_motor_send_feedback();
+        // app_uart_motor_send_feedback();
         break;
 
     case APP_UART_CMD_LED_CTRL:
@@ -189,12 +211,38 @@ static void app_uart_send_heartbeat(void)
     uint8_t payload[APP_UART_HEARTBEAT_PAYLOAD_LEN];
     payload[0] = (uint8_t)(s_heartbeat_tick & 0xFFU);
     payload[1] = (uint8_t)((s_heartbeat_tick >> 8) & 0xFFU);
+    payload[2] = app_uart_get_global_status();
 
     if (srv_uart_tx_cmd_send(APP_UART_CMD_HEARTBEAT, payload,
             APP_UART_HEARTBEAT_PAYLOAD_LEN)
         == SRV_UART_TX_CMD_OK) {
         s_heartbeat_tick++;
     }
+}
+
+/**
+ * @brief 汇总全局故障状态位（供心跳上报）
+ * @return 状态位，bit 定义见 APP_UART_STATUS_*
+ */
+static uint8_t app_uart_get_global_status(void)
+{
+    uint8_t status = 0U;
+
+    if (srv_dm4310_ctrl_is_offline()) {
+        status |= APP_UART_STATUS_MOTOR_OFFLINE;
+    }
+    if (srv_efuse_is_fault()) {
+        status |= APP_UART_STATUS_POWER_FAULT;
+    }
+    const uint8_t key_mask = srv_key_init_selfcheck_mask();
+    if (key_mask & SRV_KEY_SELFCHECK_KEY1) {
+        status |= APP_UART_STATUS_KEY1_SELFTEST_FAIL;
+    }
+    if (key_mask & SRV_KEY_SELFCHECK_KEY2) {
+        status |= APP_UART_STATUS_KEY2_SELFTEST_FAIL;
+    }
+
+    return status;
 }
 
 /* ===== DM4310 电机命令 ===== */
@@ -237,23 +285,33 @@ static void app_uart_motor_print_status(void)
         return;
     }
 
-    // const motor_fbpara_t* fb = &motor->para;
+    const motor_fbpara_t* fb = &motor->para;
+    const uint8_t st = (uint8_t)(fb->state & 0x0F);
 
-    // /* state 单独一帧，打印数值 + 含义 */
-    // static const char* const state_desc[] = {
-    //     "失能", "使能", "电机侧未识别", "输出轴未识别",
-    //     "未知", "读取编码器错误", "未知", "读取编码器错误",
-    //     "超压", "欠压", "过电流", "MOS过温",
-    //     "电机线圈过温", "通讯丢失", "未知", "过载",
-    // };
-    // const uint8_t st = (uint8_t)(fb->state & 0x0F);
-    // const char* desc = (st < 16U) ? state_desc[st] : "未知";
+    /* 仅在“错误码变化”事件时打印；使能(1)/失能(0) 不算错误，不打印 */
+    if (st < 2U) {
+        s_last_motor_err_state = -1; /* 非错误态：清除记录，便于下次错误再打印 */
+        return;
+    }
+    if ((int)st == s_last_motor_err_state) {
+        return; /* 同一错误不重复打印 */
+    }
+    s_last_motor_err_state = (int)st;
 
-    // APP_UART_INTERACT_LOG_I("电机状态 state=%d (%s)", (int)fb->state, desc);
+    static const char* const state_desc[] = {
+        "失能", "使能", "电机侧未识别", "输出轴未识别",
+        "未知", "读取编码器错误", "未知", "读取编码器错误",
+        "超压", "欠压", "过电流", "MOS过温",
+        "电机线圈过温", "通讯丢失", "未知", "过载",
+    };
+    const char* desc = (st < 16U) ? state_desc[st] : "未知";
 
-    // /* 物理量单独一帧 */
-    // APP_UART_INTERACT_LOG_I("电机反馈 pos=%.3f vel=%.3f tor=%.3f Tmos=%.3f Tcoil=%.3f",
-    //     fb->pos, fb->vel, fb->tor, fb->Tmos, fb->Tcoil);
+    /* F1 无浮点 printf：物理量按 ×1000 整数打印（mrad / mrad·s⁻¹ / mN·m） */
+    APP_UART_INTERACT_LOG_E(
+        "电机故障: state=%d (%s) pos=%d vel=%d tor=%d (x1000) Tmos=%d Tcoil=%d",
+        (int)fb->state, desc,
+        (int)(fb->pos * 1000.0f), (int)(fb->vel * 1000.0f), (int)(fb->tor * 1000.0f),
+        (int)fb->Tmos, (int)fb->Tcoil);
 }
 
 /* ===== LED 控制命令 ===== */

@@ -111,6 +111,18 @@ void drv_uart_tx_flush(drv_uart_channel_t ch);
 /** @brief 查询 TX 缓冲队列中待发送的帧数 */
 uint32_t drv_uart_tx_pending(drv_uart_channel_t ch);
 
+/**
+ * @brief 高优先级发送（插队到 TX 队列队首）
+ * @param ch   通道号
+ * @param data 数据指针
+ * @param len  数据长度（≤ DRV_UART_TX_MAX_FRAME_LEN）
+ * @return DRV_UART_OK / 参数非法 / 未初始化
+ * @note  TX 空闲且队列为空时立即发送；否则插入同一个 TX 队列的**队首**，
+ *        优先于已排队帧发送。队列满时丢弃最旧一帧腾出空间，保证本帧一定插入。
+ */
+drv_uart_error_t drv_uart_send_priority(drv_uart_channel_t ch, const uint8_t* data,
+    uint32_t len);
+
 /* --- RX（DMA circular + IDLE 中断 → kfifo 环形缓冲） --- */
 
 /**

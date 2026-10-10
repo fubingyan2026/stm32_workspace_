@@ -18,6 +18,12 @@ extern "C" {
 
 void led_task_init(void);
 
+/**
+ * @brief 指示“上电时按键被按下”的初始化异常：LED 只显示红色
+ * @note  非锁存：按键松开后自动恢复正常（白色）；供上电自检调用
+ */
+void led_task_indicate_boot_fault(void);
+
 #ifdef __cplusplus
 }
 #endif

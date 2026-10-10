@@ -10,12 +10,13 @@
  *   OFF     — SHDN=0，24V 关断
  *   STARTUP — SHDN=1，等待 PGOOD 拉高（上电中/输出未达门限）
  *   RUN     — PGOOD=1 且 FLT_N=1，24V 正常输出
- *   FAULT   — FLT_N=0 故障锁存（SHDN=0 自动关断），需 disable+enable 复位
+ *   FAULT   — 故障锁存（SHDN=0 自动关断）；每 1s 尝试自动恢复
  *
  * 保护策略：
  *   - STARTUP 超时（PGOOD 未就绪）→ FAULT 锁存
  *   - RUN 中 FLT_N=0 → 立即关断 24V 并锁存 FAULT
- *   - FAULT 状态不自动重试（安全侧），由上层确认后重新使能
+ *   - FAULT 后每 SRV_EFUSE_FAULT_RECOVER_MS(1s) 检查：故障已清除(FLT_N=1)
+ *     则自动重新上电（经 OFF→STARTUP）；故障仍在则继续等待
  */
 
 #ifndef SRV_EFUSE_H
